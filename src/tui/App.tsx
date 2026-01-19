@@ -11,14 +11,18 @@ import { DestinationsView } from './views/Destinations.js';
 import { TunnelsView } from './views/Tunnels.js';
 import { EventsView } from './views/Events.js';
 import { AnalyticsView } from './views/Analytics.js';
+import { CronView } from './views/Cron.js';
+import { RoutesView } from './views/Routes.js';
 
-type ViewName = 'overview' | 'sources' | 'destinations' | 'tunnels' | 'events' | 'analytics';
+type ViewName = 'overview' | 'sources' | 'destinations' | 'routes' | 'tunnels' | 'events' | 'cron' | 'analytics';
 
 interface AppState {
   sources: api.Source[];
   destinations: api.Destination[];
+  routes: api.Route[];
   tunnels: api.Tunnel[];
   events: api.Event[];
+  cronJobs: api.CronJob[];
   loading: boolean;
   error?: string;
 }
@@ -27,8 +31,10 @@ const TABS: { key: ViewName; label: string }[] = [
   { key: 'overview', label: 'Overview' },
   { key: 'sources', label: 'Sources' },
   { key: 'destinations', label: 'Destinations' },
+  { key: 'routes', label: 'Routes' },
   { key: 'tunnels', label: 'Tunnels' },
   { key: 'events', label: 'Events' },
+  { key: 'cron', label: 'Cron' },
   { key: 'analytics', label: 'Live' },
 ];
 
@@ -95,8 +101,10 @@ function App() {
   const [data, setData] = useState<AppState>({
     sources: [],
     destinations: [],
+    routes: [],
     tunnels: [],
     events: [],
+    cronJobs: [],
     loading: true,
   });
 
@@ -104,18 +112,22 @@ function App() {
     setData(prev => ({ ...prev, loading: true, error: undefined }));
 
     try {
-      const [sourcesRes, destsRes, tunnelsRes, eventsRes] = await Promise.all([
+      const [sourcesRes, destsRes, routesRes, tunnelsRes, eventsRes, cronRes] = await Promise.all([
         api.getSources(),
         api.getDestinations(),
+        api.getRoutes(),
         api.getTunnels(),
         api.getEvents({ limit: 20 }),
+        api.getCronJobs(),
       ]);
 
       setData({
         sources: sourcesRes.data?.sources || [],
         destinations: destsRes.data?.destinations || [],
+        routes: routesRes.data?.routes || [],
         tunnels: tunnelsRes.data?.tunnels || [],
         events: eventsRes.data?.events || [],
+        cronJobs: cronRes.data?.cronJobs || [],
         loading: false,
       });
     } catch (error) {
@@ -199,6 +211,17 @@ function App() {
             onRefresh={fetchData}
           />
         );
+      case 'routes':
+        return (
+          <RoutesView
+            routes={data.routes}
+            sources={data.sources}
+            destinations={data.destinations}
+            subView={subView}
+            onNavigate={handleNavigate}
+            onRefresh={fetchData}
+          />
+        );
       case 'tunnels':
         return (
           <TunnelsView
@@ -214,6 +237,15 @@ function App() {
             events={data.events}
             subView={subView}
             onNavigate={handleNavigate}
+          />
+        );
+      case 'cron':
+        return (
+          <CronView
+            cronJobs={data.cronJobs}
+            subView={subView}
+            onNavigate={handleNavigate}
+            onRefresh={fetchData}
           />
         );
       case 'analytics':

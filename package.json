@@ -1,6 +1,6 @@
 {
   "name": "@hookbase/cli",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "CLI tool for Hookbase - manage webhooks and localhost tunnels",
   "type": "module",
   "main": "dist/index.js",
@@ -32,7 +32,7 @@
     "type": "git",
     "url": "https://github.com/HookbaseApp/cli"
   },
-  "homepage": "https://hookbase.app",
+  "homepage": "https://www.hookbase.app",
   "bugs": {
     "url": "https://github.com/HookbaseApp/cli/issues"
   },

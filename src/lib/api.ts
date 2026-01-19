@@ -432,14 +432,14 @@ export async function createRoute(data: {
   if (!org) return { error: 'No organization selected', status: 0 };
   return request<{ route: Route }>('POST', `/api/organizations/${org.id}/routes`, {
     name: data.name,
-    source_id: data.sourceId,
-    destination_id: data.destinationId,
-    filter_id: data.filterId,
-    filter_conditions: data.filterConditions,
-    transform_id: data.transformId,
-    schema_id: data.schemaId,
+    sourceId: data.sourceId,
+    destinationId: data.destinationId,
+    filterId: data.filterId,
+    filterConditions: data.filterConditions,
+    transformId: data.transformId,
+    schemaId: data.schemaId,
     priority: data.priority ?? 0,
-    is_active: data.isActive ?? true,
+    isActive: data.isActive ?? true,
   });
 }
 
@@ -461,14 +461,14 @@ export async function updateRoute(
   if (!org) return { error: 'No organization selected', status: 0 };
   return request<{ route: Route }>('PATCH', `/api/organizations/${org.id}/routes/${routeId}`, {
     name: data.name,
-    source_id: data.sourceId,
-    destination_id: data.destinationId,
-    filter_id: data.filterId,
-    filter_conditions: data.filterConditions,
-    transform_id: data.transformId,
-    schema_id: data.schemaId,
+    sourceId: data.sourceId,
+    destinationId: data.destinationId,
+    filterId: data.filterId,
+    filterConditions: data.filterConditions,
+    transformId: data.transformId,
+    schemaId: data.schemaId,
     priority: data.priority,
-    is_active: data.isActive,
+    isActive: data.isActive,
   });
 }
 
@@ -892,4 +892,212 @@ export async function getRecentActivity(limit: number = 20): Promise<ApiResponse
   const org = requireOrg();
   if (!org) return { error: 'No organization selected', status: 0 };
   return request<{ events: Event[] }>('GET', `/api/organizations/${org.id}/realtime/recent?limit=${limit}`);
+}
+
+// ============================================================================
+// Cron Jobs
+// ============================================================================
+
+export interface CronJob {
+  id: string;
+  organization_id: string;
+  group_id?: string | null;
+  name: string;
+  description?: string | null;
+  cron_expression: string;
+  timezone: string;
+  url: string;
+  method: string;
+  headers?: string | null;
+  payload?: string | null;
+  timeout_ms: number;
+  is_active: number;
+  last_run_at?: string | null;
+  next_run_at?: string | null;
+  notify_on_success?: number;
+  notify_on_failure?: number;
+  notify_emails?: string | null;
+  consecutive_failures?: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CronExecution {
+  id: string;
+  organization_id: string;
+  cron_job_id: string;
+  status: 'pending' | 'success' | 'failed' | 'running';
+  response_status?: number | null;
+  response_body?: string | null;
+  response_headers?: string | null;
+  error_message?: string | null;
+  latency_ms?: number | null;
+  started_at: string;
+  completed_at?: string | null;
+}
+
+// Trigger response uses camelCase (different from DB records)
+export interface CronTriggerResult {
+  id: string;
+  status: 'success' | 'failed';
+  responseStatus?: number;
+  latencyMs?: number;
+  error?: string;
+}
+
+export interface CronGroup {
+  id: string;
+  organization_id: string;
+  name: string;
+  slug: string;
+  description?: string | null;
+  isCollapsed?: number;
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export async function getCronJobs(): Promise<ApiResponse<{ cronJobs: CronJob[] }>> {
+  const org = requireOrg();
+  if (!org) return { error: 'No organization selected', status: 0 };
+  return request<{ cronJobs: CronJob[] }>('GET', `/api/organizations/${org.id}/cron`);
+}
+
+export async function getCronJob(jobId: string): Promise<ApiResponse<{ cronJob: CronJob }>> {
+  const org = requireOrg();
+  if (!org) return { error: 'No organization selected', status: 0 };
+  return request<{ cronJob: CronJob }>('GET', `/api/organizations/${org.id}/cron/${jobId}`);
+}
+
+export async function createCronJob(data: {
+  name: string;
+  description?: string;
+  cronExpression: string;
+  timezone?: string;
+  url: string;
+  method?: string;
+  headers?: Record<string, string>;
+  payload?: string;
+  timeoutMs?: number;
+  groupId?: string;
+  notifyOnSuccess?: boolean;
+  notifyOnFailure?: boolean;
+  notifyEmails?: string;
+}): Promise<ApiResponse<{ cronJob: CronJob }>> {
+  const org = requireOrg();
+  if (!org) return { error: 'No organization selected', status: 0 };
+  return request<{ cronJob: CronJob }>('POST', `/api/organizations/${org.id}/cron`, {
+    name: data.name,
+    description: data.description,
+    cronExpression: data.cronExpression,
+    timezone: data.timezone || 'UTC',
+    url: data.url,
+    method: data.method || 'POST',
+    headers: data.headers,
+    payload: data.payload,
+    timeoutMs: data.timeoutMs || 30000,
+    groupId: data.groupId,
+    notifyOnSuccess: data.notifyOnSuccess,
+    notifyOnFailure: data.notifyOnFailure,
+    notifyEmails: data.notifyEmails,
+  });
+}
+
+export async function updateCronJob(
+  jobId: string,
+  data: {
+    name?: string;
+    description?: string;
+    cronExpression?: string;
+    timezone?: string;
+    url?: string;
+    method?: string;
+    headers?: Record<string, string>;
+    payload?: string;
+    timeoutMs?: number;
+    groupId?: string | null;
+    isActive?: boolean;
+    notifyOnSuccess?: boolean;
+    notifyOnFailure?: boolean;
+    notifyEmails?: string;
+  }
+): Promise<ApiResponse<{ success: boolean }>> {
+  const org = requireOrg();
+  if (!org) return { error: 'No organization selected', status: 0 };
+  return request<{ success: boolean }>('PATCH', `/api/organizations/${org.id}/cron/${jobId}`, data);
+}
+
+export async function deleteCronJob(jobId: string): Promise<ApiResponse<{ success: boolean }>> {
+  const org = requireOrg();
+  if (!org) return { error: 'No organization selected', status: 0 };
+  return request<{ success: boolean }>('DELETE', `/api/organizations/${org.id}/cron/${jobId}`);
+}
+
+export async function triggerCronJob(jobId: string): Promise<ApiResponse<{ execution: CronTriggerResult }>> {
+  const org = requireOrg();
+  if (!org) return { error: 'No organization selected', status: 0 };
+  return request<{ execution: CronTriggerResult }>('POST', `/api/organizations/${org.id}/cron/${jobId}/trigger`);
+}
+
+export async function getCronExecutions(
+  jobId: string,
+  limit: number = 20
+): Promise<ApiResponse<{ executions: CronExecution[] }>> {
+  const org = requireOrg();
+  if (!org) return { error: 'No organization selected', status: 0 };
+  return request<{ executions: CronExecution[] }>(
+    'GET',
+    `/api/organizations/${org.id}/cron/${jobId}/executions?limit=${limit}`
+  );
+}
+
+// ============================================================================
+// Cron Groups
+// ============================================================================
+
+export async function getCronGroups(): Promise<ApiResponse<{ groups: CronGroup[] }>> {
+  const org = requireOrg();
+  if (!org) return { error: 'No organization selected', status: 0 };
+  return request<{ groups: CronGroup[] }>('GET', `/api/organizations/${org.id}/cron-groups`);
+}
+
+export async function getCronGroup(groupId: string): Promise<ApiResponse<{ group: CronGroup }>> {
+  const org = requireOrg();
+  if (!org) return { error: 'No organization selected', status: 0 };
+  return request<{ group: CronGroup }>('GET', `/api/organizations/${org.id}/cron-groups/${groupId}`);
+}
+
+export async function createCronGroup(data: {
+  name: string;
+  description?: string;
+}): Promise<ApiResponse<{ group: CronGroup }>> {
+  const org = requireOrg();
+  if (!org) return { error: 'No organization selected', status: 0 };
+  return request<{ group: CronGroup }>('POST', `/api/organizations/${org.id}/cron-groups`, data);
+}
+
+export async function updateCronGroup(
+  groupId: string,
+  data: {
+    name?: string;
+    description?: string;
+    sortOrder?: number;
+    isCollapsed?: boolean;
+  }
+): Promise<ApiResponse<{ group: CronGroup }>> {
+  const org = requireOrg();
+  if (!org) return { error: 'No organization selected', status: 0 };
+  return request<{ group: CronGroup }>('PATCH', `/api/organizations/${org.id}/cron-groups/${groupId}`, data);
+}
+
+export async function deleteCronGroup(groupId: string): Promise<ApiResponse<{ success: boolean }>> {
+  const org = requireOrg();
+  if (!org) return { error: 'No organization selected', status: 0 };
+  return request<{ success: boolean }>('DELETE', `/api/organizations/${org.id}/cron-groups/${groupId}`);
+}
+
+export async function reorderCronGroups(groupIds: string[]): Promise<ApiResponse<{ success: boolean }>> {
+  const org = requireOrg();
+  if (!org) return { error: 'No organization selected', status: 0 };
+  return request<{ success: boolean }>('POST', `/api/organizations/${org.id}/cron-groups/reorder`, { groupIds });
 }
