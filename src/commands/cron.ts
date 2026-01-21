@@ -1,7 +1,14 @@
 import { input, confirm, select, checkbox } from '@inquirer/prompts';
+import { ExitPromptError } from '@inquirer/core';
 import * as api from '../lib/api.js';
 import * as config from '../lib/config.js';
 import * as logger from '../lib/logger.js';
+
+/** Helper to check if an error is a prompt cancellation (Ctrl+C) */
+function isPromptCancelled(error: unknown): boolean {
+  return error instanceof ExitPromptError ||
+    (error instanceof Error && error.name === 'ExitPromptError');
+}
 
 const COMMON_TIMEZONES = [
   { name: 'UTC', value: 'UTC' },
@@ -162,7 +169,7 @@ export async function cronListCommand(options: { json?: boolean; all?: boolean }
   logger.table(
     ['ID', 'Name', 'Schedule', 'URL', 'Status', 'Next Run', 'Last Run'],
     jobs.map(j => [
-      j.id.slice(0, 8) + '...',
+      j.id,
       j.name.slice(0, 20) + (j.name.length > 20 ? '...' : ''),
       describeCronExpression(j.cron_expression),
       j.url.slice(0, 30) + (j.url.length > 30 ? '...' : ''),
@@ -210,142 +217,151 @@ export async function cronCreateCommand(options: {
     }
   }
 
-  // Interactive mode
-  if (!name || !cronExpression || !url) {
-    name = name || await input({
-      message: 'Job name:',
-      validate: (value) => value.length > 0 || 'Name is required',
-    });
-
-    // Schedule selection
-    if (!cronExpression) {
-      const preset = await select({
-        message: 'Select schedule:',
-        choices: COMMON_CRON_PRESETS,
+  // Interactive mode - wrapped in try-catch to handle Ctrl+C gracefully
+  try {
+    if (!name || !cronExpression || !url) {
+      name = name || await input({
+        message: 'Job name:',
+        validate: (value) => value.length > 0 || 'Name is required',
       });
 
-      if (preset === 'custom') {
-        cronExpression = await input({
-          message: 'Enter cron expression (minute hour day month weekday):',
-          validate: (value) => validateCronExpression(value) || 'Invalid cron expression. Use 5-field format: * * * * *',
+      // Schedule selection
+      if (!cronExpression) {
+        const preset = await select({
+          message: 'Select schedule:',
+          choices: COMMON_CRON_PRESETS,
         });
-      } else {
-        cronExpression = preset;
-      }
-    }
 
-    url = url || await input({
-      message: 'URL to call:',
-      validate: (value) => {
-        try {
-          new URL(value);
-          return true;
-        } catch {
-          return 'Invalid URL';
+        if (preset === 'custom') {
+          cronExpression = await input({
+            message: 'Enter cron expression (minute hour day month weekday):',
+            validate: (value) => validateCronExpression(value) || 'Invalid cron expression. Use 5-field format: * * * * *',
+          });
+        } else {
+          cronExpression = preset;
         }
-      },
-    });
+      }
 
-    method = await select({
-      message: 'HTTP method:',
-      choices: HTTP_METHODS,
-      default: 'POST',
-    });
+      url = url || await input({
+        message: 'URL to call:',
+        validate: (value) => {
+          try {
+            new URL(value);
+            return true;
+          } catch {
+            return 'Invalid URL';
+          }
+        },
+      });
 
-    timezone = await select({
-      message: 'Timezone:',
-      choices: [...COMMON_TIMEZONES, { name: 'Other (enter manually)', value: 'other' }],
-      default: 'UTC',
-    });
+      method = await select({
+        message: 'HTTP method:',
+        choices: HTTP_METHODS,
+        default: 'POST',
+      });
 
-    if (timezone === 'other') {
-      timezone = await input({
-        message: 'Enter timezone (e.g., America/New_York):',
+      timezone = await select({
+        message: 'Timezone:',
+        choices: [...COMMON_TIMEZONES, { name: 'Other (enter manually)', value: 'other' }],
         default: 'UTC',
       });
-    }
 
-    // Optional payload
-    const addPayload = await confirm({
-      message: 'Add request payload?',
-      default: false,
-    });
+      if (timezone === 'other') {
+        timezone = await input({
+          message: 'Enter timezone (e.g., America/New_York):',
+          default: 'UTC',
+        });
+      }
 
-    if (addPayload) {
-      payload = await input({
-        message: 'Enter JSON payload:',
-        validate: (value) => {
-          if (!value) return true;
-          try {
-            JSON.parse(value);
-            return true;
-          } catch {
-            return 'Invalid JSON';
-          }
-        },
+      // Optional payload
+      const addPayload = await confirm({
+        message: 'Add request payload?',
+        default: false,
       });
-    }
 
-    // Optional headers
-    const addHeaders = await confirm({
-      message: 'Add custom headers?',
-      default: false,
-    });
+      if (addPayload) {
+        payload = await input({
+          message: 'Enter JSON payload:',
+          validate: (value) => {
+            if (!value) return true;
+            try {
+              JSON.parse(value);
+              return true;
+            } catch {
+              return 'Invalid JSON';
+            }
+          },
+        });
+      }
 
-    if (addHeaders) {
-      const headerInput = await input({
-        message: 'Enter headers as JSON (e.g., {"X-Api-Key": "secret"}):',
-        validate: (value) => {
-          if (!value) return true;
-          try {
-            JSON.parse(value);
-            return true;
-          } catch {
-            return 'Invalid JSON';
-          }
-        },
+      // Optional headers
+      const addHeaders = await confirm({
+        message: 'Add custom headers?',
+        default: false,
       });
-      if (headerInput) {
-        headers = JSON.parse(headerInput);
+
+      if (addHeaders) {
+        const headerInput = await input({
+          message: 'Enter headers as JSON (e.g., {"X-Api-Key": "secret"}):',
+          validate: (value) => {
+            if (!value) return true;
+            try {
+              JSON.parse(value);
+              return true;
+            } catch {
+              return 'Invalid JSON';
+            }
+          },
+        });
+        if (headerInput) {
+          headers = JSON.parse(headerInput);
+        }
+      }
+
+      // Optional group selection
+      const groupsResult = await api.getCronGroups();
+      if (groupsResult.data?.groups && groupsResult.data.groups.length > 0) {
+        const groups = groupsResult.data.groups;
+        const groupChoice = await select({
+          message: 'Add to a group? (optional):',
+          choices: [
+            { name: 'No group', value: '' },
+            ...groups.map(g => ({ name: g.name, value: g.id })),
+          ],
+        });
+        if (groupChoice) {
+          groupId = groupChoice;
+        }
       }
     }
 
-    // Optional group selection
-    const groupsResult = await api.getCronGroups();
-    if (groupsResult.data?.groups && groupsResult.data.groups.length > 0) {
-      const groups = groupsResult.data.groups;
-      const groupChoice = await select({
-        message: 'Add to a group? (optional):',
-        choices: [
-          { name: 'No group', value: '' },
-          ...groups.map(g => ({ name: g.name, value: g.id })),
-        ],
+    if (!options.yes && !options.name) {
+      logger.log('');
+      logger.log(logger.bold('Summary:'));
+      logger.log(`  Name:     ${name}`);
+      logger.log(`  Schedule: ${cronExpression} (${describeCronExpression(cronExpression!)})`);
+      logger.log(`  URL:      ${method} ${url}`);
+      logger.log(`  Timezone: ${timezone}`);
+      if (payload) logger.log(`  Payload:  ${payload.slice(0, 50)}${payload.length > 50 ? '...' : ''}`);
+      if (headers) logger.log(`  Headers:  ${JSON.stringify(headers)}`);
+      logger.log('');
+
+      const confirmed = await confirm({
+        message: 'Create this cron job?',
+        default: true,
       });
-      if (groupChoice) {
-        groupId = groupChoice;
+      if (!confirmed) {
+        logger.info('Cancelled');
+        return;
       }
     }
-  }
-
-  if (!options.yes && !options.name) {
-    logger.log('');
-    logger.log(logger.bold('Summary:'));
-    logger.log(`  Name:     ${name}`);
-    logger.log(`  Schedule: ${cronExpression} (${describeCronExpression(cronExpression!)})`);
-    logger.log(`  URL:      ${method} ${url}`);
-    logger.log(`  Timezone: ${timezone}`);
-    if (payload) logger.log(`  Payload:  ${payload.slice(0, 50)}${payload.length > 50 ? '...' : ''}`);
-    if (headers) logger.log(`  Headers:  ${JSON.stringify(headers)}`);
-    logger.log('');
-
-    const confirmed = await confirm({
-      message: 'Create this cron job?',
-      default: true,
-    });
-    if (!confirmed) {
+  } catch (error) {
+    if (isPromptCancelled(error)) {
+      logger.log('');
       logger.info('Cancelled');
       return;
     }
+    throw error;
   }
 
   const spinner = logger.spinner('Creating cron job...');
@@ -648,7 +664,7 @@ export async function cronHistoryCommand(
   logger.table(
     ['ID', 'Status', 'HTTP Status', 'Latency', 'Started', 'Completed'],
     executions.map(e => [
-      e.id.slice(0, 8) + '...',
+      e.id,
       getStatusDisplay(e.status),
       e.response_status ? String(e.response_status) : '-',
       e.latency_ms ? `${e.latency_ms}ms` : '-',

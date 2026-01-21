@@ -98,16 +98,22 @@ export function requestLog(method: string, path: string, status: number, duratio
                       status >= 400 && status < 500 ? chalk.yellow :
                       status >= 500 ? chalk.red : chalk.gray;
 
-  const methodColor = method === 'GET' ? chalk.cyan :
-                      method === 'POST' ? chalk.green :
-                      method === 'PUT' ? chalk.yellow :
-                      method === 'DELETE' ? chalk.red : chalk.white;
+  const methodColors: Record<string, (s: string) => string> = {
+    GET: chalk.cyan,
+    POST: chalk.green,
+    PUT: chalk.yellow,
+    PATCH: chalk.magenta,
+    DELETE: chalk.red,
+    HEAD: chalk.blue,
+    OPTIONS: chalk.gray,
+  };
+  const methodColor = methodColors[method] || chalk.white;
 
-  console.log(
-    chalk.gray(new Date().toLocaleTimeString()) + ' ' +
-    methodColor(method.padEnd(7)) +
-    chalk.white(path) + ' ' +
-    statusColor(`${status}`) + ' ' +
-    chalk.dim(`(${duration}ms)`)
-  );
+  const timestamp = chalk.dim(new Date().toLocaleTimeString());
+  const methodStr = methodColor(method.padEnd(7));
+  const pathStr = chalk.white(path);
+  const statusStr = statusColor(`${status}`);
+  const durationStr = chalk.dim(`${duration}ms`);
+
+  console.log(`${timestamp}   ${methodStr}  ${pathStr}  ${statusStr}  ${durationStr}`);
 }

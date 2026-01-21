@@ -73,8 +73,8 @@ export async function deliveriesListCommand(options: {
   logger.table(
     ['ID', 'Destination', 'Status', 'Response', 'Attempts', 'Time', 'Created'],
     deliveries.map(d => [
-      d.id.slice(0, 8) + '...',
-      d.destination_name || d.destination_id.slice(0, 8) + '...',
+      d.id,
+      d.destination_name || d.destination_id,
       formatStatus(d.status),
       d.response_status ? String(d.response_status) : '-',
       `${d.attempt_count}/${d.max_attempts}`,
@@ -245,7 +245,7 @@ export async function deliveriesBulkReplayCommand(options: {
     selectedIds = await checkbox({
       message: 'Select deliveries to replay:',
       choices: deliveries.map(d => ({
-        name: `${d.id.slice(0, 8)}... - ${d.destination_name || d.destination_id.slice(0, 8)} - ${d.error_message || 'Failed'}`,
+        name: `${d.id} - ${d.destination_name || d.destination_id} - ${d.error_message || 'Failed'}`,
         value: d.id,
         checked: true,
       })),

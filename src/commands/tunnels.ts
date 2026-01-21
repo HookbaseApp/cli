@@ -1,8 +1,15 @@
 import { input, confirm, select } from '@inquirer/prompts';
+import { ExitPromptError } from '@inquirer/core';
 import * as api from '../lib/api.js';
 import * as config from '../lib/config.js';
 import * as logger from '../lib/logger.js';
 import { TunnelClient } from '../lib/tunnel.js';
+
+/** Helper to check if an error is a prompt cancellation (Ctrl+C) */
+function isPromptCancelled(error: unknown): boolean {
+  return error instanceof ExitPromptError ||
+    (error instanceof Error && error.name === 'ExitPromptError');
+}
 
 function requireAuth(): boolean {
   if (!config.isAuthenticated()) {
@@ -58,7 +65,7 @@ export async function tunnelsListCommand(options: { json?: boolean }): Promise<v
   logger.table(
     ['ID', 'Name', 'Subdomain', 'Status', 'Requests', 'Last Connected'],
     tunnels.map(t => [
-      t.id.slice(0, 8) + '...',
+      t.id,
       t.name,
       t.subdomain,
       formatStatus(t.status),
@@ -82,35 +89,44 @@ export async function tunnelsCreateCommand(options: {
   let name = options.name;
   let subdomain = options.subdomain;
 
-  // Interactive mode
-  if (!name) {
-    name = await input({
-      message: 'Tunnel name:',
-      validate: (value) => value.length > 0 || 'Name is required',
-    });
-
-    const customSubdomain = await confirm({
-      message: 'Set a custom subdomain? (Pro feature)',
-      default: false,
-    });
-
-    if (customSubdomain) {
-      subdomain = await input({
-        message: 'Subdomain:',
-        validate: (value) => /^[a-z0-9-]+$/.test(value) || 'Subdomain must be lowercase letters, numbers, and hyphens',
+  // Interactive mode - wrapped in try-catch to handle Ctrl+C gracefully
+  try {
+    if (!name) {
+      name = await input({
+        message: 'Tunnel name:',
+        validate: (value) => value.length > 0 || 'Name is required',
       });
-    }
-  }
 
-  if (!options.yes && !options.name) {
-    const confirmed = await confirm({
-      message: `Create tunnel "${name}"${subdomain ? ` with subdomain "${subdomain}"` : ''}?`,
-      default: true,
-    });
-    if (!confirmed) {
+      const customSubdomain = await confirm({
+        message: 'Set a custom subdomain? (Pro feature)',
+        default: false,
+      });
+
+      if (customSubdomain) {
+        subdomain = await input({
+          message: 'Subdomain:',
+          validate: (value) => /^[a-z0-9-]+$/.test(value) || 'Subdomain must be lowercase letters, numbers, and hyphens',
+        });
+      }
+    }
+
+    if (!options.yes && !options.name) {
+      const confirmed = await confirm({
+        message: `Create tunnel "${name}"${subdomain ? ` with subdomain "${subdomain}"` : ''}?`,
+        default: true,
+      });
+      if (!confirmed) {
+        logger.info('Cancelled');
+        return;
+      }
+    }
+  } catch (error) {
+    if (isPromptCancelled(error)) {
+      logger.log('');
       logger.info('Cancelled');
       return;
     }
+    throw error;
   }
 
   const spinner = logger.spinner('Creating tunnel...');
@@ -386,15 +402,24 @@ export async function tunnelsDisconnectCommand(
 ): Promise<void> {
   requireAuth();
 
-  if (!options.yes) {
-    const confirmed = await confirm({
-      message: `Disconnect tunnel ${tunnelId}?`,
-      default: true,
-    });
-    if (!confirmed) {
+  try {
+    if (!options.yes) {
+      const confirmed = await confirm({
+        message: `Disconnect tunnel ${tunnelId}?`,
+        default: true,
+      });
+      if (!confirmed) {
+        logger.info('Cancelled');
+        return;
+      }
+    }
+  } catch (error) {
+    if (isPromptCancelled(error)) {
+      logger.log('');
       logger.info('Cancelled');
       return;
     }
+    throw error;
   }
 
   const spinner = logger.spinner('Disconnecting tunnel...');
@@ -419,15 +444,24 @@ export async function tunnelsDeleteCommand(
 ): Promise<void> {
   requireAuth();
 
-  if (!options.yes) {
-    const confirmed = await confirm({
-      message: `Are you sure you want to delete tunnel ${tunnelId}? This cannot be undone.`,
-      default: false,
-    });
-    if (!confirmed) {
+  try {
+    if (!options.yes) {
+      const confirmed = await confirm({
+        message: `Are you sure you want to delete tunnel ${tunnelId}? This cannot be undone.`,
+        default: false,
+      });
+      if (!confirmed) {
+        logger.info('Cancelled');
+        return;
+      }
+    }
+  } catch (error) {
+    if (isPromptCancelled(error)) {
+      logger.log('');
       logger.info('Cancelled');
       return;
     }
+    throw error;
   }
 
   const spinner = logger.spinner('Deleting tunnel...');

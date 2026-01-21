@@ -13,8 +13,9 @@ import { EventsView } from './views/Events.js';
 import { AnalyticsView } from './views/Analytics.js';
 import { CronView } from './views/Cron.js';
 import { RoutesView } from './views/Routes.js';
+import { ApiKeysView } from './views/ApiKeys.js';
 
-type ViewName = 'overview' | 'sources' | 'destinations' | 'routes' | 'tunnels' | 'events' | 'cron' | 'analytics';
+type ViewName = 'overview' | 'sources' | 'destinations' | 'routes' | 'tunnels' | 'events' | 'cron' | 'api-keys' | 'analytics';
 
 interface AppState {
   sources: api.Source[];
@@ -23,6 +24,8 @@ interface AppState {
   tunnels: api.Tunnel[];
   events: api.Event[];
   cronJobs: api.CronJob[];
+  apiKeys: api.ApiKey[];
+  deliveries: api.Delivery[];
   loading: boolean;
   error?: string;
 }
@@ -35,6 +38,7 @@ const TABS: { key: ViewName; label: string }[] = [
   { key: 'tunnels', label: 'Tunnels' },
   { key: 'events', label: 'Events' },
   { key: 'cron', label: 'Cron' },
+  { key: 'api-keys', label: 'API Keys' },
   { key: 'analytics', label: 'Live' },
 ];
 
@@ -105,6 +109,8 @@ function App() {
     tunnels: [],
     events: [],
     cronJobs: [],
+    apiKeys: [],
+    deliveries: [],
     loading: true,
   });
 
@@ -112,13 +118,15 @@ function App() {
     setData(prev => ({ ...prev, loading: true, error: undefined }));
 
     try {
-      const [sourcesRes, destsRes, routesRes, tunnelsRes, eventsRes, cronRes] = await Promise.all([
+      const [sourcesRes, destsRes, routesRes, tunnelsRes, eventsRes, cronRes, apiKeysRes, deliveriesRes] = await Promise.all([
         api.getSources(),
         api.getDestinations(),
         api.getRoutes(),
         api.getTunnels(),
         api.getEvents({ limit: 20 }),
         api.getCronJobs(),
+        api.listApiKeys(),
+        api.getDeliveries({ limit: 50 }),
       ]);
 
       setData({
@@ -128,6 +136,8 @@ function App() {
         tunnels: tunnelsRes.data?.tunnels || [],
         events: eventsRes.data?.events || [],
         cronJobs: cronRes.data?.cronJobs || [],
+        apiKeys: apiKeysRes.data?.apiKeys || [],
+        deliveries: deliveriesRes.data?.deliveries || [],
         loading: false,
       });
     } catch (error) {
@@ -243,6 +253,15 @@ function App() {
         return (
           <CronView
             cronJobs={data.cronJobs}
+            subView={subView}
+            onNavigate={handleNavigate}
+            onRefresh={fetchData}
+          />
+        );
+      case 'api-keys':
+        return (
+          <ApiKeysView
+            apiKeys={data.apiKeys}
             subView={subView}
             onNavigate={handleNavigate}
             onRefresh={fetchData}

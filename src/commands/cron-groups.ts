@@ -1,7 +1,14 @@
 import { input, confirm, select } from '@inquirer/prompts';
+import { ExitPromptError } from '@inquirer/core';
 import * as api from '../lib/api.js';
 import * as config from '../lib/config.js';
 import * as logger from '../lib/logger.js';
+
+/** Helper to check if an error is a prompt cancellation (Ctrl+C) */
+function isPromptCancelled(error: unknown): boolean {
+  return error instanceof ExitPromptError ||
+    (error instanceof Error && error.name === 'ExitPromptError');
+}
 
 function requireAuth(): boolean {
   if (!config.isAuthenticated()) {
@@ -47,7 +54,7 @@ export async function cronGroupsListCommand(options: { json?: boolean }): Promis
   logger.table(
     ['ID', 'Name', 'Slug', 'Description', 'Order', 'Created'],
     groups.map(g => [
-      g.id.slice(0, 8) + '...',
+      g.id,
       g.name,
       g.slug,
       g.description?.slice(0, 30) || '-',
@@ -71,27 +78,36 @@ export async function cronGroupsCreateCommand(options: {
   let name = options.name;
   let description = options.description;
 
-  // Interactive mode
-  if (!name) {
-    name = await input({
-      message: 'Group name:',
-      validate: (value) => value.length > 0 || 'Name is required',
-    });
+  // Interactive mode - wrapped in try-catch to handle Ctrl+C gracefully
+  try {
+    if (!name) {
+      name = await input({
+        message: 'Group name:',
+        validate: (value) => value.length > 0 || 'Name is required',
+      });
 
-    description = await input({
-      message: 'Description (optional):',
-    });
-  }
+      description = await input({
+        message: 'Description (optional):',
+      });
+    }
 
-  if (!options.yes && !options.name) {
-    const confirmed = await confirm({
-      message: `Create cron group "${name}"?`,
-      default: true,
-    });
-    if (!confirmed) {
+    if (!options.yes && !options.name) {
+      const confirmed = await confirm({
+        message: `Create cron group "${name}"?`,
+        default: true,
+      });
+      if (!confirmed) {
+        logger.info('Cancelled');
+        return;
+      }
+    }
+  } catch (error) {
+    if (isPromptCancelled(error)) {
+      logger.log('');
       logger.info('Cancelled');
       return;
     }
+    throw error;
   }
 
   const spinner = logger.spinner('Creating cron group...');
@@ -213,15 +229,24 @@ export async function cronGroupsDeleteCommand(
 ): Promise<void> {
   requireAuth();
 
-  if (!options.yes) {
-    const confirmed = await confirm({
-      message: `Are you sure you want to delete this cron group? Jobs in this group will become ungrouped. This cannot be undone.`,
-      default: false,
-    });
-    if (!confirmed) {
+  try {
+    if (!options.yes) {
+      const confirmed = await confirm({
+        message: `Are you sure you want to delete this cron group? Jobs in this group will become ungrouped. This cannot be undone.`,
+        default: false,
+      });
+      if (!confirmed) {
+        logger.info('Cancelled');
+        return;
+      }
+    }
+  } catch (error) {
+    if (isPromptCancelled(error)) {
+      logger.log('');
       logger.info('Cancelled');
       return;
     }
+    throw error;
   }
 
   const spinner = logger.spinner('Deleting cron group...');
@@ -269,40 +294,50 @@ export async function cronGroupsReorderCommand(options: { json?: boolean }): Pro
   });
   logger.log('');
 
-  // Interactive reordering
-  const newOrder: string[] = [];
-  const remaining = [...groups];
+  // Interactive reordering - wrapped in try-catch to handle Ctrl+C gracefully
+  let newOrder: string[];
+  try {
+    newOrder = [];
+    const remaining = [...groups];
 
-  for (let i = 0; i < groups.length; i++) {
-    const choice = await select({
-      message: `Select group for position ${i + 1}:`,
-      choices: remaining.map(g => ({
-        name: g.name,
-        value: g.id,
-      })),
+    for (let i = 0; i < groups.length; i++) {
+      const choice = await select({
+        message: `Select group for position ${i + 1}:`,
+        choices: remaining.map(g => ({
+          name: g.name,
+          value: g.id,
+        })),
+      });
+
+      newOrder.push(choice);
+      const idx = remaining.findIndex(g => g.id === choice);
+      remaining.splice(idx, 1);
+    }
+
+    logger.log('');
+    logger.log(logger.bold('New Order:'));
+    newOrder.forEach((id, i) => {
+      const group = groups.find(g => g.id === id);
+      logger.log(`  ${i + 1}. ${group?.name}`);
+    });
+    logger.log('');
+
+    const confirmed = await confirm({
+      message: 'Apply this new order?',
+      default: true,
     });
 
-    newOrder.push(choice);
-    const idx = remaining.findIndex(g => g.id === choice);
-    remaining.splice(idx, 1);
-  }
-
-  logger.log('');
-  logger.log(logger.bold('New Order:'));
-  newOrder.forEach((id, i) => {
-    const group = groups.find(g => g.id === id);
-    logger.log(`  ${i + 1}. ${group?.name}`);
-  });
-  logger.log('');
-
-  const confirmed = await confirm({
-    message: 'Apply this new order?',
-    default: true,
-  });
-
-  if (!confirmed) {
-    logger.info('Cancelled');
-    return;
+    if (!confirmed) {
+      logger.info('Cancelled');
+      return;
+    }
+  } catch (error) {
+    if (isPromptCancelled(error)) {
+      logger.log('');
+      logger.info('Cancelled');
+      return;
+    }
+    throw error;
   }
 
   const reorderSpinner = logger.spinner('Reordering groups...');

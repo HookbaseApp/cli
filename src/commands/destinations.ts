@@ -1,7 +1,14 @@
 import { input, confirm, select } from '@inquirer/prompts';
+import { ExitPromptError } from '@inquirer/core';
 import * as api from '../lib/api.js';
 import * as config from '../lib/config.js';
 import * as logger from '../lib/logger.js';
+
+/** Helper to check if an error is a prompt cancellation (Ctrl+C) */
+function isPromptCancelled(error: unknown): boolean {
+  return error instanceof ExitPromptError ||
+    (error instanceof Error && error.name === 'ExitPromptError');
+}
 
 function requireAuth(): boolean {
   if (!config.isAuthenticated()) {
@@ -41,7 +48,7 @@ export async function destinationsListCommand(options: { json?: boolean }): Prom
   logger.table(
     ['ID', 'Name', 'URL', 'Method', 'Status', 'Deliveries'],
     destinations.map(d => [
-      d.id.slice(0, 8) + '...',
+      d.id,
       d.name,
       d.url.length > 40 ? d.url.slice(0, 37) + '...' : d.url,
       d.method || 'POST',
@@ -64,45 +71,54 @@ export async function destinationsCreateCommand(options: {
   let url = options.url;
   let method = options.method;
 
-  // Interactive mode
-  if (!name || !url) {
-    name = name || await input({
-      message: 'Destination name:',
-      validate: (value) => value.length > 0 || 'Name is required',
-    });
+  // Interactive mode - wrapped in try-catch to handle Ctrl+C gracefully
+  try {
+    if (!name || !url) {
+      name = name || await input({
+        message: 'Destination name:',
+        validate: (value) => value.length > 0 || 'Name is required',
+      });
 
-    url = url || await input({
-      message: 'Destination URL:',
-      validate: (value) => {
-        try {
-          new URL(value);
-          return true;
-        } catch {
-          return 'Please enter a valid URL';
-        }
-      },
-    });
+      url = url || await input({
+        message: 'Destination URL:',
+        validate: (value) => {
+          try {
+            new URL(value);
+            return true;
+          } catch {
+            return 'Please enter a valid URL';
+          }
+        },
+      });
 
-    method = method || await select({
-      message: 'HTTP method:',
-      choices: [
-        { name: 'POST (Recommended)', value: 'POST' },
-        { name: 'PUT', value: 'PUT' },
-        { name: 'PATCH', value: 'PATCH' },
-      ],
-      default: 'POST',
-    });
-  }
+      method = method || await select({
+        message: 'HTTP method:',
+        choices: [
+          { name: 'POST (Recommended)', value: 'POST' },
+          { name: 'PUT', value: 'PUT' },
+          { name: 'PATCH', value: 'PATCH' },
+        ],
+        default: 'POST',
+      });
+    }
 
-  if (!options.yes && !options.name) {
-    const confirmed = await confirm({
-      message: `Create destination "${name}" pointing to ${url}?`,
-      default: true,
-    });
-    if (!confirmed) {
+    if (!options.yes && !options.name) {
+      const confirmed = await confirm({
+        message: `Create destination "${name}" pointing to ${url}?`,
+        default: true,
+      });
+      if (!confirmed) {
+        logger.info('Cancelled');
+        return;
+      }
+    }
+  } catch (error) {
+    if (isPromptCancelled(error)) {
+      logger.log('');
       logger.info('Cancelled');
       return;
     }
+    throw error;
   }
 
   const spinner = logger.spinner('Creating destination...');
@@ -234,15 +250,24 @@ export async function destinationsDeleteCommand(
 ): Promise<void> {
   requireAuth();
 
-  if (!options.yes) {
-    const confirmed = await confirm({
-      message: `Are you sure you want to delete destination ${destId}? This cannot be undone.`,
-      default: false,
-    });
-    if (!confirmed) {
+  try {
+    if (!options.yes) {
+      const confirmed = await confirm({
+        message: `Are you sure you want to delete destination ${destId}? This cannot be undone.`,
+        default: false,
+      });
+      if (!confirmed) {
+        logger.info('Cancelled');
+        return;
+      }
+    }
+  } catch (error) {
+    if (isPromptCancelled(error)) {
+      logger.log('');
       logger.info('Cancelled');
       return;
     }
+    throw error;
   }
 
   const spinner = logger.spinner('Deleting destination...');

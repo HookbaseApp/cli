@@ -319,23 +319,32 @@ function TunnelDetail({ tunnelId, tunnels, onBack, onRefresh }: {
           {requestLogs.length === 0 ? (
             <Text dimColor>Waiting for requests...</Text>
           ) : (
-            requestLogs.slice(0, 12).map(log => (
-              <Box key={log.id}>
-                <Box width={10}>
-                  <Text dimColor>{log.time.toLocaleTimeString()}</Text>
+            requestLogs.slice(0, 12).map(log => {
+              const methodColor =
+                log.method === 'GET' ? 'cyan' :
+                log.method === 'POST' ? 'green' :
+                log.method === 'PUT' ? 'yellow' :
+                log.method === 'PATCH' ? 'magenta' :
+                log.method === 'DELETE' ? 'red' :
+                log.method === 'HEAD' ? 'blue' : 'white';
+              return (
+                <Box key={log.id}>
+                  <Box width={12}>
+                    <Text dimColor>{log.time.toLocaleTimeString()}</Text>
+                  </Box>
+                  <Box width={10}>
+                    <Text color={methodColor} bold>{log.method}</Text>
+                  </Box>
+                  <Box width={28}>
+                    <Text>{log.path.slice(0, 26)}{log.path.length > 26 ? '..' : ''}</Text>
+                  </Box>
+                  <Box width={8}>
+                    <Text color={log.status < 400 ? 'green' : 'red'}>{log.status}</Text>
+                  </Box>
+                  <Text dimColor>{log.duration}ms</Text>
                 </Box>
-                <Box width={8}>
-                  <Text color="yellow">{log.method}</Text>
-                </Box>
-                <Box width={30}>
-                  <Text>{log.path.slice(0, 28)}{log.path.length > 28 ? '..' : ''}</Text>
-                </Box>
-                <Box width={6}>
-                  <Text color={log.status < 400 ? 'green' : 'red'}>{log.status}</Text>
-                </Box>
-                <Text dimColor>{log.duration}ms</Text>
-              </Box>
-            ))
+              );
+            })
           )}
         </Box>
       </Box>

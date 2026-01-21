@@ -112,6 +112,30 @@ export function isDebugMode(): boolean {
   return process.env.HOOKBASE_DEBUG === '1' || process.env.HOOKBASE_DEBUG === 'true';
 }
 
+/**
+ * Check if we're currently authenticated via an API key (vs JWT)
+ */
+export function isUsingApiKey(): boolean {
+  const token = getAuthToken();
+  return !!token && token.startsWith('whr_');
+}
+
+/**
+ * Get the prefix of the currently used API key (if using one)
+ * Returns null if not using an API key
+ */
+export function getCurrentApiKeyPrefix(): string | null {
+  const token = getAuthToken();
+  if (!token || !token.startsWith('whr_')) {
+    return null;
+  }
+  // API key format: whr_<prefix>_<secret>
+  // The key_prefix stored in DB is the first part before the secret
+  // We need to extract enough to match against key_prefix in API response
+  // Typically key_prefix is something like "whr_abc123" (first 10-15 chars)
+  return token.substring(0, Math.min(token.length, 15));
+}
+
 // Get all config as an object (for debugging)
 export function getAllConfig(): ConfigSchema {
   return {

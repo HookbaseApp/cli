@@ -1,7 +1,14 @@
 import { input, confirm, select } from '@inquirer/prompts';
+import { ExitPromptError } from '@inquirer/core';
 import * as api from '../lib/api.js';
 import * as config from '../lib/config.js';
 import * as logger from '../lib/logger.js';
+
+/** Helper to check if an error is a prompt cancellation (Ctrl+C) */
+function isPromptCancelled(error: unknown): boolean {
+  return error instanceof ExitPromptError ||
+    (error instanceof Error && error.name === 'ExitPromptError');
+}
 
 function requireAuth(): boolean {
   if (!config.isAuthenticated()) {
@@ -41,10 +48,10 @@ export async function routesListCommand(options: { json?: boolean }): Promise<vo
   logger.table(
     ['ID', 'Name', 'Source', 'Destination', 'Priority', 'Status', 'Deliveries'],
     routes.map(r => [
-      r.id?.slice(0, 8) + '...' || '-',
+      r.id || '-',
       r.name || '-',
-      r.source_name || (r.source_id ? r.source_id.slice(0, 8) + '...' : '-'),
-      r.destination_name || (r.destination_id ? r.destination_id.slice(0, 8) + '...' : '-'),
+      r.source_name || (r.source_id || '-'),
+      r.destination_name || (r.destination_id || '-'),
       String(r.priority ?? 0),
       r.is_active ? logger.green('active') : logger.dimText('inactive'),
       String(r.delivery_count || 0),
@@ -67,72 +74,81 @@ export async function routesCreateCommand(options: {
   let destinationId = options.destination;
   let priority = options.priority ? parseInt(options.priority, 10) : 0;
 
-  // Interactive mode
-  if (!name || !sourceId || !destinationId) {
-    // Fetch sources and destinations for selection
-    const [sourcesResult, destinationsResult] = await Promise.all([
-      api.getSources(),
-      api.getDestinations(),
-    ]);
+  // Interactive mode - wrapped in try-catch to handle Ctrl+C gracefully
+  try {
+    if (!name || !sourceId || !destinationId) {
+      // Fetch sources and destinations for selection
+      const [sourcesResult, destinationsResult] = await Promise.all([
+        api.getSources(),
+        api.getDestinations(),
+      ]);
 
-    const sources = sourcesResult.data?.sources || [];
-    const destinations = destinationsResult.data?.destinations || [];
+      const sources = sourcesResult.data?.sources || [];
+      const destinations = destinationsResult.data?.destinations || [];
 
-    if (sources.length === 0) {
-      logger.error('No sources found. Create a source first with "hookbase sources create"');
-      return;
-    }
+      if (sources.length === 0) {
+        logger.error('No sources found. Create a source first with "hookbase sources create"');
+        return;
+      }
 
-    if (destinations.length === 0) {
-      logger.error('No destinations found. Create a destination first with "hookbase destinations create"');
-      return;
-    }
+      if (destinations.length === 0) {
+        logger.error('No destinations found. Create a destination first with "hookbase destinations create"');
+        return;
+      }
 
-    name = name || await input({
-      message: 'Route name:',
-      validate: (value) => value.length > 0 || 'Name is required',
-    });
-
-    sourceId = sourceId || await select({
-      message: 'Select source:',
-      choices: sources.map(s => ({
-        name: `${s.name} (${s.slug})`,
-        value: s.id,
-      })),
-    });
-
-    destinationId = destinationId || await select({
-      message: 'Select destination:',
-      choices: destinations.map(d => ({
-        name: `${d.name} (${d.url})`,
-        value: d.id,
-      })),
-    });
-
-    const setPriority = await confirm({
-      message: 'Set a custom priority? (default is 0)',
-      default: false,
-    });
-
-    if (setPriority) {
-      const priorityInput = await input({
-        message: 'Priority (higher = runs first):',
-        default: '0',
-        validate: (value) => !isNaN(parseInt(value, 10)) || 'Must be a number',
+      name = name || await input({
+        message: 'Route name:',
+        validate: (value) => value.length > 0 || 'Name is required',
       });
-      priority = parseInt(priorityInput, 10);
-    }
-  }
 
-  if (!options.yes && !options.name) {
-    const confirmed = await confirm({
-      message: `Create route "${name}"?`,
-      default: true,
-    });
-    if (!confirmed) {
+      sourceId = sourceId || await select({
+        message: 'Select source:',
+        choices: sources.map(s => ({
+          name: `${s.name} (${s.slug})`,
+          value: s.id,
+        })),
+      });
+
+      destinationId = destinationId || await select({
+        message: 'Select destination:',
+        choices: destinations.map(d => ({
+          name: `${d.name} (${d.url})`,
+          value: d.id,
+        })),
+      });
+
+      const setPriority = await confirm({
+        message: 'Set a custom priority? (default is 0)',
+        default: false,
+      });
+
+      if (setPriority) {
+        const priorityInput = await input({
+          message: 'Priority (higher = runs first):',
+          default: '0',
+          validate: (value) => !isNaN(parseInt(value, 10)) || 'Must be a number',
+        });
+        priority = parseInt(priorityInput, 10);
+      }
+    }
+
+    if (!options.yes && !options.name) {
+      const confirmed = await confirm({
+        message: `Create route "${name}"?`,
+        default: true,
+      });
+      if (!confirmed) {
+        logger.info('Cancelled');
+        return;
+      }
+    }
+  } catch (error) {
+    if (isPromptCancelled(error)) {
+      logger.log('');
       logger.info('Cancelled');
       return;
     }
+    throw error;
   }
 
   const spinner = logger.spinner('Creating route...');
@@ -263,15 +279,24 @@ export async function routesDeleteCommand(
 ): Promise<void> {
   requireAuth();
 
-  if (!options.yes) {
-    const confirmed = await confirm({
-      message: `Are you sure you want to delete route ${routeId}? This cannot be undone.`,
-      default: false,
-    });
-    if (!confirmed) {
+  try {
+    if (!options.yes) {
+      const confirmed = await confirm({
+        message: `Are you sure you want to delete route ${routeId}? This cannot be undone.`,
+        default: false,
+      });
+      if (!confirmed) {
+        logger.info('Cancelled');
+        return;
+      }
+    }
+  } catch (error) {
+    if (isPromptCancelled(error)) {
+      logger.log('');
       logger.info('Cancelled');
       return;
     }
+    throw error;
   }
 
   const spinner = logger.spinner('Deleting route...');

@@ -1,7 +1,14 @@
 import { input, confirm, select } from '@inquirer/prompts';
+import { ExitPromptError } from '@inquirer/core';
 import * as api from '../lib/api.js';
 import * as config from '../lib/config.js';
 import * as logger from '../lib/logger.js';
+
+/** Helper to check if an error is a prompt cancellation (Ctrl+C) */
+function isPromptCancelled(error: unknown): boolean {
+  return error instanceof ExitPromptError ||
+    (error instanceof Error && error.name === 'ExitPromptError');
+}
 
 const PROVIDERS = [
   { name: 'Generic (no signature verification)', value: '' },
@@ -57,7 +64,7 @@ export async function sourcesListCommand(options: { json?: boolean }): Promise<v
   logger.table(
     ['ID', 'Name', 'Slug', 'Provider', 'Status', 'Events', 'Routes'],
     sources.map(s => [
-      s.id.slice(0, 8) + '...',
+      s.id,
       s.name,
       s.slug,
       s.provider || 'generic',
@@ -85,45 +92,54 @@ export async function sourcesCreateCommand(options: {
   let slug = options.slug;
   let provider = options.provider;
 
-  // Interactive mode
-  if (!name) {
-    name = await input({
-      message: 'Source name:',
-      validate: (value) => value.length > 0 || 'Name is required',
-    });
+  // Interactive mode - wrapped in try-catch to handle Ctrl+C gracefully
+  try {
+    if (!name) {
+      name = await input({
+        message: 'Source name:',
+        validate: (value) => value.length > 0 || 'Name is required',
+      });
 
-    const autoSlug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-    const customSlug = await confirm({
-      message: `Use auto-generated slug "${autoSlug}"?`,
-      default: true,
-    });
+      const autoSlug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+      const customSlug = await confirm({
+        message: `Use auto-generated slug "${autoSlug}"?`,
+        default: true,
+      });
 
-    if (!customSlug) {
-      slug = await input({
-        message: 'Custom slug:',
-        validate: (value) => /^[a-z0-9-]+$/.test(value) || 'Slug must be lowercase letters, numbers, and hyphens',
+      if (!customSlug) {
+        slug = await input({
+          message: 'Custom slug:',
+          validate: (value) => /^[a-z0-9-]+$/.test(value) || 'Slug must be lowercase letters, numbers, and hyphens',
+        });
+      } else {
+        slug = autoSlug;
+      }
+
+      provider = await select({
+        message: 'Select provider (for signature verification):',
+        choices: PROVIDERS,
       });
     } else {
-      slug = autoSlug;
+      slug = slug || name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
     }
 
-    provider = await select({
-      message: 'Select provider (for signature verification):',
-      choices: PROVIDERS,
-    });
-  } else {
-    slug = slug || name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-  }
-
-  if (!options.yes && !options.name) {
-    const confirmed = await confirm({
-      message: `Create source "${name}" with slug "${slug}"?`,
-      default: true,
-    });
-    if (!confirmed) {
+    if (!options.yes && !options.name) {
+      const confirmed = await confirm({
+        message: `Create source "${name}" with slug "${slug}"?`,
+        default: true,
+      });
+      if (!confirmed) {
+        logger.info('Cancelled');
+        return;
+      }
+    }
+  } catch (error) {
+    if (isPromptCancelled(error)) {
+      logger.log('');
       logger.info('Cancelled');
       return;
     }
+    throw error;
   }
 
   const spinner = logger.spinner('Creating source...');
@@ -258,15 +274,24 @@ export async function sourcesDeleteCommand(
 ): Promise<void> {
   requireAuth();
 
-  if (!options.yes) {
-    const confirmed = await confirm({
-      message: `Are you sure you want to delete source ${sourceId}? This will also delete all associated events. This cannot be undone.`,
-      default: false,
-    });
-    if (!confirmed) {
+  try {
+    if (!options.yes) {
+      const confirmed = await confirm({
+        message: `Are you sure you want to delete source ${sourceId}? This will also delete all associated events. This cannot be undone.`,
+        default: false,
+      });
+      if (!confirmed) {
+        logger.info('Cancelled');
+        return;
+      }
+    }
+  } catch (error) {
+    if (isPromptCancelled(error)) {
+      logger.log('');
       logger.info('Cancelled');
       return;
     }
+    throw error;
   }
 
   const spinner = logger.spinner('Deleting source...');
@@ -291,15 +316,24 @@ export async function sourcesRotateSecretCommand(
 ): Promise<void> {
   requireAuth();
 
-  if (!options.yes) {
-    const confirmed = await confirm({
-      message: `Are you sure you want to rotate the signing secret for source ${sourceId}? The old secret will stop working immediately.`,
-      default: false,
-    });
-    if (!confirmed) {
+  try {
+    if (!options.yes) {
+      const confirmed = await confirm({
+        message: `Are you sure you want to rotate the signing secret for source ${sourceId}? The old secret will stop working immediately.`,
+        default: false,
+      });
+      if (!confirmed) {
+        logger.info('Cancelled');
+        return;
+      }
+    }
+  } catch (error) {
+    if (isPromptCancelled(error)) {
+      logger.log('');
       logger.info('Cancelled');
       return;
     }
+    throw error;
   }
 
   const spinner = logger.spinner('Rotating secret...');

@@ -70,8 +70,8 @@ export async function eventsListCommand(options: {
   logger.table(
     ['ID', 'Source', 'Type', 'Status', 'Received'],
     events.map(e => [
-      e.id.slice(0, 8) + '...',
-      e.source_name || e.source_slug || e.source_id.slice(0, 8) + '...',
+      e.id,
+      e.source_name || e.source_slug || e.source_id,
       e.event_type || e.method || '-',
       formatStatus(e.status),
       formatDate(e.received_at),
@@ -144,8 +144,8 @@ export async function eventsGetCommand(
     logger.table(
       ['ID', 'Destination', 'Status', 'Response', 'Time'],
       event.deliveries.map(d => [
-        d.id.slice(0, 8) + '...',
-        d.destination_name || d.destination_id.slice(0, 8) + '...',
+        d.id,
+        d.destination_name || d.destination_id,
         d.status === 'success' ? logger.green(d.status) : d.status === 'failed' ? logger.red(d.status) : logger.yellow(d.status),
         d.response_status ? String(d.response_status) : '-',
         d.response_time_ms ? `${d.response_time_ms}ms` : '-',
