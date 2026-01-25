@@ -77,7 +77,7 @@ function ApiKeyList({ apiKeys, onSelect, onCreate }: {
                     <Text dimColor> ({item.key_prefix}...) </Text>
                     <Text color="magenta">[{Array.isArray(item.scopes) ? item.scopes.join(', ') : item.scopes}]</Text>
                     {isCurrent && <Text color="cyan"> ★ in use</Text>}
-                    <Text dimColor> | Last used: {formatDate(item.last_used_at)}</Text>
+                    {/* <Text dimColor> | Last used: {formatDate(item.last_used_at)}</Text> */}
                   </>
                 )}
               </Text>
@@ -185,10 +185,10 @@ function ApiKeyDetail({ keyId, apiKeys, onBack, onRefresh }: {
           <Box width={14}><Text dimColor>Scopes:</Text></Box>
           <Text color="magenta">{scopes.join(', ')}</Text>
         </Box>
-        <Box>
+        {/* <Box>
           <Box width={14}><Text dimColor>Last Used:</Text></Box>
           <Text>{formatDate(apiKey.last_used_at)}</Text>
-        </Box>
+        </Box> */}
         <Box>
           <Box width={14}><Text dimColor>Created:</Text></Box>
           <Text>{formatDate(apiKey.created_at)}</Text>
@@ -246,9 +246,11 @@ function CreateApiKey({ onBack, onCreated }: {
   const [createdKey, setCreatedKey] = useState<string | null>(null);
 
   const scopeOptions = [
-    { value: 'read,write', label: 'Read & Write (full access)' },
+    { value: 'read,write,delete', label: 'Full access (read, write, delete)' },
+    { value: 'read,write', label: 'Read & Write (no delete)' },
     { value: 'read', label: 'Read only' },
-    { value: 'write', label: 'Write only' },
+    { value: 'write', label: 'Write only (create/update)' },
+    { value: 'delete', label: 'Delete only' },
   ];
 
   useInput((input, key) => {

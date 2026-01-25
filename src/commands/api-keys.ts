@@ -46,14 +46,14 @@ export async function apiKeysListCommand(options: { json?: boolean }): Promise<v
   }
 
   logger.table(
-    ['ID', 'Name', 'Key Prefix', 'Scopes', 'Last Used', 'Created'],
+    ['ID', 'Name', 'Key Prefix', 'Scopes', 'Created'],
     keys.map(k => [
       k.id || '-',
       k.name || '-',
       (k.key_prefix || 'whr_') + '...',
       Array.isArray(k.scopes) ? k.scopes.join(', ') :
         (typeof k.scopes === 'string' ? JSON.parse(k.scopes).join(', ') : 'read, write'),
-      k.last_used_at ? new Date(k.last_used_at).toLocaleDateString() : 'Never',
+      // k.last_used_at ? new Date(k.last_used_at).toLocaleDateString() : 'Never',
       k.created_at ? new Date(k.created_at).toLocaleDateString() : '-',
     ])
   );
@@ -83,9 +83,11 @@ export async function apiKeysCreateCommand(options: {
       const scopeChoice = await select({
         message: 'Select permissions:',
         choices: [
-          { name: 'Read & Write (full access)', value: 'read,write' },
+          { name: 'Full access (read, write, delete)', value: 'read,write,delete' },
+          { name: 'Read & Write (no delete)', value: 'read,write' },
           { name: 'Read only', value: 'read' },
-          { name: 'Write only', value: 'write' },
+          { name: 'Write only (create/update)', value: 'write' },
+          { name: 'Delete only', value: 'delete' },
         ],
       });
       scopes = scopeChoice.split(',');
