@@ -33,11 +33,16 @@ function SourceList({ sources, onSelect, onCreate }: {
   ];
 
   useInput((input, key) => {
-    if (key.upArrow) {
+    // Vim-style navigation (j/k) and arrow keys
+    if (key.upArrow || input === 'k') {
       setSelectedIndex(prev => Math.max(0, prev - 1));
     }
-    if (key.downArrow) {
+    if (key.downArrow || input === 'j') {
       setSelectedIndex(prev => Math.min(items.length - 1, prev + 1));
+    }
+    // Create new with 'n'
+    if (input === 'n') {
+      onCreate();
     }
     if (key.return) {
       const item = items[selectedIndex];
@@ -53,30 +58,59 @@ function SourceList({ sources, onSelect, onCreate }: {
     <Box flexDirection="column">
       <Box marginBottom={1}>
         <Text bold>Sources</Text>
-        <Text dimColor> - {sources.length} total | ↑↓ navigate, Enter select, Esc back</Text>
+        <Text dimColor> - {sources.length} total | j/k: navigate | Enter: select | n: new</Text>
       </Box>
 
       <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1}>
-        {items.map((item, index) => (
-          <Box key={item.id}>
-            <Text
-              color={index === selectedIndex ? 'cyan' : undefined}
-              bold={index === selectedIndex}
-              inverse={index === selectedIndex}
-            >
-              {index === selectedIndex ? '▶ ' : '  '}
-              {'isAction' in item ? (
+        {/* Column headers */}
+        <Box borderBottom marginBottom={0}>
+          <Box width={4}><Text> </Text></Box>
+          <Box width={24}><Text bold dimColor>Name</Text></Box>
+          <Box width={20}><Text bold dimColor>Slug</Text></Box>
+          <Box width={12}><Text bold dimColor>Provider</Text></Box>
+          <Box width={8}><Text bold dimColor>Events</Text></Box>
+        </Box>
+
+        {sources.length === 0 && (
+          <Box paddingY={1} flexDirection="column">
+            <Text dimColor>No sources yet. Press </Text>
+            <Text color="green">n</Text>
+            <Text dimColor> to create your first source.</Text>
+          </Box>
+        )}
+
+        {items.map((item, index) => {
+          const isSelected = index === selectedIndex;
+          const isAction = 'isAction' in item;
+
+          return (
+            <Box key={item.id}>
+              <Text color={isSelected ? 'cyan' : undefined} bold={isSelected}>
+                {isSelected ? '▶ ' : '  '}
+              </Text>
+              {isAction ? (
                 <Text color="green">{item.name}</Text>
               ) : (
                 <>
-                  <Text>{item.name}</Text>
-                  <Text dimColor> ({item.slug}) </Text>
-                  <Text color="blue">{item.provider || 'generic'}</Text>
+                  <Box width={22}>
+                    <Text color={isSelected ? 'cyan' : undefined} bold={isSelected}>
+                      {item.name.slice(0, 20)}{item.name.length > 20 ? '…' : ''}
+                    </Text>
+                  </Box>
+                  <Box width={20}>
+                    <Text dimColor>{item.slug.slice(0, 18)}{item.slug.length > 18 ? '…' : ''}</Text>
+                  </Box>
+                  <Box width={12}>
+                    <Text color="blue">{item.provider || 'generic'}</Text>
+                  </Box>
+                  <Box width={8}>
+                    <Text dimColor>{(item as any).event_count ?? (item as any).eventCount ?? 0}</Text>
+                  </Box>
                 </>
               )}
-            </Text>
-          </Box>
-        ))}
+            </Box>
+          );
+        })}
       </Box>
     </Box>
   );
@@ -114,11 +148,11 @@ function SourceDetail({ sourceId, sources, onBack, onRefresh }: {
           setMessage(`Error: ${result.error}`);
           setConfirmDelete(false);
         } else {
-          setMessage('Source deleted');
+          setMessage('Source deleted successfully');
           setTimeout(() => {
             onRefresh();
             onBack();
-          }, 1000);
+          }, 1500);
         }
       } catch (err) {
         setMessage('Failed to delete');
@@ -153,37 +187,37 @@ function SourceDetail({ sourceId, sources, onBack, onRefresh }: {
 
       <Box flexDirection="column" borderStyle="round" borderColor="cyan" paddingX={2} paddingY={1}>
         <Box>
-          <Box width={15}><Text dimColor>ID:</Text></Box>
+          <Box width={16}><Text dimColor>ID:</Text></Box>
           <Text>{source.id}</Text>
         </Box>
         <Box>
-          <Box width={15}><Text dimColor>Name:</Text></Box>
+          <Box width={16}><Text dimColor>Name:</Text></Box>
           <Text bold>{source.name}</Text>
         </Box>
         <Box>
-          <Box width={15}><Text dimColor>Slug:</Text></Box>
+          <Box width={16}><Text dimColor>Slug:</Text></Box>
           <Text>{source.slug}</Text>
         </Box>
         <Box>
-          <Box width={15}><Text dimColor>Provider:</Text></Box>
+          <Box width={16}><Text dimColor>Provider:</Text></Box>
           <Text color="blue">{source.provider || 'generic'}</Text>
         </Box>
         <Box>
-          <Box width={15}><Text dimColor>Status:</Text></Box>
+          <Box width={16}><Text dimColor>Status:</Text></Box>
           <Text color={(source.is_active || source.isActive) ? 'green' : 'red'}>
             {(source.is_active || source.isActive) ? 'Active' : 'Inactive'}
           </Text>
         </Box>
         <Box>
-          <Box width={15}><Text dimColor>Events:</Text></Box>
+          <Box width={16}><Text dimColor>Events:</Text></Box>
           <Text>{source.event_count ?? source.eventCount ?? 0}</Text>
         </Box>
         <Box>
-          <Box width={15}><Text dimColor>Routes:</Text></Box>
+          <Box width={16}><Text dimColor>Routes:</Text></Box>
           <Text>{source.route_count ?? source.routeCount ?? 0}</Text>
         </Box>
         <Box marginTop={1}>
-          <Box width={15}><Text dimColor>Ingest URL:</Text></Box>
+          <Box width={16}><Text dimColor>Ingest URL:</Text></Box>
           <Text color="cyan">{apiUrl}/ingest/{org?.slug}/{source.slug}</Text>
         </Box>
 
@@ -255,7 +289,7 @@ function CreateSource({ onBack, onCreated }: {
         setTimeout(() => {
           onCreated();
           onBack();
-        }, 2000);
+        }, 1500);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create source');

@@ -15,10 +15,11 @@ function EventList({ events, onSelect }: {
   const [selectedIndex, setSelectedIndex] = useState(0);
 
   useInput((input, key) => {
-    if (key.upArrow) {
+    // Vim-style navigation (j/k) and arrow keys
+    if (key.upArrow || input === 'k') {
       setSelectedIndex(prev => Math.max(0, prev - 1));
     }
-    if (key.downArrow) {
+    if (key.downArrow || input === 'j') {
       setSelectedIndex(prev => Math.min(events.length - 1, prev + 1));
     }
     if (key.return && events.length > 0) {
@@ -39,43 +40,54 @@ function EventList({ events, onSelect }: {
     <Box flexDirection="column">
       <Box marginBottom={1}>
         <Text bold>Events</Text>
-        <Text dimColor> - {events.length} recent | ↑↓ navigate, Enter view details</Text>
+        <Text dimColor> - {events.length} recent | j/k: navigate | Enter: view details</Text>
       </Box>
 
       <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1}>
+        {/* Column headers */}
+        <Box borderBottom marginBottom={0}>
+          <Box width={4}><Text> </Text></Box>
+          <Box width={10}><Text bold dimColor>Time</Text></Box>
+          <Box width={15}><Text bold dimColor>Source</Text></Box>
+          <Box width={10}><Text bold dimColor>Method</Text></Box>
+          <Box width={12}><Text bold dimColor>Status</Text></Box>
+          <Box width={12}><Text bold dimColor>ID</Text></Box>
+        </Box>
+
         {events.length === 0 ? (
-          <Text dimColor>No events found</Text>
+          <Box paddingY={1}>
+            <Text dimColor>No events yet. Events will appear here when webhooks are received.</Text>
+          </Box>
         ) : (
-          events.map((event, index) => (
-            <Box key={event.id}>
-              <Text
-                color={index === selectedIndex ? 'cyan' : undefined}
-                bold={index === selectedIndex}
-                inverse={index === selectedIndex}
-              >
-                {index === selectedIndex ? '▶ ' : '  '}
+          events.map((event, index) => {
+            const isSelected = index === selectedIndex;
+            return (
+              <Box key={event.id}>
+                <Text color={isSelected ? 'cyan' : undefined} bold={isSelected}>
+                  {isSelected ? '▶ ' : '  '}
+                </Text>
                 <Box width={10}>
                   <Text dimColor>
-                    {new Date(event.received_at).toLocaleTimeString()}
+                    {new Date(event.received_at || event.receivedAt || '').toLocaleTimeString()}
                   </Text>
                 </Box>
                 <Box width={15}>
                   <Text color="cyan">
-                    {(event.source_name || event.source_slug || '').slice(0, 13)}
+                    {(event.source_name || event.sourceName || event.source_slug || event.sourceSlug || '').slice(0, 13)}
                   </Text>
                 </Box>
                 <Box width={10}>
-                  <Text>{event.method || '-'}</Text>
+                  <Text color={isSelected ? 'cyan' : undefined}>{event.method || '-'}</Text>
                 </Box>
                 <Box width={12}>
                   <Text color={getStatusColor(event.status || 'pending')}>
                     ● {event.status || 'pending'}
                   </Text>
                 </Box>
-                <Text dimColor>{event.id.slice(0, 8)}...</Text>
-              </Text>
-            </Box>
-          ))
+                <Text dimColor>{event.id.slice(0, 8)}…</Text>
+              </Box>
+            );
+          })
         )}
       </Box>
     </Box>
@@ -127,34 +139,44 @@ function EventDetail({ eventId, events, onBack }: {
 
       <Box flexDirection="column" borderStyle="round" borderColor="cyan" paddingX={2} paddingY={1}>
         <Box>
-          <Box width={18}><Text dimColor>ID:</Text></Box>
+          <Box width={16}><Text dimColor>ID:</Text></Box>
           <Text>{event.id}</Text>
         </Box>
         <Box>
-          <Box width={18}><Text dimColor>Source:</Text></Box>
-          <Text color="cyan">{event.source_name || event.source_slug || '-'}</Text>
+          <Box width={16}><Text dimColor>Source:</Text></Box>
+          <Text color="cyan">{(event.sourceName || event.source_name || event.sourceSlug || event.source_slug || '').trim() || '-'}</Text>
         </Box>
         <Box>
-          <Box width={18}><Text dimColor>Method:</Text></Box>
-          <Text color="yellow">{event.method || '-'}</Text>
+          <Box width={16}><Text dimColor>Method:</Text></Box>
+          <Text color="yellow">{(() => {
+            // Try to extract method from various sources
+            const method = event.method;
+            if (method) return method;
+            // Try headers (stored as :method in new events)
+            if (event.headers) {
+              const headers = typeof event.headers === 'string' ? JSON.parse(event.headers) : event.headers;
+              if (headers[':method']) return headers[':method'];
+            }
+            return '-';
+          })()}</Text>
         </Box>
         <Box>
-          <Box width={18}><Text dimColor>Event Type:</Text></Box>
-          <Text>{event.event_type || '-'}</Text>
+          <Box width={16}><Text dimColor>Event Type:</Text></Box>
+          <Text>{event.eventType || event.event_type || '-'}</Text>
         </Box>
         <Box>
-          <Box width={18}><Text dimColor>Status:</Text></Box>
+          <Box width={16}><Text dimColor>Status:</Text></Box>
           <Text color={getStatusColor(event.status || 'pending')}>
             ● {event.status || 'pending'}
           </Text>
         </Box>
         <Box>
-          <Box width={18}><Text dimColor>Received:</Text></Box>
-          <Text>{new Date(event.received_at).toLocaleString()}</Text>
+          <Box width={16}><Text dimColor>Received:</Text></Box>
+          <Text>{new Date(event.received_at || event.receivedAt || '').toLocaleString()}</Text>
         </Box>
         <Box>
-          <Box width={18}><Text dimColor>Deliveries:</Text></Box>
-          <Text>{event.delivery_count ?? 0}</Text>
+          <Box width={16}><Text dimColor>Deliveries:</Text></Box>
+          <Text>{event.deliveryCount ?? event.delivery_count ?? 0}</Text>
         </Box>
 
         {event.headers && (

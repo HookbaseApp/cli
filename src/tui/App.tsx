@@ -1,6 +1,52 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { render, Box, Text, useInput, useApp } from 'ink';
 import Spinner from 'ink-spinner';
+
+// Help overlay component
+function HelpOverlay({ onClose }: { onClose: () => void }) {
+  useInput((input, key) => {
+    if (key.escape || input === '?' || input === 'q') {
+      onClose();
+    }
+  });
+
+  return (
+    <Box flexDirection="column" borderStyle="round" borderColor="cyan" paddingX={2} paddingY={1}>
+      <Box marginBottom={1}>
+        <Text bold color="cyan">Keyboard Shortcuts</Text>
+      </Box>
+
+      <Box marginBottom={1} flexDirection="column">
+        <Text bold dimColor>Navigation</Text>
+        <Box><Box width={16}><Text>Tab / Shift+Tab</Text></Box><Text dimColor>Switch tabs</Text></Box>
+        <Box><Box width={16}><Text>1-9</Text></Box><Text dimColor>Jump to tab</Text></Box>
+        <Box><Box width={16}><Text>j / k or arrows</Text></Box><Text dimColor>Navigate list up/down</Text></Box>
+        <Box><Box width={16}><Text>Enter</Text></Box><Text dimColor>Select / view details</Text></Box>
+        <Box><Box width={16}><Text>Esc / b</Text></Box><Text dimColor>Go back</Text></Box>
+      </Box>
+
+      <Box marginBottom={1} flexDirection="column">
+        <Text bold dimColor>Actions</Text>
+        <Box><Box width={16}><Text>n</Text></Box><Text dimColor>Create new item</Text></Box>
+        <Box><Box width={16}><Text>d</Text></Box><Text dimColor>Delete item</Text></Box>
+        <Box><Box width={16}><Text>t</Text></Box><Text dimColor>Test / trigger</Text></Box>
+        <Box><Box width={16}><Text>e</Text></Box><Text dimColor>Enable / disable</Text></Box>
+        <Box><Box width={16}><Text>p</Text></Box><Text dimColor>Toggle payload view</Text></Box>
+        <Box><Box width={16}><Text>r</Text></Box><Text dimColor>Refresh data</Text></Box>
+      </Box>
+
+      <Box flexDirection="column">
+        <Text bold dimColor>General</Text>
+        <Box><Box width={16}><Text>?</Text></Box><Text dimColor>Show this help</Text></Box>
+        <Box><Box width={16}><Text>q</Text></Box><Text dimColor>Quit</Text></Box>
+      </Box>
+
+      <Box marginTop={1}>
+        <Text dimColor>Press ? or Esc to close</Text>
+      </Box>
+    </Box>
+  );
+}
 import * as api from '../lib/api.js';
 import * as config from '../lib/config.js';
 
@@ -35,11 +81,11 @@ const TABS: { key: ViewName; label: string }[] = [
   { key: 'sources', label: 'Sources' },
   { key: 'destinations', label: 'Destinations' },
   { key: 'routes', label: 'Routes' },
-  { key: 'tunnels', label: 'Tunnels' },
   { key: 'events', label: 'Events' },
+  { key: 'tunnels', label: 'Tunnels' },
   { key: 'cron', label: 'Cron' },
   { key: 'api-keys', label: 'API Keys' },
-  { key: 'analytics', label: 'Live' },
+  { key: 'analytics', label: 'Analytics' },
 ];
 
 interface TabBarProps {
@@ -81,7 +127,7 @@ function TabBar({ activeTab, onTabChange, disabled }: TabBarProps) {
         </Box>
       ))}
       <Box flexGrow={1} />
-      <Text dimColor>Tab: switch | q: quit</Text>
+      <Text dimColor>Tab: switch | r: refresh | ?: help | q: quit</Text>
     </Box>
   );
 }
@@ -102,6 +148,7 @@ function App() {
   const { exit } = useApp();
   const [activeTab, setActiveTab] = useState<ViewName>('overview');
   const [subView, setSubView] = useState<string | null>(null);
+  const [showHelp, setShowHelp] = useState(false);
   const [data, setData] = useState<AppState>({
     sources: [],
     destinations: [],
@@ -162,8 +209,18 @@ function App() {
   }, [fetchData]);
 
   useInput((input, key) => {
+    // Help overlay toggle
+    if (input === '?' && !subView) {
+      setShowHelp(prev => !prev);
+      return;
+    }
+    // Close help with escape
+    if (showHelp && key.escape) {
+      setShowHelp(false);
+      return;
+    }
     // Global quit
-    if (input === 'q' && !subView) {
+    if (input === 'q' && !subView && !showHelp) {
       exit();
     }
     // Escape to go back
@@ -171,7 +228,7 @@ function App() {
       setSubView(null);
     }
     // Refresh
-    if (input === 'r' && !subView) {
+    if (input === 'r' && !subView && !showHelp) {
       fetchData();
     }
   });
@@ -281,9 +338,15 @@ function App() {
   return (
     <Box flexDirection="column">
       <Header />
-      <TabBar activeTab={activeTab} onTabChange={setActiveTab} disabled={!!subView} />
+      <TabBar activeTab={activeTab} onTabChange={setActiveTab} disabled={!!subView || showHelp} />
 
-      {data.loading && (
+      {showHelp && (
+        <Box marginTop={1}>
+          <HelpOverlay onClose={() => setShowHelp(false)} />
+        </Box>
+      )}
+
+      {!showHelp && data.loading && (
         <Box marginY={1}>
           <Text color="green">
             <Spinner type="dots" />
@@ -292,9 +355,11 @@ function App() {
         </Box>
       )}
 
-      <Box flexDirection="column" marginTop={1}>
-        {renderView()}
-      </Box>
+      {!showHelp && (
+        <Box flexDirection="column" marginTop={1}>
+          {renderView()}
+        </Box>
+      )}
     </Box>
   );
 }

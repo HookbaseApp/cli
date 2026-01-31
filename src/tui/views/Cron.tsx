@@ -100,11 +100,16 @@ function CronList({ jobs, onSelect, onCreate }: {
   ];
 
   useInput((input, key) => {
-    if (key.upArrow) {
+    // Vim-style navigation (j/k) and arrow keys
+    if (key.upArrow || input === 'k') {
       setSelectedIndex(prev => Math.max(0, prev - 1));
     }
-    if (key.downArrow) {
+    if (key.downArrow || input === 'j') {
       setSelectedIndex(prev => Math.min(items.length - 1, prev + 1));
+    }
+    // Create new with 'n'
+    if (input === 'n') {
+      onCreate();
     }
     if (key.return) {
       const item = items[selectedIndex];
@@ -120,49 +125,61 @@ function CronList({ jobs, onSelect, onCreate }: {
     <Box flexDirection="column">
       <Box marginBottom={1}>
         <Text bold>Cron Jobs</Text>
-        <Text dimColor> - {activeJobs.length} active, {inactiveJobs.length} inactive | </Text>
-        <Text dimColor>Enter select, Esc back</Text>
+        <Text dimColor> - {activeJobs.length} active, {inactiveJobs.length} inactive | j/k: navigate | n: new</Text>
       </Box>
 
       <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1} paddingY={1}>
-        {items.length === 1 && (
-          <Box marginY={1}>
-            <Text dimColor>No cron jobs yet. Create one to get started!</Text>
+        {/* Column headers */}
+        <Box borderBottom marginBottom={0}>
+          <Box width={4}><Text> </Text></Box>
+          <Box width={26}><Text bold dimColor>Name</Text></Box>
+          <Box width={16}><Text bold dimColor>Schedule</Text></Box>
+          <Box width={10}><Text bold dimColor>Status</Text></Box>
+          <Box width={14}><Text bold dimColor>Next Run</Text></Box>
+        </Box>
+
+        {jobs.length === 0 && (
+          <Box paddingY={1}>
+            <Text dimColor>No cron jobs yet. Press </Text>
+            <Text color="green">n</Text>
+            <Text dimColor> to schedule your first job.</Text>
           </Box>
         )}
-        {items.map((item, index) => (
-          <Box key={item.id} marginY={0}>
-            <Text
-              color={index === selectedIndex ? 'cyan' : undefined}
-              bold={index === selectedIndex}
-              inverse={index === selectedIndex}
-            >
-              {index === selectedIndex ? ' > ' : '   '}
-            </Text>
-            {'isAction' in item ? (
-              <Text color="green" bold={index === selectedIndex}>{item.name}</Text>
-            ) : (
-              <Box>
-                <Box width={28}>
-                  <Text color={item.is_active ? undefined : 'gray'} bold={index === selectedIndex}>
-                    {item.name.slice(0, 26)}
-                  </Text>
-                </Box>
-                <Box width={16}>
-                  <Text dimColor>{describeCronExpression(item.cron_expression)}</Text>
-                </Box>
-                <Box width={10}>
-                  <Text color={item.is_active ? 'green' : 'gray'}>
-                    {item.is_active ? 'active' : 'inactive'}
-                  </Text>
-                </Box>
-                <Box width={14}>
-                  <Text dimColor>Next: {formatRelativeTime(item.next_run_at)}</Text>
-                </Box>
-              </Box>
-            )}
-          </Box>
-        ))}
+
+        {items.map((item, index) => {
+          const isSelected = index === selectedIndex;
+          const isAction = 'isAction' in item;
+
+          return (
+            <Box key={item.id} marginY={0}>
+              <Text color={isSelected ? 'cyan' : undefined} bold={isSelected}>
+                {isSelected ? '▶ ' : '  '}
+              </Text>
+              {isAction ? (
+                <Text color="green">{item.name}</Text>
+              ) : (
+                <>
+                  <Box width={24}>
+                    <Text color={item.is_active ? (isSelected ? 'cyan' : undefined) : 'gray'} bold={isSelected}>
+                      {item.name.slice(0, 22)}{item.name.length > 22 ? '…' : ''}
+                    </Text>
+                  </Box>
+                  <Box width={16}>
+                    <Text dimColor>{describeCronExpression(item.cron_expression)}</Text>
+                  </Box>
+                  <Box width={10}>
+                    <Text color={item.is_active ? 'green' : 'gray'}>
+                      {item.is_active ? 'active' : 'inactive'}
+                    </Text>
+                  </Box>
+                  <Box width={14}>
+                    <Text dimColor>{formatRelativeTime(item.next_run_at)}</Text>
+                  </Box>
+                </>
+              )}
+            </Box>
+          );
+        })}
       </Box>
     </Box>
   );
@@ -178,9 +195,15 @@ function CronDetail({ jobId, jobs, onBack, onRefresh }: {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [triggering, setTriggering] = useState(false);
+  const [toggling, setToggling] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [executions, setExecutions] = useState<api.CronExecution[]>([]);
   const [loadingExecs, setLoadingExecs] = useState(true);
+  // Track local active state for immediate UI feedback
+  const [localIsActive, setLocalIsActive] = useState<boolean | null>(null);
+
+  // Use local state if set, otherwise use job data
+  const isActive = localIsActive !== null ? localIsActive : job?.is_active;
 
   useEffect(() => {
     const fetchExecutions = async () => {
@@ -195,7 +218,7 @@ function CronDetail({ jobId, jobs, onBack, onRefresh }: {
   }, [jobId]);
 
   useInput(async (input, key) => {
-    if (deleting || triggering) return;
+    if (deleting || triggering || toggling) return;
 
     if (key.escape || input === 'b') {
       if (confirmDelete) {
@@ -229,12 +252,21 @@ function CronDetail({ jobId, jobs, onBack, onRefresh }: {
     }
     if (input === 'e' && !confirmDelete && job) {
       // Toggle enable/disable
+      setToggling(true);
+      const newActiveState = !isActive;
       try {
-        await api.updateCronJob(jobId, { isActive: !job.is_active });
-        onRefresh();
+        const result = await api.updateCronJob(jobId, { isActive: newActiveState });
+        if (result.error) {
+          setMessage(`Error: ${result.error}`);
+        } else {
+          setLocalIsActive(newActiveState);
+          setMessage(newActiveState ? 'Cron job enabled' : 'Cron job disabled');
+          onRefresh();
+        }
       } catch (err) {
         setMessage('Failed to update job');
       }
+      setToggling(false);
     }
     if (input === 'y' && confirmDelete) {
       setDeleting(true);
@@ -244,11 +276,11 @@ function CronDetail({ jobId, jobs, onBack, onRefresh }: {
           setMessage(`Error: ${result.error}`);
           setConfirmDelete(false);
         } else {
-          setMessage('Cron job deleted');
+          setMessage('Cron job deleted successfully');
           setTimeout(() => {
             onRefresh();
             onBack();
-          }, 1000);
+          }, 1500);
         }
       } catch (err) {
         setMessage('Failed to delete');
@@ -279,62 +311,62 @@ function CronDetail({ jobId, jobs, onBack, onRefresh }: {
 
       <Box flexDirection="column" borderStyle="round" borderColor="cyan" paddingX={2} paddingY={1}>
         <Box>
-          <Box width={15}><Text dimColor>ID:</Text></Box>
+          <Box width={16}><Text dimColor>ID:</Text></Box>
           <Text>{job.id}</Text>
         </Box>
         <Box>
-          <Box width={15}><Text dimColor>Name:</Text></Box>
+          <Box width={16}><Text dimColor>Name:</Text></Box>
           <Text bold>{job.name}</Text>
         </Box>
         {job.description && (
           <Box>
-            <Box width={15}><Text dimColor>Description:</Text></Box>
+            <Box width={16}><Text dimColor>Description:</Text></Box>
             <Text>{job.description}</Text>
           </Box>
         )}
         <Box>
-          <Box width={15}><Text dimColor>Schedule:</Text></Box>
+          <Box width={16}><Text dimColor>Schedule:</Text></Box>
           <Text>{job.cron_expression}</Text>
           <Text dimColor> ({describeCronExpression(job.cron_expression)})</Text>
         </Box>
         <Box>
-          <Box width={15}><Text dimColor>Timezone:</Text></Box>
+          <Box width={16}><Text dimColor>Timezone:</Text></Box>
           <Text>{job.timezone}</Text>
         </Box>
         <Box>
-          <Box width={15}><Text dimColor>Status:</Text></Box>
-          <Text color={job.is_active ? 'green' : 'red'}>
-            {job.is_active ? 'Active' : 'Inactive'}
+          <Box width={16}><Text dimColor>Status:</Text></Box>
+          <Text color={isActive ? 'green' : 'red'}>
+            {isActive ? 'Active' : 'Inactive'}
           </Text>
         </Box>
         <Box marginTop={1}>
-          <Box width={15}><Text dimColor>URL:</Text></Box>
+          <Box width={16}><Text dimColor>URL:</Text></Box>
           <Text color="blue">{job.method} </Text>
           <Text>{job.url}</Text>
         </Box>
         <Box>
-          <Box width={15}><Text dimColor>Timeout:</Text></Box>
+          <Box width={16}><Text dimColor>Timeout:</Text></Box>
           <Text>{job.timeout_ms}ms</Text>
         </Box>
         {job.headers && (
           <Box>
-            <Box width={15}><Text dimColor>Headers:</Text></Box>
+            <Box width={16}><Text dimColor>Headers:</Text></Box>
             <Text dimColor>{job.headers}</Text>
           </Box>
         )}
         {job.payload && (
           <Box>
-            <Box width={15}><Text dimColor>Payload:</Text></Box>
-            <Text dimColor>{job.payload.slice(0, 50)}{job.payload.length > 50 ? '...' : ''}</Text>
+            <Box width={16}><Text dimColor>Payload:</Text></Box>
+            <Text dimColor>{job.payload.slice(0, 50)}{job.payload.length > 50 ? '…' : ''}</Text>
           </Box>
         )}
         <Box marginTop={1}>
-          <Box width={15}><Text dimColor>Next run:</Text></Box>
+          <Box width={16}><Text dimColor>Next run:</Text></Box>
           <Text color="cyan">{formatRelativeTime(job.next_run_at)}</Text>
           {job.next_run_at && <Text dimColor> ({formatLocalDateTime(job.next_run_at)})</Text>}
         </Box>
         <Box>
-          <Box width={15}><Text dimColor>Last run:</Text></Box>
+          <Box width={16}><Text dimColor>Last run:</Text></Box>
           <Text>{formatRelativeTime(job.last_run_at)}</Text>
         </Box>
 
@@ -369,9 +401,9 @@ function CronDetail({ jobId, jobs, onBack, onRefresh }: {
           </Box>
         )}
 
-        {(deleting || triggering) && (
+        {(deleting || triggering || toggling) && (
           <Box marginTop={1}>
-            <Text color="yellow">{deleting ? 'Deleting...' : 'Triggering...'}</Text>
+            <Text color="yellow">{deleting ? 'Deleting...' : triggering ? 'Triggering...' : 'Updating...'}</Text>
           </Box>
         )}
 
@@ -448,7 +480,7 @@ function CreateCron({ onBack, onCreated }: {
         setTimeout(() => {
           onCreated();
           onBack();
-        }, 2000);
+        }, 1500);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create cron job');

@@ -257,29 +257,34 @@ export function AnalyticsView({ onNavigate }: AnalyticsViewProps) {
             {liveEvents.length === 0 ? (
               <Text dimColor>No recent events</Text>
             ) : (
-              liveEvents.slice(0, 10).map(event => (
-                <Box key={event.id}>
-                  <Box width={9}>
-                    <Text dimColor>
-                      {new Date(event.received_at).toLocaleTimeString()}
+              liveEvents.slice(0, 10).map(event => {
+                // Handle both camelCase and snake_case naming conventions
+                const receivedAt = event.receivedAt || event.received_at;
+                const sourceName = event.sourceName || event.source_name || event.sourceSlug || event.source_slug || '';
+                return (
+                  <Box key={event.id}>
+                    <Box width={9}>
+                      <Text dimColor>
+                        {receivedAt ? new Date(receivedAt).toLocaleTimeString() : '-'}
+                      </Text>
+                    </Box>
+                    <Box width={12}>
+                      <Text color="cyan">
+                        {sourceName.slice(0, 10)}
+                      </Text>
+                    </Box>
+                    <Box width={8}>
+                      <Text color="yellow">{event.method || '-'}</Text>
+                    </Box>
+                    <Text color={
+                      event.status === 'delivered' ? 'green' :
+                      event.status === 'failed' ? 'red' : 'yellow'
+                    }>
+                      {event.status || 'pending'}
                     </Text>
                   </Box>
-                  <Box width={12}>
-                    <Text color="cyan">
-                      {(event.source_name || event.source_slug || '').slice(0, 10)}
-                    </Text>
-                  </Box>
-                  <Box width={8}>
-                    <Text color="yellow">{event.method || '-'}</Text>
-                  </Box>
-                  <Text color={
-                    event.status === 'delivered' ? 'green' :
-                    event.status === 'failed' ? 'red' : 'yellow'
-                  }>
-                    {event.status || 'pending'}
-                  </Text>
-                </Box>
-              ))
+                );
+              })
             )}
           </Box>
         </Box>

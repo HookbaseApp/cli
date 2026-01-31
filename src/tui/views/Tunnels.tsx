@@ -25,11 +25,16 @@ function TunnelList({ tunnels, onSelect, onCreate }: {
   ];
 
   useInput((input, key) => {
-    if (key.upArrow) {
+    // Vim-style navigation (j/k) and arrow keys
+    if (key.upArrow || input === 'k') {
       setSelectedIndex(prev => Math.max(0, prev - 1));
     }
-    if (key.downArrow) {
+    if (key.downArrow || input === 'j') {
       setSelectedIndex(prev => Math.min(items.length - 1, prev + 1));
+    }
+    // Create new with 'n'
+    if (input === 'n') {
+      onCreate();
     }
     if (key.return) {
       const item = items[selectedIndex];
@@ -54,31 +59,59 @@ function TunnelList({ tunnels, onSelect, onCreate }: {
     <Box flexDirection="column">
       <Box marginBottom={1}>
         <Text bold>Tunnels</Text>
-        <Text dimColor> - {tunnels.length} total | ↑↓ navigate, Enter select</Text>
+        <Text dimColor> - {tunnels.length} total | j/k: navigate | Enter: select | n: new</Text>
       </Box>
 
       <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1}>
-        {items.map((item, index) => (
-          <Box key={item.id}>
-            <Text
-              color={index === selectedIndex ? 'cyan' : undefined}
-              bold={index === selectedIndex}
-              inverse={index === selectedIndex}
-            >
-              {index === selectedIndex ? '▶ ' : '  '}
-              {'isAction' in item ? (
+        {/* Column headers */}
+        <Box borderBottom marginBottom={0}>
+          <Box width={4}><Text> </Text></Box>
+          <Box width={20}><Text bold dimColor>Name</Text></Box>
+          <Box width={18}><Text bold dimColor>Subdomain</Text></Box>
+          <Box width={14}><Text bold dimColor>Status</Text></Box>
+          <Box width={12}><Text bold dimColor>Requests</Text></Box>
+        </Box>
+
+        {tunnels.length === 0 && (
+          <Box paddingY={1}>
+            <Text dimColor>No tunnels yet. Press </Text>
+            <Text color="green">n</Text>
+            <Text dimColor> to create your first tunnel.</Text>
+          </Box>
+        )}
+
+        {items.map((item, index) => {
+          const isSelected = index === selectedIndex;
+          const isAction = 'isAction' in item;
+
+          return (
+            <Box key={item.id}>
+              <Text color={isSelected ? 'cyan' : undefined} bold={isSelected}>
+                {isSelected ? '▶ ' : '  '}
+              </Text>
+              {isAction ? (
                 <Text color="green">{item.name}</Text>
               ) : (
                 <>
-                  <Text>{item.name}</Text>
-                  <Text dimColor> ({item.subdomain}) </Text>
-                  <Text color={getStatusColor(item.status)}>● {item.status}</Text>
-                  <Text dimColor> | {item.total_requests} reqs</Text>
+                  <Box width={18}>
+                    <Text color={isSelected ? 'cyan' : undefined} bold={isSelected}>
+                      {item.name.slice(0, 16)}{item.name.length > 16 ? '…' : ''}
+                    </Text>
+                  </Box>
+                  <Box width={18}>
+                    <Text dimColor>{item.subdomain}</Text>
+                  </Box>
+                  <Box width={14}>
+                    <Text color={getStatusColor(item.status)}>● {item.status}</Text>
+                  </Box>
+                  <Box width={12}>
+                    <Text dimColor>{item.total_requests}</Text>
+                  </Box>
                 </>
               )}
-            </Text>
-          </Box>
-        ))}
+            </Box>
+          );
+        })}
       </Box>
     </Box>
   );
@@ -105,11 +138,15 @@ function TunnelDetail({ tunnelId, tunnels, onBack, onRefresh }: {
   const [message, setMessage] = useState<string | null>(null);
 
   // Connect mode states
-  const [mode, setMode] = useState<'detail' | 'port-input' | 'connecting' | 'connected'>('detail');
+  const [mode, setMode] = useState<'detail' | 'port-input' | 'connecting' | 'connected' | 'history'>('detail');
   const [portInput, setPortInput] = useState('');
   const [connectionStatus, setConnectionStatus] = useState<'disconnected' | 'connected' | 'error'>('disconnected');
   const [requestLogs, setRequestLogs] = useState<RequestLog[]>([]);
   const tunnelClientRef = useRef<TunnelClient | null>(null);
+  // History mode states
+  const [historyRequests, setHistoryRequests] = useState<api.TunnelRequest[]>([]);
+  const [historyStats, setHistoryStats] = useState<api.TunnelRequestStats | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
 
   const apiUrl = config.getApiUrl();
   // Tunnel URL format: api.hookbase.app/t/{subdomain}
@@ -215,6 +252,14 @@ function TunnelDetail({ tunnelId, tunnels, onBack, onRefresh }: {
     // In connecting mode, do nothing
     if (mode === 'connecting') return;
 
+    // In history mode, only allow escape
+    if (mode === 'history') {
+      if (key.escape) {
+        setMode('detail');
+      }
+      return;
+    }
+
     // Normal detail mode
     if (key.escape || input === 'b') {
       if (confirmDelete) {
@@ -225,6 +270,20 @@ function TunnelDetail({ tunnelId, tunnels, onBack, onRefresh }: {
     }
     if (input === 'c' && !confirmDelete && tunnel?.status !== 'connected') {
       setMode('port-input');
+    }
+    if (input === 'h' && !confirmDelete) {
+      // Load request history
+      setMode('history');
+      setHistoryLoading(true);
+      api.getTunnelRequests(tunnelId, { limit: 50 }).then(result => {
+        if (result.data) {
+          setHistoryRequests(result.data.requests);
+          setHistoryStats(result.data.stats);
+        }
+        setHistoryLoading(false);
+      }).catch(() => {
+        setHistoryLoading(false);
+      });
     }
     if (input === 'd' && tunnel?.status === 'connected' && !confirmDelete) {
       setAction('disconnecting');
@@ -253,11 +312,11 @@ function TunnelDetail({ tunnelId, tunnels, onBack, onRefresh }: {
           setMessage(`Error: ${result.error}`);
           setAction('none');
         } else {
-          setMessage('Tunnel deleted');
+          setMessage('Tunnel deleted successfully');
           setTimeout(() => {
             onRefresh();
             onBack();
-          }, 1000);
+          }, 1500);
         }
       } catch (err) {
         setMessage('Failed to delete');
@@ -402,6 +461,98 @@ function TunnelDetail({ tunnelId, tunnels, onBack, onRefresh }: {
     );
   }
 
+  // History mode - show request history from API
+  if (mode === 'history') {
+    const getMethodColor = (method: string) => {
+      switch (method) {
+        case 'GET': return 'cyan';
+        case 'POST': return 'green';
+        case 'PUT': return 'yellow';
+        case 'PATCH': return 'magenta';
+        case 'DELETE': return 'red';
+        default: return 'white';
+      }
+    };
+
+    return (
+      <Box flexDirection="column">
+        <Box marginBottom={1}>
+          <Text bold>Request History</Text>
+          <Text dimColor> - {tunnel.name} | Press Esc to go back</Text>
+        </Box>
+
+        {historyLoading ? (
+          <Box>
+            <Text color="yellow">
+              <Spinner type="dots" />
+            </Text>
+            <Text> Loading request history...</Text>
+          </Box>
+        ) : (
+          <>
+            {/* Stats summary */}
+            {historyStats && (
+              <Box marginBottom={1}>
+                <Box borderStyle="round" borderColor="gray" paddingX={1} marginRight={1}>
+                  <Text bold color="cyan">{historyStats.total}</Text>
+                  <Text dimColor> Total</Text>
+                </Box>
+                <Box borderStyle="round" borderColor="gray" paddingX={1} marginRight={1}>
+                  <Text bold color="green">{historyStats.successful}</Text>
+                  <Text dimColor> Success</Text>
+                </Box>
+                <Box borderStyle="round" borderColor="gray" paddingX={1} marginRight={1}>
+                  <Text bold color="red">{historyStats.failed}</Text>
+                  <Text dimColor> Failed</Text>
+                </Box>
+                <Box borderStyle="round" borderColor="gray" paddingX={1}>
+                  <Text bold color="blue">{historyStats.avg_duration?.toFixed(0) || 0}ms</Text>
+                  <Text dimColor> Avg</Text>
+                </Box>
+              </Box>
+            )}
+
+            {/* Request list */}
+            <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1} height={15}>
+              {/* Header */}
+              <Box borderBottom>
+                <Box width={12}><Text bold dimColor>Time</Text></Box>
+                <Box width={8}><Text bold dimColor>Method</Text></Box>
+                <Box width={28}><Text bold dimColor>Path</Text></Box>
+                <Box width={8}><Text bold dimColor>Status</Text></Box>
+                <Box width={10}><Text bold dimColor>Duration</Text></Box>
+              </Box>
+
+              {historyRequests.length === 0 ? (
+                <Text dimColor>No requests recorded yet</Text>
+              ) : (
+                historyRequests.slice(0, 12).map(req => (
+                  <Box key={req.id}>
+                    <Box width={12}>
+                      <Text dimColor>{new Date(req.created_at).toLocaleTimeString()}</Text>
+                    </Box>
+                    <Box width={8}>
+                      <Text color={getMethodColor(req.method)} bold>{req.method}</Text>
+                    </Box>
+                    <Box width={28}>
+                      <Text>{req.path.slice(0, 26)}{req.path.length > 26 ? '..' : ''}</Text>
+                    </Box>
+                    <Box width={8}>
+                      <Text color={req.success ? 'green' : 'red'}>{req.status_code || '-'}</Text>
+                    </Box>
+                    <Box width={10}>
+                      <Text dimColor>{req.duration || 0}ms</Text>
+                    </Box>
+                  </Box>
+                ))
+              )}
+            </Box>
+          </>
+        )}
+      </Box>
+    );
+  }
+
   // Normal detail mode
   const showConnectOption = tunnel.status !== 'connected';
 
@@ -409,28 +560,28 @@ function TunnelDetail({ tunnelId, tunnels, onBack, onRefresh }: {
     <Box flexDirection="column">
       <Box marginBottom={1}>
         <Text bold>Tunnel Details</Text>
-        <Text dimColor> - Esc: back{showConnectOption ? ' | c: connect' : ''} | d: disconnect | x: delete</Text>
+        <Text dimColor> - Esc: back{showConnectOption ? ' | c: connect' : ''} | h: history | d: disconnect | x: delete</Text>
       </Box>
 
       <Box flexDirection="column" borderStyle="round" borderColor="cyan" paddingX={2} paddingY={1}>
         <Box>
-          <Box width={18}><Text dimColor>ID:</Text></Box>
+          <Box width={16}><Text dimColor>ID:</Text></Box>
           <Text>{tunnel.id}</Text>
         </Box>
         <Box>
-          <Box width={18}><Text dimColor>Name:</Text></Box>
+          <Box width={16}><Text dimColor>Name:</Text></Box>
           <Text bold>{tunnel.name}</Text>
         </Box>
         <Box>
-          <Box width={18}><Text dimColor>Subdomain:</Text></Box>
+          <Box width={16}><Text dimColor>Subdomain:</Text></Box>
           <Text color="cyan">{tunnel.subdomain}</Text>
         </Box>
         <Box>
-          <Box width={18}><Text dimColor>URL:</Text></Box>
+          <Box width={16}><Text dimColor>URL:</Text></Box>
           <Text color="blue">{tunnelUrl}/{tunnel.subdomain}</Text>
         </Box>
         <Box>
-          <Box width={18}><Text dimColor>Status:</Text></Box>
+          <Box width={16}><Text dimColor>Status:</Text></Box>
           <Text color={
             tunnel.status === 'connected' ? 'green' :
             tunnel.status === 'error' ? 'red' : 'gray'
@@ -439,11 +590,11 @@ function TunnelDetail({ tunnelId, tunnels, onBack, onRefresh }: {
           </Text>
         </Box>
         <Box>
-          <Box width={18}><Text dimColor>Total Requests:</Text></Box>
+          <Box width={16}><Text dimColor>Total Requests:</Text></Box>
           <Text>{tunnel.total_requests}</Text>
         </Box>
         <Box>
-          <Box width={18}><Text dimColor>Last Connected:</Text></Box>
+          <Box width={16}><Text dimColor>Last Connected:</Text></Box>
           <Text>{tunnel.last_connected_at ? new Date(tunnel.last_connected_at).toLocaleString() : 'Never'}</Text>
         </Box>
 
@@ -510,7 +661,7 @@ function CreateTunnel({ onBack, onCreated }: {
         setTimeout(() => {
           onCreated();
           onBack();
-        }, 2000);
+        }, 1500);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create tunnel');

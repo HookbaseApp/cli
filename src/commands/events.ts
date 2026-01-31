@@ -71,10 +71,10 @@ export async function eventsListCommand(options: {
     ['ID', 'Source', 'Type', 'Status', 'Received'],
     events.map(e => [
       e.id,
-      e.source_name || e.source_slug || e.source_id,
-      e.event_type || e.method || '-',
+      e.source_name || e.sourceName || e.source_slug || e.sourceSlug || e.source_id || e.sourceId || '-',
+      e.event_type || e.eventType || e.method || '-',
       formatStatus(e.status),
-      formatDate(e.received_at),
+      formatDate(e.received_at || e.receivedAt || ''),
     ])
   );
 
@@ -122,7 +122,7 @@ export async function eventsGetCommand(
   logger.log(`Status:    ${formatStatus(event.status)}`);
   logger.log(`Size:      ${event.payload_size || 0} bytes`);
   logger.log(`Signature: ${event.signature_valid === true ? logger.green('valid') : event.signature_valid === false ? logger.red('invalid') : logger.dimText('not verified')}`);
-  logger.log(`Received:  ${formatDate(event.received_at)}`);
+  logger.log(`Received:  ${formatDate(event.received_at || event.receivedAt || '')}`);
 
   if (event.headers && Object.keys(event.headers).length > 0) {
     logger.log('');

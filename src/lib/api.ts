@@ -386,17 +386,27 @@ export async function testDestination(destId: string): Promise<ApiResponse<{
 export interface Route {
   id: string;
   name: string;
-  source_id: string;
-  destination_id: string;
+  source_id?: string;
+  sourceId?: string;
+  destination_id?: string;
+  destinationId?: string;
   source_name?: string;
+  sourceName?: string;
   destination_name?: string;
+  destinationName?: string;
   filter_id?: string;
+  filterId?: string;
   transform_id?: string;
+  transformId?: string;
   schema_id?: string;
+  schemaId?: string;
   priority: number;
-  is_active: number;
+  is_active?: number | boolean;
+  isActive?: number | boolean;
   delivery_count?: number;
+  deliveryCount?: number;
   created_at?: string;
+  createdAt?: string;
 }
 
 export interface FilterCondition {
@@ -550,24 +560,78 @@ export async function disconnectTunnel(tunnelId: string): Promise<ApiResponse<{ 
   return request<{ success: boolean }>('POST', `/api/organizations/${org.id}/tunnels/${tunnelId}/disconnect`);
 }
 
+export interface TunnelRequest {
+  id: string;
+  tunnel_id: string;
+  organization_id: string;
+  method: string;
+  path: string;
+  status_code: number | null;
+  duration: number | null;
+  request_size: number | null;
+  response_size: number | null;
+  success: number;
+  error_message: string | null;
+  user_agent: string | null;
+  ip_address: string | null;
+  created_at: string;
+}
+
+export interface TunnelRequestStats {
+  total: number;
+  successful: number;
+  failed: number;
+  avg_duration: number | null;
+  max_duration: number | null;
+  total_request_bytes: number | null;
+  total_response_bytes: number | null;
+}
+
+export async function getTunnelRequests(tunnelId: string, options?: {
+  limit?: number;
+  offset?: number;
+}): Promise<ApiResponse<{ requests: TunnelRequest[]; total: number; stats: TunnelRequestStats; limit: number; offset: number }>> {
+  const org = requireOrg();
+  if (!org) return { error: 'No organization selected', status: 0 };
+
+  const params = new URLSearchParams();
+  if (options?.limit) params.set('limit', String(options.limit));
+  if (options?.offset) params.set('offset', String(options.offset));
+
+  const query = params.toString() ? `?${params.toString()}` : '';
+  return request<{ requests: TunnelRequest[]; total: number; stats: TunnelRequestStats; limit: number; offset: number }>(
+    'GET',
+    `/api/organizations/${org.id}/tunnels/${tunnelId}/requests${query}`
+  );
+}
+
 // ============================================================================
 // Events
 // ============================================================================
 
 export interface Event {
   id: string;
-  source_id: string;
+  // Support both snake_case and camelCase naming conventions
+  source_id?: string;
+  sourceId?: string;
   source_name?: string;
+  sourceName?: string;
   source_slug?: string;
+  sourceSlug?: string;
   event_type?: string;
+  eventType?: string;
   method?: string;
   path?: string;
   headers?: Record<string, string>;
   payload_size?: number;
+  payloadSize?: number;
   signature_valid?: boolean;
+  signatureValid?: boolean;
   status?: 'delivered' | 'failed' | 'pending' | 'partial' | 'no_routes';
   delivery_count?: number;
-  received_at: string;
+  deliveryCount?: number;
+  received_at?: string;
+  receivedAt?: string;
 }
 
 export interface EventWithPayload extends Event {

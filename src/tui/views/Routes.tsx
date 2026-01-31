@@ -25,11 +25,16 @@ function RouteList({ routes, onSelect, onCreate }: {
   ];
 
   useInput((input, key) => {
-    if (key.upArrow) {
+    // Vim-style navigation (j/k) and arrow keys
+    if (key.upArrow || input === 'k') {
       setSelectedIndex(prev => Math.max(0, prev - 1));
     }
-    if (key.downArrow) {
+    if (key.downArrow || input === 'j') {
       setSelectedIndex(prev => Math.min(items.length - 1, prev + 1));
+    }
+    // Create new with 'n'
+    if (input === 'n') {
+      onCreate();
     }
     if (key.return) {
       const item = items[selectedIndex];
@@ -45,19 +50,28 @@ function RouteList({ routes, onSelect, onCreate }: {
     <Box flexDirection="column">
       <Box marginBottom={1}>
         <Text bold>Routes</Text>
-        <Text dimColor> - {routes.length} total | ↑↓ navigate, Enter select, Esc back</Text>
+        <Text dimColor> - {routes.length} total | j/k: navigate | Enter: select | n: new</Text>
       </Box>
 
       <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1}>
         {/* Header */}
         <Box borderBottom>
-          <Box width={24}><Text bold dimColor>Name</Text></Box>
+          <Box width={4}><Text> </Text></Box>
+          <Box width={22}><Text bold dimColor>Name</Text></Box>
           <Box width={20}><Text bold dimColor>Source</Text></Box>
           <Box width={20}><Text bold dimColor>Destination</Text></Box>
           <Box width={10}><Text bold dimColor>Priority</Text></Box>
           <Box width={10}><Text bold dimColor>Status</Text></Box>
           <Box width={12}><Text bold dimColor>Deliveries</Text></Box>
         </Box>
+
+        {routes.length === 0 && (
+          <Box paddingY={1}>
+            <Text dimColor>No routes yet. Press </Text>
+            <Text color="green">n</Text>
+            <Text dimColor> to create your first route.</Text>
+          </Box>
+        )}
 
         {items.map((item, index) => {
           const isSelected = index === selectedIndex;
@@ -70,32 +84,38 @@ function RouteList({ routes, onSelect, onCreate }: {
               </Text>
               {isAction ? (
                 <Text color="green">{item.name}</Text>
-              ) : (
-                <>
-                  <Box width={22}>
-                    <Text color={isSelected ? 'cyan' : undefined} bold={isSelected}>
-                      {truncate(item.name, 20)}
-                    </Text>
-                  </Box>
-                  <Box width={20}>
-                    <Text dimColor>{truncate(item.source_name || '-', 18)}</Text>
-                  </Box>
-                  <Box width={20}>
-                    <Text dimColor>{truncate(item.destination_name || '-', 18)}</Text>
-                  </Box>
-                  <Box width={10}>
-                    <Text>{item.priority}</Text>
-                  </Box>
-                  <Box width={10}>
-                    <Text color={item.is_active ? 'green' : 'red'}>
-                      {item.is_active ? 'Active' : 'Inactive'}
-                    </Text>
-                  </Box>
-                  <Box width={12}>
-                    <Text dimColor>{item.delivery_count ?? 0}</Text>
-                  </Box>
-                </>
-              )}
+              ) : (() => {
+                const itemActive = (item.isActive ?? item.is_active) === true || (item.isActive ?? item.is_active) === 1;
+                const sourceName = item.sourceName || item.source_name || '-';
+                const destName = item.destinationName || item.destination_name || '-';
+                const deliveryCount = item.deliveryCount ?? item.delivery_count ?? 0;
+                return (
+                  <>
+                    <Box width={22}>
+                      <Text color={isSelected ? 'cyan' : undefined} bold={isSelected}>
+                        {truncate(item.name, 20)}
+                      </Text>
+                    </Box>
+                    <Box width={20}>
+                      <Text dimColor>{truncate(sourceName, 18)}</Text>
+                    </Box>
+                    <Box width={20}>
+                      <Text dimColor>{truncate(destName, 18)}</Text>
+                    </Box>
+                    <Box width={10}>
+                      <Text>{item.priority}</Text>
+                    </Box>
+                    <Box width={10}>
+                      <Text color={itemActive ? 'green' : 'red'}>
+                        {itemActive ? 'Active' : 'Inactive'}
+                      </Text>
+                    </Box>
+                    <Box width={12}>
+                      <Text dimColor>{deliveryCount}</Text>
+                    </Box>
+                  </>
+                );
+              })()}
             </Box>
           );
         })}
@@ -109,6 +129,13 @@ function truncate(str: string, len: number): string {
   return str.slice(0, len - 1) + '…';
 }
 
+// Helper to get active state from route (handles both naming conventions and types)
+function getRouteIsActive(route: api.Route | undefined): boolean {
+  if (!route) return false;
+  const val = route.isActive ?? route.is_active;
+  return val === true || val === 1;
+}
+
 function RouteDetail({ routeId, routes, onBack, onRefresh }: {
   routeId: string;
   routes: api.Route[];
@@ -120,6 +147,11 @@ function RouteDetail({ routeId, routes, onBack, onRefresh }: {
   const [deleting, setDeleting] = useState(false);
   const [toggling, setToggling] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  // Track local active state for immediate UI feedback
+  const [localIsActive, setLocalIsActive] = useState<boolean | null>(null);
+
+  // Use local state if set, otherwise use route data
+  const isActive = localIsActive !== null ? localIsActive : getRouteIsActive(route);
 
   useInput(async (input, key) => {
     if (deleting || toggling) return;
@@ -142,11 +174,11 @@ function RouteDetail({ routeId, routes, onBack, onRefresh }: {
           setMessage(`Error: ${result.error}`);
           setConfirmDelete(false);
         } else {
-          setMessage('Route deleted');
+          setMessage('Route deleted successfully');
           setTimeout(() => {
             onRefresh();
             onBack();
-          }, 1000);
+          }, 1500);
         }
       } catch (err) {
         setMessage('Failed to delete');
@@ -159,12 +191,14 @@ function RouteDetail({ routeId, routes, onBack, onRefresh }: {
     }
     if (input === 't' && route && !confirmDelete) {
       setToggling(true);
+      const newActiveState = !isActive;
       try {
-        const result = await api.updateRoute(routeId, { isActive: !route.is_active });
+        const result = await api.updateRoute(routeId, { isActive: newActiveState });
         if (result.error) {
           setMessage(`Error: ${result.error}`);
         } else {
-          setMessage(route.is_active ? 'Route disabled' : 'Route enabled');
+          setLocalIsActive(newActiveState);
+          setMessage(newActiveState ? 'Route enabled' : 'Route disabled');
           onRefresh();
         }
       } catch (err) {
@@ -192,51 +226,51 @@ function RouteDetail({ routeId, routes, onBack, onRefresh }: {
 
       <Box flexDirection="column" borderStyle="round" borderColor="cyan" paddingX={2} paddingY={1}>
         <Box>
-          <Box width={18}><Text dimColor>ID:</Text></Box>
+          <Box width={16}><Text dimColor>ID:</Text></Box>
           <Text>{route.id}</Text>
         </Box>
         <Box>
-          <Box width={18}><Text dimColor>Name:</Text></Box>
+          <Box width={16}><Text dimColor>Name:</Text></Box>
           <Text bold>{route.name}</Text>
         </Box>
         <Box>
-          <Box width={18}><Text dimColor>Source:</Text></Box>
-          <Text color="blue">{route.source_name || route.source_id}</Text>
+          <Box width={16}><Text dimColor>Source:</Text></Box>
+          <Text color="blue">{route.sourceName || route.source_name || route.sourceId || route.source_id}</Text>
         </Box>
         <Box>
-          <Box width={18}><Text dimColor>Destination:</Text></Box>
-          <Text color="magenta">{route.destination_name || route.destination_id}</Text>
+          <Box width={16}><Text dimColor>Destination:</Text></Box>
+          <Text color="magenta">{route.destinationName || route.destination_name || route.destinationId || route.destination_id}</Text>
         </Box>
         <Box>
-          <Box width={18}><Text dimColor>Priority:</Text></Box>
+          <Box width={16}><Text dimColor>Priority:</Text></Box>
           <Text>{route.priority}</Text>
         </Box>
         <Box>
-          <Box width={18}><Text dimColor>Status:</Text></Box>
-          <Text color={route.is_active ? 'green' : 'red'}>
-            {route.is_active ? 'Active' : 'Inactive'}
+          <Box width={16}><Text dimColor>Status:</Text></Box>
+          <Text color={isActive ? 'green' : 'red'}>
+            {isActive ? 'Active' : 'Inactive'}
           </Text>
         </Box>
         <Box>
-          <Box width={18}><Text dimColor>Deliveries:</Text></Box>
-          <Text>{route.delivery_count ?? 0}</Text>
+          <Box width={16}><Text dimColor>Deliveries:</Text></Box>
+          <Text>{route.deliveryCount ?? route.delivery_count ?? 0}</Text>
         </Box>
-        {route.filter_id && (
+        {(route.filterId || route.filter_id) && (
           <Box>
-            <Box width={18}><Text dimColor>Filter ID:</Text></Box>
-            <Text dimColor>{route.filter_id}</Text>
+            <Box width={16}><Text dimColor>Filter ID:</Text></Box>
+            <Text dimColor>{route.filterId || route.filter_id}</Text>
           </Box>
         )}
-        {route.transform_id && (
+        {(route.transformId || route.transform_id) && (
           <Box>
-            <Box width={18}><Text dimColor>Transform ID:</Text></Box>
-            <Text dimColor>{route.transform_id}</Text>
+            <Box width={16}><Text dimColor>Transform ID:</Text></Box>
+            <Text dimColor>{route.transformId || route.transform_id}</Text>
           </Box>
         )}
-        {route.created_at && (
+        {(route.createdAt || route.created_at) && (
           <Box marginTop={1}>
-            <Box width={18}><Text dimColor>Created:</Text></Box>
-            <Text dimColor>{new Date(route.created_at).toLocaleString()}</Text>
+            <Box width={16}><Text dimColor>Created:</Text></Box>
+            <Text dimColor>{new Date(route.createdAt || route.created_at!).toLocaleString()}</Text>
           </Box>
         )}
 
@@ -329,7 +363,7 @@ function CreateRoute({ sources, destinations, onBack, onCreated }: {
         setTimeout(() => {
           onCreated();
           onBack();
-        }, 2000);
+        }, 1500);
       }
     } catch (err) {
       setError('Failed to create route');

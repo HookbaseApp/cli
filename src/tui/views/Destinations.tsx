@@ -23,11 +23,16 @@ function DestinationList({ destinations, onSelect, onCreate }: {
   ];
 
   useInput((input, key) => {
-    if (key.upArrow) {
+    // Vim-style navigation (j/k) and arrow keys
+    if (key.upArrow || input === 'k') {
       setSelectedIndex(prev => Math.max(0, prev - 1));
     }
-    if (key.downArrow) {
+    if (key.downArrow || input === 'j') {
       setSelectedIndex(prev => Math.min(items.length - 1, prev + 1));
+    }
+    // Create new with 'n'
+    if (input === 'n') {
+      onCreate();
     }
     if (key.return) {
       const item = items[selectedIndex];
@@ -43,30 +48,59 @@ function DestinationList({ destinations, onSelect, onCreate }: {
     <Box flexDirection="column">
       <Box marginBottom={1}>
         <Text bold>Destinations</Text>
-        <Text dimColor> - {destinations.length} total | ↑↓ navigate, Enter select</Text>
+        <Text dimColor> - {destinations.length} total | j/k: navigate | Enter: select | n: new</Text>
       </Box>
 
       <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1}>
-        {items.map((item, index) => (
-          <Box key={item.id}>
-            <Text
-              color={index === selectedIndex ? 'cyan' : undefined}
-              bold={index === selectedIndex}
-              inverse={index === selectedIndex}
-            >
-              {index === selectedIndex ? '▶ ' : '  '}
-              {'isAction' in item ? (
+        {/* Column headers */}
+        <Box borderBottom marginBottom={0}>
+          <Box width={4}><Text> </Text></Box>
+          <Box width={20}><Text bold dimColor>Name</Text></Box>
+          <Box width={8}><Text bold dimColor>Method</Text></Box>
+          <Box width={40}><Text bold dimColor>URL</Text></Box>
+          <Box width={10}><Text bold dimColor>Deliveries</Text></Box>
+        </Box>
+
+        {destinations.length === 0 && (
+          <Box paddingY={1} flexDirection="column">
+            <Text dimColor>No destinations yet. Press </Text>
+            <Text color="green">n</Text>
+            <Text dimColor> to create your first destination.</Text>
+          </Box>
+        )}
+
+        {items.map((item, index) => {
+          const isSelected = index === selectedIndex;
+          const isAction = 'isAction' in item;
+
+          return (
+            <Box key={item.id}>
+              <Text color={isSelected ? 'cyan' : undefined} bold={isSelected}>
+                {isSelected ? '▶ ' : '  '}
+              </Text>
+              {isAction ? (
                 <Text color="green">{item.name}</Text>
               ) : (
                 <>
-                  <Text>{item.name}</Text>
-                  <Text dimColor> → </Text>
-                  <Text color="blue">{item.url.slice(0, 40)}{item.url.length > 40 ? '...' : ''}</Text>
+                  <Box width={18}>
+                    <Text color={isSelected ? 'cyan' : undefined} bold={isSelected}>
+                      {item.name.slice(0, 16)}{item.name.length > 16 ? '…' : ''}
+                    </Text>
+                  </Box>
+                  <Box width={8}>
+                    <Text color="yellow">{item.method || 'POST'}</Text>
+                  </Box>
+                  <Box width={40}>
+                    <Text color="blue">{item.url.slice(0, 38)}{item.url.length > 38 ? '…' : ''}</Text>
+                  </Box>
+                  <Box width={10}>
+                    <Text dimColor>{(item as any).delivery_count ?? (item as any).deliveryCount ?? 0}</Text>
+                  </Box>
                 </>
               )}
-            </Text>
-          </Box>
-        ))}
+            </Box>
+          );
+        })}
       </Box>
     </Box>
   );
@@ -80,7 +114,7 @@ function DestinationDetail({ destId, destinations, onBack, onRefresh }: {
 }) {
   const dest = destinations.find(d => d.id === destId);
   const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<{ success: boolean; status: number; time: number } | null>(null);
+  const [testResult, setTestResult] = useState<{ success: boolean; status: number; time: number; error?: string } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -99,15 +133,20 @@ function DestinationDetail({ destId, destinations, onBack, onRefresh }: {
       setTesting(true);
       try {
         const result = await api.testDestination(destId);
-        if (result.data) {
+        if (result.error) {
+          setTestResult({ success: false, status: 0, time: 0, error: result.error });
+        } else if (result.data) {
+          // Handle both camelCase and snake_case naming conventions
+          const data = result.data as Record<string, unknown>;
           setTestResult({
-            success: result.data.success,
-            status: result.data.statusCode,
-            time: result.data.responseTime,
+            success: data.success === true,
+            status: (data.statusCode ?? data.status_code ?? 0) as number,
+            time: (data.responseTime ?? data.response_time ?? 0) as number,
+            error: data.error as string | undefined,
           });
         }
       } catch (err) {
-        setTestResult({ success: false, status: 0, time: 0 });
+        setTestResult({ success: false, status: 0, time: 0, error: err instanceof Error ? err.message : 'Test failed' });
       }
       setTesting(false);
     }
@@ -122,11 +161,11 @@ function DestinationDetail({ destId, destinations, onBack, onRefresh }: {
           setMessage(`Error: ${result.error}`);
           setConfirmDelete(false);
         } else {
-          setMessage('Destination deleted');
+          setMessage('Destination deleted successfully');
           setTimeout(() => {
             onRefresh();
             onBack();
-          }, 1000);
+          }, 1500);
         }
       } catch (err) {
         setMessage('Failed to delete');
@@ -158,33 +197,33 @@ function DestinationDetail({ destId, destinations, onBack, onRefresh }: {
 
       <Box flexDirection="column" borderStyle="round" borderColor="cyan" paddingX={2} paddingY={1}>
         <Box>
-          <Box width={15}><Text dimColor>ID:</Text></Box>
+          <Box width={16}><Text dimColor>ID:</Text></Box>
           <Text>{dest.id}</Text>
         </Box>
         <Box>
-          <Box width={15}><Text dimColor>Name:</Text></Box>
+          <Box width={16}><Text dimColor>Name:</Text></Box>
           <Text bold>{dest.name}</Text>
         </Box>
         <Box>
-          <Box width={15}><Text dimColor>URL:</Text></Box>
+          <Box width={16}><Text dimColor>URL:</Text></Box>
           <Text color="blue">{dest.url}</Text>
         </Box>
         <Box>
-          <Box width={15}><Text dimColor>Method:</Text></Box>
+          <Box width={16}><Text dimColor>Method:</Text></Box>
           <Text color="yellow">{dest.method || 'POST'}</Text>
         </Box>
         <Box>
-          <Box width={15}><Text dimColor>Auth Type:</Text></Box>
+          <Box width={16}><Text dimColor>Auth Type:</Text></Box>
           <Text>{dest.auth_type || (dest as any).authType || 'none'}</Text>
         </Box>
         <Box>
-          <Box width={15}><Text dimColor>Status:</Text></Box>
+          <Box width={16}><Text dimColor>Status:</Text></Box>
           <Text color={(dest.is_active || (dest as any).isActive) ? 'green' : 'red'}>
             {(dest.is_active || (dest as any).isActive) ? 'Active' : 'Inactive'}
           </Text>
         </Box>
         <Box>
-          <Box width={15}><Text dimColor>Deliveries:</Text></Box>
+          <Box width={16}><Text dimColor>Deliveries:</Text></Box>
           <Text>{dest.delivery_count ?? (dest as any).deliveryCount ?? 0}</Text>
         </Box>
 
@@ -197,9 +236,13 @@ function DestinationDetail({ destId, destinations, onBack, onRefresh }: {
         {testResult && (
           <Box marginTop={1} flexDirection="column">
             <Text bold>Test Result:</Text>
-            <Text color={testResult.success ? 'green' : 'red'}>
-              {testResult.success ? '✓' : '✗'} Status: {testResult.status} | Time: {testResult.time}ms
-            </Text>
+            {testResult.error ? (
+              <Text color="red">✗ Error: {testResult.error}</Text>
+            ) : (
+              <Text color={testResult.success ? 'green' : 'red'}>
+                {testResult.success ? '✓' : '✗'} Status: {testResult.status || 'N/A'} | Time: {testResult.time || 0}ms
+              </Text>
+            )}
           </Box>
         )}
 
@@ -262,7 +305,7 @@ function CreateDestination({ onBack, onCreated }: {
         setTimeout(() => {
           onCreated();
           onBack();
-        }, 2000);
+        }, 1500);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create destination');

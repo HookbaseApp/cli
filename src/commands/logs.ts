@@ -41,9 +41,9 @@ export async function logsCommand(options: { limit?: string; follow?: boolean })
   logger.table(
     ['Time', 'Source', 'Event Type', 'Status'],
     events.map(e => [
-      new Date(e.received_at).toLocaleString(),
-      (e.source_name || e.source_slug || e.source_id || '').slice(0, 20),
-      e.event_type || e.method || '-',
+      new Date(e.received_at || e.receivedAt || '').toLocaleString(),
+      (e.source_name || e.sourceName || e.source_slug || e.sourceSlug || e.source_id || e.sourceId || '').slice(0, 20),
+      e.event_type || e.eventType || e.method || '-',
       e.status === 'delivered' ? logger.green('delivered') :
         e.status === 'failed' ? logger.red('failed') :
         e.status === 'pending' ? logger.yellow('pending') :

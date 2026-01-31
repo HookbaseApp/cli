@@ -67,17 +67,18 @@ export function OverviewView({ data, onNavigate }: OverviewProps) {
   };
 
   useInput((input, key) => {
-    if (key.leftArrow) {
+    // Vim-style navigation (h/l for horizontal, j/k for vertical) and arrow keys
+    if (key.leftArrow || input === 'h') {
       setSelectedCard(prev => (prev - 1 + cards.length) % cards.length);
     }
-    if (key.rightArrow) {
+    if (key.rightArrow || input === 'l') {
       setSelectedCard(prev => (prev + 1) % cards.length);
     }
-    if (key.upArrow) {
+    if (key.upArrow || input === 'k') {
       // Row 2 (4-7) -> Row 1 (0-3)
       setSelectedCard(prev => prev >= 4 ? Math.min(prev - 4, 3) : prev);
     }
-    if (key.downArrow) {
+    if (key.downArrow || input === 'j') {
       // Row 1 (0-3) -> Row 2 (4-7)
       setSelectedCard(prev => prev < 4 ? Math.min(prev + 4, 7) : prev);
     }
@@ -93,7 +94,7 @@ export function OverviewView({ data, onNavigate }: OverviewProps) {
     <Box flexDirection="column">
       <Box marginBottom={1}>
         <Text bold>Dashboard Overview</Text>
-        <Text dimColor> - Use arrow keys to select, Enter to view</Text>
+        <Text dimColor> - h/j/k/l or arrows: navigate | Enter: view | ?: help</Text>
       </Box>
 
       <Box flexDirection="column">
@@ -228,31 +229,41 @@ export function OverviewView({ data, onNavigate }: OverviewProps) {
         <Text bold>Recent Activity</Text>
         <Box marginTop={1} flexDirection="column">
           {data.events.length === 0 ? (
-            <Text dimColor>No recent events</Text>
+            <Box flexDirection="column">
+              <Text dimColor>No events yet. Webhooks will appear here once you:</Text>
+              <Text dimColor>  1. Create a source (press 2 or navigate to Sources)</Text>
+              <Text dimColor>  2. Send webhooks to your ingest URL</Text>
+            </Box>
           ) : (
-            data.events.slice(0, 5).map(event => (
-              <Box key={event.id}>
-                <Box width={10}>
-                  <Text dimColor>
-                    {new Date(event.received_at).toLocaleTimeString()}
+            data.events.slice(0, 5).map(event => {
+              // Handle both camelCase and snake_case naming conventions
+              const receivedAt = event.receivedAt || event.received_at;
+              const sourceName = event.sourceName || event.source_name || event.sourceSlug || event.source_slug || '';
+              const eventType = event.eventType || event.event_type || event.method || '-';
+              return (
+                <Box key={event.id}>
+                  <Box width={10}>
+                    <Text dimColor>
+                      {receivedAt ? new Date(receivedAt).toLocaleTimeString() : '-'}
+                    </Text>
+                  </Box>
+                  <Box width={15}>
+                    <Text color="cyan">
+                      {sourceName.slice(0, 13)}
+                    </Text>
+                  </Box>
+                  <Box width={12}>
+                    <Text>{eventType}</Text>
+                  </Box>
+                  <Text color={
+                    event.status === 'delivered' ? 'green' :
+                    event.status === 'failed' ? 'red' : 'yellow'
+                  }>
+                    {event.status || 'pending'}
                   </Text>
                 </Box>
-                <Box width={15}>
-                  <Text color="cyan">
-                    {(event.source_name || event.source_slug || '').slice(0, 13)}
-                  </Text>
-                </Box>
-                <Box width={12}>
-                  <Text>{event.event_type || event.method || '-'}</Text>
-                </Box>
-                <Text color={
-                  event.status === 'delivered' ? 'green' :
-                  event.status === 'failed' ? 'red' : 'yellow'
-                }>
-                  {event.status || 'pending'}
-                </Text>
-              </Box>
-            ))
+              );
+            })
           )}
         </Box>
       </Box>

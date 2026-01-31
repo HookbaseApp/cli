@@ -107,7 +107,7 @@ function EventsPanel({ events }: { events: api.Event[] }) {
         {events.slice(0, 8).map(event => (
           <Box key={event.id}>
             <Box width={10}>
-              <Text dimColor>{formatTime(event.received_at)}</Text>
+              <Text dimColor>{formatTime(event.received_at || event.receivedAt || '')}</Text>
             </Box>
             <Box width={15}>
               <Text>{(event.source_name || event.source_slug || '').slice(0, 13)}</Text>
