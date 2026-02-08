@@ -65,10 +65,10 @@ function TunnelList({ tunnels, onSelect, onCreate }: {
       <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1}>
         {/* Column headers */}
         <Box borderBottom marginBottom={0}>
-          <Box width={4}><Text> </Text></Box>
-          <Box width={20}><Text bold dimColor>Name</Text></Box>
-          <Box width={18}><Text bold dimColor>Subdomain</Text></Box>
-          <Box width={14}><Text bold dimColor>Status</Text></Box>
+          <Box width={2}><Text> </Text></Box>
+          <Box width={24}><Text bold dimColor>Name</Text></Box>
+          <Box width={24}><Text bold dimColor>Subdomain</Text></Box>
+          <Box width={18}><Text bold dimColor>Status</Text></Box>
           <Box width={12}><Text bold dimColor>Requests</Text></Box>
         </Box>
 
@@ -86,22 +86,24 @@ function TunnelList({ tunnels, onSelect, onCreate }: {
 
           return (
             <Box key={item.id}>
-              <Text color={isSelected ? 'cyan' : undefined} bold={isSelected}>
-                {isSelected ? '▶ ' : '  '}
-              </Text>
+              <Box width={2}>
+                <Text color={isSelected ? 'cyan' : undefined} bold={isSelected}>
+                  {isSelected ? '▶' : ' '}
+                </Text>
+              </Box>
               {isAction ? (
                 <Text color="green">{item.name}</Text>
               ) : (
                 <>
-                  <Box width={18}>
+                  <Box width={24}>
                     <Text color={isSelected ? 'cyan' : undefined} bold={isSelected}>
-                      {item.name.slice(0, 16)}{item.name.length > 16 ? '…' : ''}
+                      {item.name.slice(0, 22)}{item.name.length > 22 ? '…' : ''}
                     </Text>
                   </Box>
-                  <Box width={18}>
-                    <Text dimColor>{item.subdomain}</Text>
+                  <Box width={24}>
+                    <Text dimColor>{item.subdomain.slice(0, 22)}{item.subdomain.length > 22 ? '…' : ''}</Text>
                   </Box>
-                  <Box width={14}>
+                  <Box width={18}>
                     <Text color={getStatusColor(item.status)}>● {item.status}</Text>
                   </Box>
                   <Box width={12}>
@@ -229,8 +231,10 @@ function TunnelDetail({ tunnelId, tunnels, onBack, onRefresh }: {
     onRefresh();
   };
 
+  const busy = useRef(false);
+
   useInput(async (input, key) => {
-    if (action !== 'none') return;
+    if (busy.current) return;
 
     // In connected mode, only allow disconnect
     if (mode === 'connected') {
@@ -286,6 +290,7 @@ function TunnelDetail({ tunnelId, tunnels, onBack, onRefresh }: {
       });
     }
     if (input === 'd' && tunnel?.status === 'connected' && !confirmDelete) {
+      busy.current = true;
       setAction('disconnecting');
       try {
         const result = await api.disconnectTunnel(tunnelId);
@@ -299,11 +304,13 @@ function TunnelDetail({ tunnelId, tunnels, onBack, onRefresh }: {
         setMessage('Failed to disconnect');
       }
       setAction('none');
+      setTimeout(() => { busy.current = false; }, 300);
     }
     if (input === 'x' && !confirmDelete) {
       setConfirmDelete(true);
     }
     if (input === 'y' && confirmDelete) {
+      busy.current = true;
       setAction('deleting');
       setConfirmDelete(false);
       try {
@@ -311,16 +318,15 @@ function TunnelDetail({ tunnelId, tunnels, onBack, onRefresh }: {
         if (result.error) {
           setMessage(`Error: ${result.error}`);
           setAction('none');
+          setTimeout(() => { busy.current = false; }, 300);
         } else {
           setMessage('Tunnel deleted successfully');
-          setTimeout(() => {
-            onRefresh();
-            onBack();
-          }, 1500);
+          setTimeout(() => { onRefresh(); onBack(); }, 1500);
         }
       } catch (err) {
         setMessage('Failed to delete');
         setAction('none');
+        setTimeout(() => { busy.current = false; }, 300);
       }
     }
     if (input === 'n' && confirmDelete) {

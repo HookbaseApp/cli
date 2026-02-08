@@ -258,30 +258,31 @@ export function AnalyticsView({ onNavigate }: AnalyticsViewProps) {
               <Text dimColor>No recent events</Text>
             ) : (
               liveEvents.slice(0, 10).map(event => {
-                // Handle both camelCase and snake_case naming conventions
                 const receivedAt = event.receivedAt || event.received_at;
                 const sourceName = event.sourceName || event.source_name || event.sourceSlug || event.source_slug || '';
+                let time = '-';
+                if (receivedAt) {
+                  const d = new Date(receivedAt);
+                  time = `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}:${d.getSeconds().toString().padStart(2, '0')}`;
+                }
                 return (
                   <Box key={event.id}>
-                    <Box width={9}>
-                      <Text dimColor>
-                        {receivedAt ? new Date(receivedAt).toLocaleTimeString() : '-'}
+                    <Box width={10}>
+                      <Text dimColor>{time}</Text>
+                    </Box>
+                    <Box width={26}>
+                      <Text color="cyan">
+                        {sourceName.slice(0, 24)}
                       </Text>
                     </Box>
                     <Box width={12}>
-                      <Text color="cyan">
-                        {sourceName.slice(0, 10)}
+                      <Text color={
+                        event.status === 'delivered' ? 'green' :
+                        event.status === 'failed' ? 'red' : 'yellow'
+                      }>
+                        {event.status || 'pending'}
                       </Text>
                     </Box>
-                    <Box width={8}>
-                      <Text color="yellow">{event.method || '-'}</Text>
-                    </Box>
-                    <Text color={
-                      event.status === 'delivered' ? 'green' :
-                      event.status === 'failed' ? 'red' : 'yellow'
-                    }>
-                      {event.status || 'pending'}
-                    </Text>
                   </Box>
                 );
               })

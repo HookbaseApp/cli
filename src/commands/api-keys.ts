@@ -32,7 +32,8 @@ export async function apiKeysListCommand(options: { json?: boolean }): Promise<v
 
   spinner.stop();
 
-  const keys = result.data?.apiKeys || [];
+  const raw = result.data as any;
+  const keys = raw?.apiKeys || raw?.api_keys || raw?.data || [];
 
   if (options.json) {
     console.log(JSON.stringify(keys, null, 2));
@@ -45,16 +46,22 @@ export async function apiKeysListCommand(options: { json?: boolean }): Promise<v
     return;
   }
 
+  const parseScopes = (scopes: unknown): string => {
+    if (Array.isArray(scopes)) return scopes.join(', ');
+    if (typeof scopes === 'string') {
+      try { return JSON.parse(scopes).join(', '); } catch { return scopes; }
+    }
+    return 'read, write';
+  };
+
   logger.table(
     ['ID', 'Name', 'Key Prefix', 'Scopes', 'Created'],
-    keys.map(k => [
+    keys.map((k: any) => [
       k.id || '-',
       k.name || '-',
-      (k.key_prefix || 'whr_') + '...',
-      Array.isArray(k.scopes) ? k.scopes.join(', ') :
-        (typeof k.scopes === 'string' ? JSON.parse(k.scopes).join(', ') : 'read, write'),
-      // k.last_used_at ? new Date(k.last_used_at).toLocaleDateString() : 'Never',
-      k.created_at ? new Date(k.created_at).toLocaleDateString() : '-',
+      (k.key_prefix || k.keyPrefix || 'whr_') + '...',
+      parseScopes(k.scopes),
+      (k.created_at || k.createdAt) ? new Date(k.created_at || k.createdAt).toLocaleDateString() : '-',
     ])
   );
 }
@@ -176,8 +183,10 @@ export async function apiKeysRevokeCommand(
     if (currentPrefix) {
       // Fetch the key to check its prefix
       const keysResult = await api.listApiKeys();
-      const keyToRevoke = keysResult.data?.apiKeys?.find(k => k.id === keyId);
-      if (keyToRevoke && currentPrefix.startsWith(keyToRevoke.key_prefix)) {
+      const keysRaw = keysResult.data as any;
+      const allKeys = keysRaw?.apiKeys || keysRaw?.api_keys || keysRaw?.data || [];
+      const keyToRevoke = allKeys.find((k: any) => k.id === keyId);
+      if (keyToRevoke && currentPrefix.startsWith(keyToRevoke.key_prefix || keyToRevoke.keyPrefix || '')) {
         logger.error('Cannot revoke the API key currently being used for authentication.');
         logger.dim('Use a different API key or log in with username/password first.');
         return;

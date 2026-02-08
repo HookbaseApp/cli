@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Box, Text, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 import SelectInput from 'ink-select-input';
@@ -131,7 +131,7 @@ function CronList({ jobs, onSelect, onCreate }: {
       <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1} paddingY={1}>
         {/* Column headers */}
         <Box borderBottom marginBottom={0}>
-          <Box width={4}><Text> </Text></Box>
+          <Box width={2}><Text> </Text></Box>
           <Box width={26}><Text bold dimColor>Name</Text></Box>
           <Box width={16}><Text bold dimColor>Schedule</Text></Box>
           <Box width={10}><Text bold dimColor>Status</Text></Box>
@@ -152,16 +152,18 @@ function CronList({ jobs, onSelect, onCreate }: {
 
           return (
             <Box key={item.id} marginY={0}>
-              <Text color={isSelected ? 'cyan' : undefined} bold={isSelected}>
-                {isSelected ? '▶ ' : '  '}
-              </Text>
+              <Box width={2}>
+                <Text color={isSelected ? 'cyan' : undefined} bold={isSelected}>
+                  {isSelected ? '▶' : ' '}
+                </Text>
+              </Box>
               {isAction ? (
                 <Text color="green">{item.name}</Text>
               ) : (
                 <>
-                  <Box width={24}>
+                  <Box width={26}>
                     <Text color={item.is_active ? (isSelected ? 'cyan' : undefined) : 'gray'} bold={isSelected}>
-                      {item.name.slice(0, 22)}{item.name.length > 22 ? '…' : ''}
+                      {item.name.slice(0, 24)}{item.name.length > 24 ? '…' : ''}
                     </Text>
                   </Box>
                   <Box width={16}>
@@ -199,10 +201,9 @@ function CronDetail({ jobId, jobs, onBack, onRefresh }: {
   const [message, setMessage] = useState<string | null>(null);
   const [executions, setExecutions] = useState<api.CronExecution[]>([]);
   const [loadingExecs, setLoadingExecs] = useState(true);
-  // Track local active state for immediate UI feedback
   const [localIsActive, setLocalIsActive] = useState<boolean | null>(null);
+  const busy = useRef(false);
 
-  // Use local state if set, otherwise use job data
   const isActive = localIsActive !== null ? localIsActive : job?.is_active;
 
   useEffect(() => {
@@ -218,7 +219,7 @@ function CronDetail({ jobId, jobs, onBack, onRefresh }: {
   }, [jobId]);
 
   useInput(async (input, key) => {
-    if (deleting || triggering || toggling) return;
+    if (busy.current) return;
 
     if (key.escape || input === 'b') {
       if (confirmDelete) {
@@ -231,6 +232,7 @@ function CronDetail({ jobId, jobs, onBack, onRefresh }: {
       setConfirmDelete(true);
     }
     if (input === 't' && !confirmDelete) {
+      busy.current = true;
       setTriggering(true);
       setMessage(null);
       try {
@@ -239,7 +241,6 @@ function CronDetail({ jobId, jobs, onBack, onRefresh }: {
           setMessage(`Error: ${result.error}`);
         } else {
           setMessage('Job triggered successfully!');
-          // Refresh executions
           const execResult = await api.getCronExecutions(jobId, 5);
           if (execResult.data?.executions) {
             setExecutions(execResult.data.executions);
@@ -249,9 +250,10 @@ function CronDetail({ jobId, jobs, onBack, onRefresh }: {
         setMessage('Failed to trigger job');
       }
       setTriggering(false);
+      setTimeout(() => { busy.current = false; }, 300);
     }
     if (input === 'e' && !confirmDelete && job) {
-      // Toggle enable/disable
+      busy.current = true;
       setToggling(true);
       const newActiveState = !isActive;
       try {
@@ -267,24 +269,25 @@ function CronDetail({ jobId, jobs, onBack, onRefresh }: {
         setMessage('Failed to update job');
       }
       setToggling(false);
+      setTimeout(() => { busy.current = false; }, 300);
     }
     if (input === 'y' && confirmDelete) {
+      busy.current = true;
       setDeleting(true);
       try {
         const result = await api.deleteCronJob(jobId);
         if (result.error) {
           setMessage(`Error: ${result.error}`);
           setConfirmDelete(false);
+          setTimeout(() => { busy.current = false; }, 300);
         } else {
           setMessage('Cron job deleted successfully');
-          setTimeout(() => {
-            onRefresh();
-            onBack();
-          }, 1500);
+          setTimeout(() => { onRefresh(); onBack(); }, 1500);
         }
       } catch (err) {
         setMessage('Failed to delete');
         setConfirmDelete(false);
+        setTimeout(() => { busy.current = false; }, 300);
       }
       setDeleting(false);
     }

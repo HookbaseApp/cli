@@ -47,14 +47,14 @@ export async function routesListCommand(options: { json?: boolean }): Promise<vo
 
   logger.table(
     ['ID', 'Name', 'Source', 'Destination', 'Priority', 'Status', 'Deliveries'],
-    routes.map(r => [
+    routes.map((r: any) => [
       r.id || '-',
       r.name || '-',
-      r.source_name || (r.source_id || '-'),
-      r.destination_name || (r.destination_id || '-'),
+      r.source_name || r.sourceName || r.source_id || r.sourceId || '-',
+      r.destination_name || r.destinationName || r.destination_id || r.destinationId || '-',
       String(r.priority ?? 0),
-      r.is_active ? logger.green('active') : logger.dimText('inactive'),
-      String(r.delivery_count || 0),
+      (r.is_active ?? r.isActive) ? logger.green('active') : logger.dimText('inactive'),
+      String(r.delivery_count ?? r.deliveryCount ?? 0),
     ])
   );
 }
@@ -178,8 +178,8 @@ export async function routesCreateCommand(options: {
     logger.box('Route Created', [
       `ID:          ${route.id}`,
       `Name:        ${route.name}`,
-      `Source:      ${route.source_name || route.source_id}`,
-      `Destination: ${route.destination_name || route.destination_id}`,
+      `Source:      ${route.source_name || (route as any).sourceName || route.source_id || (route as any).sourceId}`,
+      `Destination: ${route.destination_name || (route as any).destinationName || route.destination_id || (route as any).destinationId}`,
       `Priority:    ${route.priority}`,
     ].join('\n'));
   }
@@ -202,7 +202,7 @@ export async function routesGetCommand(
 
   spinner.stop();
 
-  const route = result.data?.route;
+  const route: any = result.data?.route;
 
   if (options.json) {
     console.log(JSON.stringify(route, null, 2));
@@ -219,13 +219,13 @@ export async function routesGetCommand(
   logger.log('');
   logger.log(`ID:          ${route.id}`);
   logger.log(`Name:        ${route.name}`);
-  logger.log(`Source:      ${route.source_name || route.source_id}`);
-  logger.log(`Destination: ${route.destination_name || route.destination_id}`);
+  logger.log(`Source:      ${route.source_name || route.sourceName || route.source_id || route.sourceId}`);
+  logger.log(`Destination: ${route.destination_name || route.destinationName || route.destination_id || route.destinationId}`);
   logger.log(`Priority:    ${route.priority}`);
-  logger.log(`Status:      ${route.is_active ? logger.green('active') : logger.red('inactive')}`);
-  if (route.filter_id) logger.log(`Filter:      ${route.filter_id}`);
-  if (route.transform_id) logger.log(`Transform:   ${route.transform_id}`);
-  logger.log(`Deliveries:  ${route.delivery_count || 0}`);
+  logger.log(`Status:      ${(route.is_active ?? route.isActive) ? logger.green('active') : logger.red('inactive')}`);
+  if (route.filter_id || route.filterId) logger.log(`Filter:      ${route.filter_id || route.filterId}`);
+  if (route.transform_id || route.transformId) logger.log(`Transform:   ${route.transform_id || route.transformId}`);
+  logger.log(`Deliveries:  ${route.delivery_count ?? route.deliveryCount ?? 0}`);
   logger.log('');
 }
 
