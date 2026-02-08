@@ -64,13 +64,13 @@ export async function tunnelsListCommand(options: { json?: boolean }): Promise<v
 
   logger.table(
     ['ID', 'Name', 'Subdomain', 'Status', 'Requests', 'Last Connected'],
-    tunnels.map(t => [
+    tunnels.map((t: any) => [
       t.id,
       t.name,
       t.subdomain,
       formatStatus(t.status),
-      String(t.total_requests),
-      t.last_connected_at ? new Date(t.last_connected_at).toLocaleDateString() : 'Never',
+      String(t.total_requests ?? t.totalRequests ?? 0),
+      (t.last_connected_at || t.lastConnectedAt) ? new Date(t.last_connected_at || t.lastConnectedAt).toLocaleDateString() : 'Never',
     ])
   );
 
@@ -520,8 +520,8 @@ export async function tunnelsStatusCommand(
   logger.log(`Subdomain:      ${tunnel.subdomain}`);
   logger.log(`URL:            ${tunnelUrl}`);
   logger.log(`Status:         ${formatStatus(tunnel.status)}`);
-  logger.log(`Total Requests: ${tunnel.total_requests}`);
-  logger.log(`Last Connected: ${tunnel.last_connected_at ? new Date(tunnel.last_connected_at).toLocaleString() : 'Never'}`);
+  logger.log(`Total Requests: ${tunnel.total_requests ?? (tunnel as any).totalRequests ?? 0}`);
+  logger.log(`Last Connected: ${(tunnel.last_connected_at || (tunnel as any).lastConnectedAt) ? new Date(tunnel.last_connected_at || (tunnel as any).lastConnectedAt).toLocaleString() : 'Never'}`);
 
   if (liveStatus && typeof liveStatus === 'object') {
     logger.log('');
@@ -570,8 +570,8 @@ export async function tunnelsGetCommand(
   logger.log(`Subdomain:      ${tunnel.subdomain}`);
   logger.log(`URL:            ${tunnelUrl}`);
   logger.log(`Status:         ${formatStatus(tunnel.status)}`);
-  logger.log(`Total Requests: ${tunnel.total_requests}`);
-  logger.log(`Last Connected: ${tunnel.last_connected_at ? new Date(tunnel.last_connected_at).toLocaleString() : 'Never'}`);
+  logger.log(`Total Requests: ${tunnel.total_requests ?? (tunnel as any).totalRequests ?? 0}`);
+  logger.log(`Last Connected: ${(tunnel.last_connected_at || (tunnel as any).lastConnectedAt) ? new Date(tunnel.last_connected_at || (tunnel as any).lastConnectedAt).toLocaleString() : 'Never'}`);
   logger.log('');
 
   if (tunnel.status === 'disconnected') {

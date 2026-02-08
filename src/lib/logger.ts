@@ -60,10 +60,22 @@ export function spinner(message: string): Ora {
   }).start();
 }
 
+// Strip ANSI escape codes to get visible string length
+// eslint-disable-next-line no-control-regex
+const ANSI_RE = /\x1b\[[0-9;]*m/g;
+function visibleLength(str: string): number {
+  return str.replace(ANSI_RE, '').length;
+}
+
+function padEndVisible(str: string, width: number): string {
+  const pad = width - visibleLength(str);
+  return pad > 0 ? str + ' '.repeat(pad) : str;
+}
+
 export function table(headers: string[], rows: string[][]): void {
-  // Calculate column widths
+  // Calculate column widths using visible (non-ANSI) length
   const colWidths = headers.map((h, i) => {
-    const maxDataWidth = Math.max(...rows.map(r => (r[i] || '').length));
+    const maxDataWidth = Math.max(...rows.map(r => visibleLength(r[i] || '')));
     return Math.max(h.length, maxDataWidth);
   });
 
@@ -74,21 +86,21 @@ export function table(headers: string[], rows: string[][]): void {
 
   // Print rows
   for (const row of rows) {
-    const rowStr = row.map((cell, i) => (cell || '').padEnd(colWidths[i])).join('  ');
+    const rowStr = row.map((cell, i) => padEndVisible(cell || '', colWidths[i])).join('  ');
     console.log(rowStr);
   }
 }
 
 export function box(title: string, content: string): void {
   const lines = content.split('\n');
-  const maxLen = Math.max(title.length, ...lines.map(l => l.length));
+  const maxLen = Math.max(visibleLength(title), ...lines.map(l => visibleLength(l)));
   const width = maxLen + 4;
 
   console.log('┌' + '─'.repeat(width - 2) + '┐');
-  console.log('│ ' + chalk.bold(title.padEnd(width - 4)) + ' │');
+  console.log('│ ' + padEndVisible(chalk.bold(title), width - 4) + ' │');
   console.log('├' + '─'.repeat(width - 2) + '┤');
   for (const line of lines) {
-    console.log('│ ' + line.padEnd(width - 4) + ' │');
+    console.log('│ ' + padEndVisible(line, width - 4) + ' │');
   }
   console.log('└' + '─'.repeat(width - 2) + '┘');
 }

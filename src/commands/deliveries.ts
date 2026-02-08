@@ -72,14 +72,14 @@ export async function deliveriesListCommand(options: {
 
   logger.table(
     ['ID', 'Destination', 'Status', 'Response', 'Attempts', 'Time', 'Created'],
-    deliveries.map(d => [
+    deliveries.map((d: any) => [
       d.id,
-      d.destination_name || d.destination_id,
+      d.destination_name || d.destinationName || d.destination_id || d.destinationId || '-',
       formatStatus(d.status),
-      d.response_status ? String(d.response_status) : '-',
-      `${d.attempt_count}/${d.max_attempts}`,
-      d.response_time_ms ? `${d.response_time_ms}ms` : '-',
-      formatDate(d.created_at),
+      (d.response_status ?? d.responseStatus) ? String(d.response_status ?? d.responseStatus) : '-',
+      `${d.attempt_count ?? d.attemptCount ?? 0}/${d.max_attempts ?? d.maxAttempts ?? 5}`,
+      (d.response_time_ms ?? d.responseTimeMs) ? `${d.response_time_ms ?? d.responseTimeMs}ms` : '-',
+      formatDate(d.created_at || d.createdAt || ''),
     ])
   );
 
@@ -104,7 +104,7 @@ export async function deliveriesGetCommand(
 
   spinner.stop();
 
-  const delivery = result.data?.delivery;
+  const delivery: any = result.data?.delivery;
 
   if (options.json) {
     console.log(JSON.stringify(delivery, null, 2));
@@ -116,51 +116,59 @@ export async function deliveriesGetCommand(
     return;
   }
 
+  const respStatus = delivery.response_status ?? delivery.responseStatus;
+  const respTimeMs = delivery.response_time_ms ?? delivery.responseTimeMs;
+  const errorMsg = delivery.error_message ?? delivery.errorMessage;
+  const nextRetry = delivery.next_retry_at || delivery.nextRetryAt;
+  const createdAt = delivery.created_at || delivery.createdAt;
+  const completedAt = delivery.completed_at || delivery.completedAt;
+  const responseBody = delivery.response_body ?? delivery.responseBody;
+
   logger.log('');
   logger.log(logger.bold('Delivery Details'));
   logger.log('');
   logger.log(`ID:            ${delivery.id}`);
-  logger.log(`Event:         ${delivery.event_id}`);
-  logger.log(`Route:         ${delivery.route_name || delivery.route_id}`);
-  logger.log(`Destination:   ${delivery.destination_name || delivery.destination_id}`);
+  logger.log(`Event:         ${delivery.event_id || delivery.eventId}`);
+  logger.log(`Route:         ${delivery.route_name || delivery.routeName || delivery.route_id || delivery.routeId || '-'}`);
+  logger.log(`Destination:   ${delivery.destination_name || delivery.destinationName || delivery.destination_id || delivery.destinationId || '-'}`);
   logger.log(`Status:        ${formatStatus(delivery.status)}`);
-  logger.log(`Attempts:      ${delivery.attempt_count} of ${delivery.max_attempts}`);
+  logger.log(`Attempts:      ${delivery.attempt_count ?? delivery.attemptCount ?? 0} of ${delivery.max_attempts ?? delivery.maxAttempts ?? 5}`);
 
-  if (delivery.response_status) {
-    const statusColor = delivery.response_status >= 200 && delivery.response_status < 300
+  if (respStatus) {
+    const statusColor = respStatus >= 200 && respStatus < 300
       ? logger.green
-      : delivery.response_status >= 400
+      : respStatus >= 400
         ? logger.red
         : logger.yellow;
-    logger.log(`Response:      ${statusColor(String(delivery.response_status))}`);
+    logger.log(`Response:      ${statusColor(String(respStatus))}`);
   }
 
-  if (delivery.response_time_ms) {
-    logger.log(`Response Time: ${delivery.response_time_ms}ms`);
+  if (respTimeMs) {
+    logger.log(`Response Time: ${respTimeMs}ms`);
   }
 
-  if (delivery.error_message) {
-    logger.log(`Error:         ${logger.red(delivery.error_message)}`);
+  if (errorMsg) {
+    logger.log(`Error:         ${logger.red(errorMsg)}`);
   }
 
-  if (delivery.next_retry_at) {
-    logger.log(`Next Retry:    ${formatDate(delivery.next_retry_at)}`);
+  if (nextRetry) {
+    logger.log(`Next Retry:    ${formatDate(nextRetry)}`);
   }
 
-  logger.log(`Created:       ${formatDate(delivery.created_at)}`);
+  logger.log(`Created:       ${formatDate(createdAt || '')}`);
 
-  if (delivery.completed_at) {
-    logger.log(`Completed:     ${formatDate(delivery.completed_at)}`);
+  if (completedAt) {
+    logger.log(`Completed:     ${formatDate(completedAt)}`);
   }
 
-  if (delivery.response_body) {
+  if (responseBody) {
     logger.log('');
     logger.log(logger.bold('Response Body:'));
     try {
-      const parsed = JSON.parse(delivery.response_body);
+      const parsed = JSON.parse(responseBody);
       logger.log(JSON.stringify(parsed, null, 2));
     } catch {
-      logger.log(delivery.response_body);
+      logger.log(responseBody);
     }
   }
 }
@@ -244,8 +252,8 @@ export async function deliveriesBulkReplayCommand(options: {
   } else {
     selectedIds = await checkbox({
       message: 'Select deliveries to replay:',
-      choices: deliveries.map(d => ({
-        name: `${d.id} - ${d.destination_name || d.destination_id} - ${d.error_message || 'Failed'}`,
+      choices: deliveries.map((d: any) => ({
+        name: `${d.id} - ${d.destination_name || d.destinationName || d.destination_id || d.destinationId || '-'} - ${d.error_message || d.errorMessage || 'Failed'}`,
         value: d.id,
         checked: true,
       })),

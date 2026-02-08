@@ -1,14 +1,32 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { Box, Text, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 import * as api from '../../lib/api.js';
 import * as config from '../../lib/config.js';
 
+/** Get key prefix handling both camelCase and snake_case */
+function getKeyPrefix(apiKey: api.ApiKey): string {
+  return apiKey.key_prefix || (apiKey as any).keyPrefix || '';
+}
+
+/** Parse scopes from string or array */
+function parseScopes(scopes: string[] | string): string[] {
+  if (Array.isArray(scopes)) return scopes;
+  try { return JSON.parse(scopes); } catch { return []; }
+}
+
+/** Get expiry/created date handling both conventions */
+function getKeyDate(apiKey: api.ApiKey, field: 'expires_at' | 'created_at' | 'last_used_at'): string | null {
+  const camelMap: Record<string, string> = { expires_at: 'expiresAt', created_at: 'createdAt', last_used_at: 'lastUsedAt' };
+  return (apiKey as any)[field] || (apiKey as any)[camelMap[field]] || null;
+}
+
 /** Check if the given API key is currently being used for authentication */
 function isCurrentlyUsedKey(apiKey: api.ApiKey): boolean {
   if (!config.isUsingApiKey()) return false;
   const currentPrefix = config.getCurrentApiKeyPrefix();
-  return !!currentPrefix && currentPrefix.startsWith(apiKey.key_prefix);
+  const prefix = getKeyPrefix(apiKey);
+  return !!currentPrefix && !!prefix && currentPrefix.startsWith(prefix);
 }
 
 interface ApiKeysViewProps {
@@ -66,10 +84,10 @@ function ApiKeyList({ apiKeys, onSelect, onCreate }: {
       <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1}>
         {/* Column headers */}
         <Box borderBottom marginBottom={0}>
-          <Box width={4}><Text> </Text></Box>
-          <Box width={20}><Text bold dimColor>Name</Text></Box>
-          <Box width={14}><Text bold dimColor>Prefix</Text></Box>
-          <Box width={24}><Text bold dimColor>Scopes</Text></Box>
+          <Box width={2}><Text> </Text></Box>
+          <Box width={24}><Text bold dimColor>Name</Text></Box>
+          <Box width={18}><Text bold dimColor>Prefix</Text></Box>
+          <Box width={28}><Text bold dimColor>Scopes</Text></Box>
           <Box width={10}><Text bold dimColor>Status</Text></Box>
         </Box>
 
@@ -88,30 +106,37 @@ function ApiKeyList({ apiKeys, onSelect, onCreate }: {
 
           return (
             <Box key={item.id}>
-              <Text color={isSelected ? 'cyan' : undefined} bold={isSelected}>
-                {isSelected ? '▶ ' : '  '}
-              </Text>
+              <Box width={2}>
+                <Text color={isSelected ? 'cyan' : undefined} bold={isSelected}>
+                  {isSelected ? '▶' : ' '}
+                </Text>
+              </Box>
               {isAction ? (
                 <Text color="green">{item.name}</Text>
               ) : (
                 <>
-                  <Box width={18}>
+                  <Box width={24}>
                     <Text color={isSelected ? 'cyan' : undefined} bold={isSelected}>
-                      {item.name.slice(0, 16)}{item.name.length > 16 ? '…' : ''}
+                      {item.name.slice(0, 22)}{item.name.length > 22 ? '…' : ''}
                     </Text>
                   </Box>
-                  <Box width={14}>
-                    <Text dimColor>{item.key_prefix}…</Text>
+                  <Box width={18}>
+                    <Text dimColor>{getKeyPrefix(item) || '-'}…</Text>
                   </Box>
-                  <Box width={24}>
-                    <Text color="magenta">{Array.isArray(item.scopes) ? item.scopes.join(', ') : item.scopes}</Text>
+                  <Box width={28}>
+                    <Text color="magenta">{(() => {
+                      const s = parseScopes(item.scopes).join(', ');
+                      return s.slice(0, 26) + (s.length > 26 ? '…' : '');
+                    })()}</Text>
                   </Box>
                   <Box width={10}>
                     {isCurrent ? (
                       <Text color="cyan">★ in use</Text>
-                    ) : (
-                      <Text dimColor>-</Text>
-                    )}
+                    ) : (() => {
+                      const exp = getKeyDate(item, 'expires_at');
+                      if (exp && new Date(exp) < new Date()) return <Text color="red">expired</Text>;
+                      return <Text color="green">active</Text>;
+                    })()}
                   </Box>
                 </>
               )}
@@ -137,11 +162,12 @@ function ApiKeyDetail({ keyId, apiKeys, onBack, onRefresh }: {
   const [action, setAction] = useState<'none' | 'revoking'>('none');
   const [confirmRevoke, setConfirmRevoke] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const busy = useRef(false);
 
   const isCurrentKey = apiKey ? isCurrentlyUsedKey(apiKey) : false;
 
   useInput(async (input, key) => {
-    if (action !== 'none') return;
+    if (busy.current) return;
 
     if (key.escape || input === 'b') {
       if (confirmRevoke) {
@@ -154,6 +180,7 @@ function ApiKeyDetail({ keyId, apiKeys, onBack, onRefresh }: {
       setConfirmRevoke(true);
     }
     if (input === 'y' && confirmRevoke) {
+      busy.current = true;
       setAction('revoking');
       setConfirmRevoke(false);
       try {
@@ -161,16 +188,15 @@ function ApiKeyDetail({ keyId, apiKeys, onBack, onRefresh }: {
         if (result.error) {
           setMessage(`Error: ${result.error}`);
           setAction('none');
+          setTimeout(() => { busy.current = false; }, 300);
         } else {
           setMessage('API key revoked successfully');
-          setTimeout(() => {
-            onRefresh();
-            onBack();
-          }, 1500);
+          setTimeout(() => { onRefresh(); onBack(); }, 1500);
         }
       } catch (err) {
         setMessage('Failed to revoke');
         setAction('none');
+        setTimeout(() => { busy.current = false; }, 300);
       }
     }
     if (input === 'n' && confirmRevoke) {
@@ -192,8 +218,6 @@ function ApiKeyDetail({ keyId, apiKeys, onBack, onRefresh }: {
     return new Date(dateStr).toLocaleString();
   };
 
-  const scopes = Array.isArray(apiKey.scopes) ? apiKey.scopes : JSON.parse(apiKey.scopes || '[]');
-
   return (
     <Box flexDirection="column">
       <Box marginBottom={1}>
@@ -213,21 +237,27 @@ function ApiKeyDetail({ keyId, apiKeys, onBack, onRefresh }: {
         </Box>
         <Box>
           <Box width={16}><Text dimColor>Key Prefix:</Text></Box>
-          <Text color="yellow">{apiKey.key_prefix}…</Text>
+          <Text color="yellow">{getKeyPrefix(apiKey) || '-'}…</Text>
         </Box>
         <Box>
           <Box width={16}><Text dimColor>Scopes:</Text></Box>
-          <Text color="magenta">{scopes.join(', ')}</Text>
+          <Text color="magenta">{parseScopes(apiKey.scopes).join(', ')}</Text>
         </Box>
         <Box>
           <Box width={16}><Text dimColor>Created:</Text></Box>
-          <Text>{formatDate(apiKey.created_at)}</Text>
+          <Text>{formatDate(getKeyDate(apiKey, 'created_at'))}</Text>
         </Box>
-        {apiKey.expires_at && (
+        {getKeyDate(apiKey, 'last_used_at') && (
+          <Box>
+            <Box width={16}><Text dimColor>Last Used:</Text></Box>
+            <Text>{formatDate(getKeyDate(apiKey, 'last_used_at'))}</Text>
+          </Box>
+        )}
+        {getKeyDate(apiKey, 'expires_at') && (
           <Box>
             <Box width={16}><Text dimColor>Expires:</Text></Box>
-            <Text color={new Date(apiKey.expires_at) < new Date() ? 'red' : 'yellow'}>
-              {formatDate(apiKey.expires_at)}
+            <Text color={new Date(getKeyDate(apiKey, 'expires_at')!) < new Date() ? 'red' : 'yellow'}>
+              {formatDate(getKeyDate(apiKey, 'expires_at'))}
             </Text>
           </Box>
         )}

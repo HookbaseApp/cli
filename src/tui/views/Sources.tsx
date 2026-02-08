@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { Box, Text, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 import SelectInput from 'ink-select-input';
@@ -64,9 +64,9 @@ function SourceList({ sources, onSelect, onCreate }: {
       <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1}>
         {/* Column headers */}
         <Box borderBottom marginBottom={0}>
-          <Box width={4}><Text> </Text></Box>
+          <Box width={2}><Text> </Text></Box>
           <Box width={24}><Text bold dimColor>Name</Text></Box>
-          <Box width={20}><Text bold dimColor>Slug</Text></Box>
+          <Box width={22}><Text bold dimColor>Slug</Text></Box>
           <Box width={12}><Text bold dimColor>Provider</Text></Box>
           <Box width={8}><Text bold dimColor>Events</Text></Box>
         </Box>
@@ -85,20 +85,22 @@ function SourceList({ sources, onSelect, onCreate }: {
 
           return (
             <Box key={item.id}>
-              <Text color={isSelected ? 'cyan' : undefined} bold={isSelected}>
-                {isSelected ? '▶ ' : '  '}
-              </Text>
+              <Box width={2}>
+                <Text color={isSelected ? 'cyan' : undefined} bold={isSelected}>
+                  {isSelected ? '▶' : ' '}
+                </Text>
+              </Box>
               {isAction ? (
                 <Text color="green">{item.name}</Text>
               ) : (
                 <>
-                  <Box width={22}>
+                  <Box width={24}>
                     <Text color={isSelected ? 'cyan' : undefined} bold={isSelected}>
-                      {item.name.slice(0, 20)}{item.name.length > 20 ? '…' : ''}
+                      {item.name.slice(0, 22)}{item.name.length > 22 ? '…' : ''}
                     </Text>
                   </Box>
-                  <Box width={20}>
-                    <Text dimColor>{item.slug.slice(0, 18)}{item.slug.length > 18 ? '…' : ''}</Text>
+                  <Box width={22}>
+                    <Text dimColor>{item.slug.slice(0, 20)}{item.slug.length > 20 ? '…' : ''}</Text>
                   </Box>
                   <Box width={12}>
                     <Text color="blue">{item.provider || 'generic'}</Text>
@@ -126,9 +128,10 @@ function SourceDetail({ sourceId, sources, onBack, onRefresh }: {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const busy = useRef(false);
 
   useInput(async (input, key) => {
-    if (deleting) return;
+    if (busy.current) return;
 
     if (key.escape || input === 'b') {
       if (confirmDelete) {
@@ -141,22 +144,22 @@ function SourceDetail({ sourceId, sources, onBack, onRefresh }: {
       setConfirmDelete(true);
     }
     if (input === 'y' && confirmDelete) {
+      busy.current = true;
       setDeleting(true);
       try {
         const result = await api.deleteSource(sourceId);
         if (result.error) {
           setMessage(`Error: ${result.error}`);
           setConfirmDelete(false);
+          setTimeout(() => { busy.current = false; }, 300);
         } else {
           setMessage('Source deleted successfully');
-          setTimeout(() => {
-            onRefresh();
-            onBack();
-          }, 1500);
+          setTimeout(() => { onRefresh(); onBack(); }, 1500);
         }
       } catch (err) {
         setMessage('Failed to delete');
         setConfirmDelete(false);
+        setTimeout(() => { busy.current = false; }, 300);
       }
       setDeleting(false);
     }

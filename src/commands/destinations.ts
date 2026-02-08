@@ -47,13 +47,13 @@ export async function destinationsListCommand(options: { json?: boolean }): Prom
 
   logger.table(
     ['ID', 'Name', 'URL', 'Method', 'Status', 'Deliveries'],
-    destinations.map(d => [
+    destinations.map((d: any) => [
       d.id,
       d.name,
       d.url.length > 40 ? d.url.slice(0, 37) + '...' : d.url,
       d.method || 'POST',
-      d.is_active ? logger.green('active') : logger.dimText('inactive'),
-      String(d.delivery_count || 0),
+      (d.is_active ?? d.isActive ?? !d.isDisabled) ? logger.green('active') : logger.dimText('inactive'),
+      String(d.delivery_count ?? d.deliveryCount ?? 0),
     ])
   );
 }
@@ -190,9 +190,9 @@ export async function destinationsGetCommand(
   logger.log(`Slug:        ${dest.slug}`);
   logger.log(`URL:         ${dest.url}`);
   logger.log(`Method:      ${dest.method}`);
-  logger.log(`Auth Type:   ${dest.auth_type}`);
-  logger.log(`Status:      ${dest.is_active ? logger.green('active') : logger.red('inactive')}`);
-  logger.log(`Timeout:     ${dest.timeout_ms || 30000}ms`);
+  logger.log(`Auth Type:   ${dest.auth_type ?? (dest as any).authType ?? '-'}`);
+  logger.log(`Status:      ${(dest.is_active ?? (dest as any).isActive ?? !(dest as any).isDisabled) ? logger.green('active') : logger.red('inactive')}`);
+  logger.log(`Timeout:     ${dest.timeout_ms ?? (dest as any).timeoutMs ?? 30000}ms`);
   if (dest.headers && Object.keys(dest.headers).length > 0) {
     logger.log(`Headers:`);
     for (const [key, value] of Object.entries(dest.headers)) {
@@ -301,23 +301,27 @@ export async function destinationsTestCommand(
     return;
   }
 
-  const testResult = result.data;
+  const raw = result.data as any;
+  const testResult = (raw?.data && typeof raw.data === 'object' ? raw.data : raw) as any;
 
   if (options.json) {
     console.log(JSON.stringify(testResult, null, 2));
     return;
   }
 
+  const statusCode = testResult?.statusCode ?? testResult?.status_code ?? 0;
+  const responseTime = testResult?.duration ?? testResult?.responseTime ?? testResult?.response_time ?? 0;
+
   if (testResult?.success) {
     spinner.succeed('Test successful');
     logger.log('');
-    logger.log(`Status Code:   ${logger.green(String(testResult.statusCode))}`);
-    logger.log(`Response Time: ${testResult.responseTime}ms`);
+    logger.log(`Status Code:   ${logger.green(String(statusCode))}`);
+    logger.log(`Response Time: ${responseTime}ms`);
   } else {
     spinner.fail('Test failed');
     logger.log('');
-    logger.log(`Status Code:   ${logger.red(String(testResult?.statusCode || 'N/A'))}`);
-    logger.log(`Response Time: ${testResult?.responseTime || 'N/A'}ms`);
+    logger.log(`Status Code:   ${logger.red(statusCode > 0 ? String(statusCode) : 'N/A')}`);
+    logger.log(`Response Time: ${responseTime || 'N/A'}ms`);
     if (testResult?.error) {
       logger.log(`Error:         ${testResult.error}`);
     }

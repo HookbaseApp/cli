@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { Box, Text, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 import SelectInput from 'ink-select-input';
@@ -54,11 +54,11 @@ function DestinationList({ destinations, onSelect, onCreate }: {
       <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1}>
         {/* Column headers */}
         <Box borderBottom marginBottom={0}>
-          <Box width={4}><Text> </Text></Box>
-          <Box width={20}><Text bold dimColor>Name</Text></Box>
+          <Box width={2}><Text> </Text></Box>
+          <Box width={22}><Text bold dimColor>Name</Text></Box>
           <Box width={8}><Text bold dimColor>Method</Text></Box>
-          <Box width={40}><Text bold dimColor>URL</Text></Box>
-          <Box width={10}><Text bold dimColor>Deliveries</Text></Box>
+          <Box width={44}><Text bold dimColor>URL</Text></Box>
+          <Box width={12}><Text bold dimColor>Deliveries</Text></Box>
         </Box>
 
         {destinations.length === 0 && (
@@ -75,25 +75,27 @@ function DestinationList({ destinations, onSelect, onCreate }: {
 
           return (
             <Box key={item.id}>
-              <Text color={isSelected ? 'cyan' : undefined} bold={isSelected}>
-                {isSelected ? '▶ ' : '  '}
-              </Text>
+              <Box width={2}>
+                <Text color={isSelected ? 'cyan' : undefined} bold={isSelected}>
+                  {isSelected ? '▶' : ' '}
+                </Text>
+              </Box>
               {isAction ? (
-                <Text color="green">{item.name}</Text>
+                <Box width={22}><Text color="green">+ New Destination</Text></Box>
               ) : (
                 <>
-                  <Box width={18}>
+                  <Box width={22}>
                     <Text color={isSelected ? 'cyan' : undefined} bold={isSelected}>
-                      {item.name.slice(0, 16)}{item.name.length > 16 ? '…' : ''}
+                      {item.name.slice(0, 20)}{item.name.length > 20 ? '…' : ''}
                     </Text>
                   </Box>
                   <Box width={8}>
                     <Text color="yellow">{item.method || 'POST'}</Text>
                   </Box>
-                  <Box width={40}>
-                    <Text color="blue">{item.url.slice(0, 38)}{item.url.length > 38 ? '…' : ''}</Text>
+                  <Box width={44}>
+                    <Text color="blue">{item.url.slice(0, 42)}{item.url.length > 42 ? '…' : ''}</Text>
                   </Box>
-                  <Box width={10}>
+                  <Box width={12}>
                     <Text dimColor>{(item as any).delivery_count ?? (item as any).deliveryCount ?? 0}</Text>
                   </Box>
                 </>
@@ -118,9 +120,10 @@ function DestinationDetail({ destId, destinations, onBack, onRefresh }: {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const busy = useRef(false);
 
   useInput(async (input, key) => {
-    if (deleting) return;
+    if (busy.current) return;
 
     if (key.escape || input === 'b') {
       if (confirmDelete) {
@@ -129,19 +132,21 @@ function DestinationDetail({ destId, destinations, onBack, onRefresh }: {
         onBack();
       }
     }
-    if (input === 't' && !testing && !confirmDelete) {
+    if (input === 't' && !confirmDelete) {
+      busy.current = true;
       setTesting(true);
       try {
         const result = await api.testDestination(destId);
         if (result.error) {
           setTestResult({ success: false, status: 0, time: 0, error: result.error });
         } else if (result.data) {
-          // Handle both camelCase and snake_case naming conventions
-          const data = result.data as Record<string, unknown>;
+          // Handle possible nested data envelope
+          const raw = result.data as Record<string, unknown>;
+          const data = (raw.data && typeof raw.data === 'object' ? raw.data : raw) as Record<string, unknown>;
           setTestResult({
             success: data.success === true,
             status: (data.statusCode ?? data.status_code ?? 0) as number,
-            time: (data.responseTime ?? data.response_time ?? 0) as number,
+            time: (data.duration ?? data.responseTime ?? data.response_time ?? 0) as number,
             error: data.error as string | undefined,
           });
         }
@@ -149,27 +154,28 @@ function DestinationDetail({ destId, destinations, onBack, onRefresh }: {
         setTestResult({ success: false, status: 0, time: 0, error: err instanceof Error ? err.message : 'Test failed' });
       }
       setTesting(false);
+      setTimeout(() => { busy.current = false; }, 300);
     }
-    if (input === 'd' && !confirmDelete && !testing) {
+    if (input === 'd' && !confirmDelete) {
       setConfirmDelete(true);
     }
     if (input === 'y' && confirmDelete) {
+      busy.current = true;
       setDeleting(true);
       try {
         const result = await api.deleteDestination(destId);
         if (result.error) {
           setMessage(`Error: ${result.error}`);
           setConfirmDelete(false);
+          setTimeout(() => { busy.current = false; }, 300);
         } else {
           setMessage('Destination deleted successfully');
-          setTimeout(() => {
-            onRefresh();
-            onBack();
-          }, 1500);
+          setTimeout(() => { onRefresh(); onBack(); }, 1500);
         }
       } catch (err) {
         setMessage('Failed to delete');
         setConfirmDelete(false);
+        setTimeout(() => { busy.current = false; }, 300);
       }
       setDeleting(false);
     }
@@ -240,7 +246,7 @@ function DestinationDetail({ destId, destinations, onBack, onRefresh }: {
               <Text color="red">✗ Error: {testResult.error}</Text>
             ) : (
               <Text color={testResult.success ? 'green' : 'red'}>
-                {testResult.success ? '✓' : '✗'} Status: {testResult.status || 'N/A'} | Time: {testResult.time || 0}ms
+                {testResult.success ? '✓' : '✗'} Status: {testResult.status > 0 ? testResult.status : 'N/A'} | Time: {testResult.time}ms
               </Text>
             )}
           </Box>

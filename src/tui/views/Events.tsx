@@ -46,12 +46,11 @@ function EventList({ events, onSelect }: {
       <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1}>
         {/* Column headers */}
         <Box borderBottom marginBottom={0}>
-          <Box width={4}><Text> </Text></Box>
+          <Box width={2}><Text> </Text></Box>
           <Box width={10}><Text bold dimColor>Time</Text></Box>
-          <Box width={15}><Text bold dimColor>Source</Text></Box>
-          <Box width={10}><Text bold dimColor>Method</Text></Box>
+          <Box width={22}><Text bold dimColor>Source</Text></Box>
           <Box width={12}><Text bold dimColor>Status</Text></Box>
-          <Box width={12}><Text bold dimColor>ID</Text></Box>
+          <Box width={16}><Text bold dimColor>ID</Text></Box>
         </Box>
 
         {events.length === 0 ? (
@@ -61,30 +60,29 @@ function EventList({ events, onSelect }: {
         ) : (
           events.map((event, index) => {
             const isSelected = index === selectedIndex;
+            const d = new Date(event.received_at || event.receivedAt || '');
+            const time = `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}:${d.getSeconds().toString().padStart(2, '0')}`;
             return (
               <Box key={event.id}>
-                <Text color={isSelected ? 'cyan' : undefined} bold={isSelected}>
-                  {isSelected ? '▶ ' : '  '}
-                </Text>
-                <Box width={10}>
-                  <Text dimColor>
-                    {new Date(event.received_at || event.receivedAt || '').toLocaleTimeString()}
+                <Box width={2}>
+                  <Text color={isSelected ? 'cyan' : undefined} bold={isSelected}>
+                    {isSelected ? '▶' : ' '}
                   </Text>
                 </Box>
-                <Box width={15}>
+                <Box width={10}>
+                  <Text dimColor>{time}</Text>
+                </Box>
+                <Box width={22}>
                   <Text color="cyan">
-                    {(event.source_name || event.sourceName || event.source_slug || event.sourceSlug || '').slice(0, 13)}
+                    {(event.source_name || event.sourceName || event.source_slug || event.sourceSlug || '').slice(0, 20)}
                   </Text>
-                </Box>
-                <Box width={10}>
-                  <Text color={isSelected ? 'cyan' : undefined}>{event.method || '-'}</Text>
                 </Box>
                 <Box width={12}>
                   <Text color={getStatusColor(event.status || 'pending')}>
                     ● {event.status || 'pending'}
                   </Text>
                 </Box>
-                <Text dimColor>{event.id.slice(0, 8)}…</Text>
+                <Text dimColor>{event.id.slice(0, 14)}…</Text>
               </Box>
             );
           })

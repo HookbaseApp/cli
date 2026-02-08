@@ -115,13 +115,14 @@ export async function eventsGetCommand(
   logger.log(logger.bold('Event Details'));
   logger.log('');
   logger.log(`ID:        ${event.id}`);
-  logger.log(`Source:    ${event.source_name || event.source_id}`);
-  logger.log(`Type:      ${event.event_type || '-'}`);
+  logger.log(`Source:    ${event.source_name || event.sourceName || event.source_id || event.sourceId || '-'}`);
+  logger.log(`Type:      ${event.event_type || event.eventType || '-'}`);
   logger.log(`Method:    ${event.method || '-'}`);
   logger.log(`Path:      ${event.path || '/'}`);
   logger.log(`Status:    ${formatStatus(event.status)}`);
-  logger.log(`Size:      ${event.payload_size || 0} bytes`);
-  logger.log(`Signature: ${event.signature_valid === true ? logger.green('valid') : event.signature_valid === false ? logger.red('invalid') : logger.dimText('not verified')}`);
+  logger.log(`Size:      ${event.payload_size ?? event.payloadSize ?? 0} bytes`);
+  const sigValid = event.signature_valid ?? event.signatureValid;
+  logger.log(`Signature: ${sigValid === true ? logger.green('valid') : sigValid === false ? logger.red('invalid') : logger.dimText('not verified')}`);
   logger.log(`Received:  ${formatDate(event.received_at || event.receivedAt || '')}`);
 
   if (event.headers && Object.keys(event.headers).length > 0) {
@@ -143,12 +144,12 @@ export async function eventsGetCommand(
     logger.log(logger.bold('Deliveries:'));
     logger.table(
       ['ID', 'Destination', 'Status', 'Response', 'Time'],
-      event.deliveries.map(d => [
+      event.deliveries.map((d: any) => [
         d.id,
-        d.destination_name || d.destination_id,
+        d.destination_name || d.destinationName || d.destination_id || d.destinationId || '-',
         d.status === 'success' ? logger.green(d.status) : d.status === 'failed' ? logger.red(d.status) : logger.yellow(d.status),
-        d.response_status ? String(d.response_status) : '-',
-        d.response_time_ms ? `${d.response_time_ms}ms` : '-',
+        (d.response_status ?? d.responseStatus) ? String(d.response_status ?? d.responseStatus) : '-',
+        (d.response_time_ms ?? d.responseTimeMs) ? `${d.response_time_ms ?? d.responseTimeMs}ms` : '-',
       ])
     );
   }

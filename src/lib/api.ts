@@ -1165,3 +1165,334 @@ export async function reorderCronGroups(groupIds: string[]): Promise<ApiResponse
   if (!org) return { error: 'No organization selected', status: 0 };
   return request<{ success: boolean }>('POST', `/api/organizations/${org.id}/cron-groups/reorder`, { groupIds });
 }
+
+// ============================================================================
+// Outbound Webhooks - Applications
+// ============================================================================
+
+export interface WebhookApplication {
+  id: string;
+  organization_id: string;
+  name: string;
+  description?: string;
+  uid?: string;
+  rate_limit_per_minute?: number;
+  is_active: number;
+  endpoint_count?: number;
+  message_count?: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function getWebhookApplications(): Promise<ApiResponse<{ applications: WebhookApplication[] }>> {
+  const org = requireOrg();
+  if (!org) return { error: 'No organization selected', status: 0 };
+  return request<{ applications: WebhookApplication[] }>('GET', `/api/organizations/${org.id}/webhook-applications`);
+}
+
+export async function getWebhookApplication(appId: string): Promise<ApiResponse<{ application: WebhookApplication }>> {
+  const org = requireOrg();
+  if (!org) return { error: 'No organization selected', status: 0 };
+  return request<{ application: WebhookApplication }>('GET', `/api/organizations/${org.id}/webhook-applications/${appId}`);
+}
+
+export async function createWebhookApplication(data: {
+  name: string;
+  description?: string;
+  uid?: string;
+  rateLimitPerMinute?: number;
+}): Promise<ApiResponse<{ application: WebhookApplication }>> {
+  const org = requireOrg();
+  if (!org) return { error: 'No organization selected', status: 0 };
+  return request<{ application: WebhookApplication }>('POST', `/api/organizations/${org.id}/webhook-applications`, {
+    name: data.name,
+    description: data.description,
+    uid: data.uid,
+    rateLimitPerMinute: data.rateLimitPerMinute,
+  });
+}
+
+export async function updateWebhookApplication(
+  appId: string,
+  data: {
+    name?: string;
+    description?: string;
+    rateLimitPerMinute?: number;
+    isDisabled?: boolean;
+  }
+): Promise<ApiResponse<{ application: WebhookApplication }>> {
+  const org = requireOrg();
+  if (!org) return { error: 'No organization selected', status: 0 };
+  return request<{ application: WebhookApplication }>('PATCH', `/api/organizations/${org.id}/webhook-applications/${appId}`, data);
+}
+
+export async function deleteWebhookApplication(appId: string): Promise<ApiResponse<{ success: boolean }>> {
+  const org = requireOrg();
+  if (!org) return { error: 'No organization selected', status: 0 };
+  return request<{ success: boolean }>('DELETE', `/api/organizations/${org.id}/webhook-applications/${appId}`);
+}
+
+// ============================================================================
+// Outbound Webhooks - Endpoints
+// ============================================================================
+
+export interface WebhookEndpoint {
+  id: string;
+  organization_id: string;
+  application_id: string;
+  application_name?: string;
+  url: string;
+  description?: string;
+  secret?: string;
+  event_types: string[];
+  headers?: Record<string, string>;
+  rate_limit_per_minute?: number;
+  timeout_ms?: number;
+  is_active: number;
+  circuit_state?: 'closed' | 'open' | 'half_open';
+  failure_count?: number;
+  message_count?: number;
+  success_rate?: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function getWebhookEndpoints(appId?: string): Promise<ApiResponse<{ endpoints: WebhookEndpoint[] }>> {
+  const org = requireOrg();
+  if (!org) return { error: 'No organization selected', status: 0 };
+  const query = appId ? `?applicationId=${appId}` : '';
+  return request<{ endpoints: WebhookEndpoint[] }>('GET', `/api/organizations/${org.id}/webhook-endpoints${query}`);
+}
+
+export async function getWebhookEndpoint(endpointId: string): Promise<ApiResponse<{ endpoint: WebhookEndpoint }>> {
+  const org = requireOrg();
+  if (!org) return { error: 'No organization selected', status: 0 };
+  return request<{ endpoint: WebhookEndpoint }>('GET', `/api/organizations/${org.id}/webhook-endpoints/${endpointId}`);
+}
+
+export async function createWebhookEndpoint(data: {
+  applicationId: string;
+  url: string;
+  description?: string;
+  eventTypes?: string[];
+  headers?: Record<string, string>;
+  rateLimitPerMinute?: number;
+  timeoutMs?: number;
+}): Promise<ApiResponse<{ endpoint: WebhookEndpoint; secret: string }>> {
+  const org = requireOrg();
+  if (!org) return { error: 'No organization selected', status: 0 };
+  return request<{ endpoint: WebhookEndpoint; secret: string }>('POST', `/api/organizations/${org.id}/webhook-endpoints`, {
+    applicationId: data.applicationId,
+    url: data.url,
+    description: data.description,
+    eventTypes: data.eventTypes || ['*'],
+    headers: data.headers,
+    rateLimitPerMinute: data.rateLimitPerMinute,
+    timeoutMs: data.timeoutMs || 30000,
+  });
+}
+
+export async function updateWebhookEndpoint(
+  endpointId: string,
+  data: {
+    url?: string;
+    description?: string;
+    eventTypes?: string[];
+    headers?: Record<string, string>;
+    rateLimitPerMinute?: number;
+    timeoutMs?: number;
+    isActive?: boolean;
+  }
+): Promise<ApiResponse<{ endpoint: WebhookEndpoint }>> {
+  const org = requireOrg();
+  if (!org) return { error: 'No organization selected', status: 0 };
+  return request<{ endpoint: WebhookEndpoint }>('PATCH', `/api/organizations/${org.id}/webhook-endpoints/${endpointId}`, data);
+}
+
+export async function deleteWebhookEndpoint(endpointId: string): Promise<ApiResponse<{ success: boolean }>> {
+  const org = requireOrg();
+  if (!org) return { error: 'No organization selected', status: 0 };
+  return request<{ success: boolean }>('DELETE', `/api/organizations/${org.id}/webhook-endpoints/${endpointId}`);
+}
+
+export async function testWebhookEndpoint(endpointId: string): Promise<ApiResponse<{
+  success: boolean;
+  statusCode: number;
+  responseTime: number;
+  error?: string;
+}>> {
+  const org = requireOrg();
+  if (!org) return { error: 'No organization selected', status: 0 };
+  return request<{ success: boolean; statusCode: number; responseTime: number; error?: string }>(
+    'POST',
+    `/api/organizations/${org.id}/webhook-endpoints/${endpointId}/test`
+  );
+}
+
+export async function rotateWebhookEndpointSecret(endpointId: string): Promise<ApiResponse<{ endpoint: WebhookEndpoint; secret: string }>> {
+  const org = requireOrg();
+  if (!org) return { error: 'No organization selected', status: 0 };
+  return request<{ endpoint: WebhookEndpoint; secret: string }>(
+    'POST',
+    `/api/organizations/${org.id}/webhook-endpoints/${endpointId}/rotate-secret`
+  );
+}
+
+// ============================================================================
+// Outbound Webhooks - Send Events
+// ============================================================================
+
+export interface WebhookMessage {
+  id: string;
+  organization_id: string;
+  application_id: string;
+  endpoint_id: string;
+  event_type: string;
+  payload: unknown;
+  status: 'pending' | 'processing' | 'delivered' | 'failed' | 'exhausted';
+  attempt_count: number;
+  max_attempts: number;
+  response_status?: number;
+  response_body?: string;
+  error_message?: string;
+  next_retry_at?: string;
+  delivered_at?: string;
+  created_at: string;
+}
+
+export async function sendWebhookEvent(data: {
+  applicationId: string;
+  eventType: string;
+  payload: unknown;
+  endpointIds?: string[];
+}): Promise<ApiResponse<{ message: WebhookMessage }>> {
+  const org = requireOrg();
+  if (!org) return { error: 'No organization selected', status: 0 };
+  return request<{ message: WebhookMessage }>('POST', `/api/organizations/${org.id}/send-event`, {
+    applicationId: data.applicationId,
+    eventType: data.eventType,
+    payload: data.payload,
+    endpointIds: data.endpointIds,
+  });
+}
+
+// ============================================================================
+// Outbound Webhooks - Messages
+// ============================================================================
+
+export async function getWebhookMessages(options?: {
+  limit?: number;
+  offset?: number;
+  applicationId?: string;
+  endpointId?: string;
+  status?: string;
+  eventType?: string;
+}): Promise<ApiResponse<{ messages: WebhookMessage[]; total: number; hasMore: boolean }>> {
+  const org = requireOrg();
+  if (!org) return { error: 'No organization selected', status: 0 };
+
+  const params = new URLSearchParams();
+  if (options?.limit) params.set('limit', String(options.limit));
+  if (options?.offset) params.set('offset', String(options.offset));
+  if (options?.applicationId) params.set('applicationId', options.applicationId);
+  if (options?.endpointId) params.set('endpointId', options.endpointId);
+  if (options?.status) params.set('status', options.status);
+  if (options?.eventType) params.set('eventType', options.eventType);
+
+  const queryString = params.toString();
+  return request<{ messages: WebhookMessage[]; total: number; hasMore: boolean }>(
+    'GET',
+    `/api/organizations/${org.id}/outbound-messages${queryString ? `?${queryString}` : ''}`
+  );
+}
+
+export async function getWebhookMessage(messageId: string): Promise<ApiResponse<{ message: WebhookMessage }>> {
+  const org = requireOrg();
+  if (!org) return { error: 'No organization selected', status: 0 };
+  return request<{ message: WebhookMessage }>('GET', `/api/organizations/${org.id}/outbound-messages/${messageId}`);
+}
+
+export async function retryWebhookMessage(messageId: string): Promise<ApiResponse<{ message: WebhookMessage }>> {
+  const org = requireOrg();
+  if (!org) return { error: 'No organization selected', status: 0 };
+  return request<{ message: WebhookMessage }>('POST', `/api/organizations/${org.id}/outbound-messages/${messageId}/retry`);
+}
+
+// ============================================================================
+// Outbound Webhooks - Dead Letter Queue (DLQ)
+// ============================================================================
+
+export interface DlqMessage {
+  id: string;
+  organization_id: string;
+  application_id: string;
+  endpoint_id: string;
+  original_message_id: string;
+  event_type: string;
+  payload: unknown;
+  reason: string;
+  error_message?: string;
+  last_response_status?: number;
+  attempt_count: number;
+  created_at: string;
+}
+
+// DLQ messages are just outbound messages with status=dlq
+export async function getDlqMessages(options?: {
+  limit?: number;
+  offset?: number;
+  applicationId?: string;
+  endpointId?: string;
+}): Promise<ApiResponse<{ messages: DlqMessage[]; total: number; hasMore: boolean }>> {
+  const org = requireOrg();
+  if (!org) return { error: 'No organization selected', status: 0 };
+
+  const params = new URLSearchParams();
+  params.set('status', 'dlq'); // Filter for DLQ messages
+  if (options?.limit) params.set('limit', String(options.limit));
+  if (options?.offset) params.set('offset', String(options.offset));
+  if (options?.applicationId) params.set('applicationId', options.applicationId);
+  if (options?.endpointId) params.set('endpointId', options.endpointId);
+
+  const queryString = params.toString();
+  return request<{ messages: DlqMessage[]; total: number; hasMore: boolean }>(
+    'GET',
+    `/api/organizations/${org.id}/outbound-messages?${queryString}`
+  );
+}
+
+export async function getDlqMessage(messageId: string): Promise<ApiResponse<{ message: DlqMessage }>> {
+  const org = requireOrg();
+  if (!org) return { error: 'No organization selected', status: 0 };
+  return request<{ message: DlqMessage }>('GET', `/api/organizations/${org.id}/outbound-messages/${messageId}`);
+}
+
+export async function retryDlqMessage(messageId: string): Promise<ApiResponse<{ message: WebhookMessage }>> {
+  const org = requireOrg();
+  if (!org) return { error: 'No organization selected', status: 0 };
+  return request<{ message: WebhookMessage }>('POST', `/api/organizations/${org.id}/outbound-messages/${messageId}/replay`);
+}
+
+export async function bulkRetryDlqMessages(messageIds: string[]): Promise<ApiResponse<{ retried: number; failed: number }>> {
+  const org = requireOrg();
+  if (!org) return { error: 'No organization selected', status: 0 };
+  // Replay each message individually since there's no bulk endpoint
+  let retried = 0;
+  let failed = 0;
+  for (const id of messageIds) {
+    const result = await retryDlqMessage(id);
+    if (result.error) {
+      failed++;
+    } else {
+      retried++;
+    }
+  }
+  return { data: { retried, failed }, status: 200 };
+}
+
+export async function deleteDlqMessage(messageId: string): Promise<ApiResponse<{ success: boolean }>> {
+  const org = requireOrg();
+  if (!org) return { error: 'No organization selected', status: 0 };
+  // Note: Delete may not be supported - check API
+  return request<{ success: boolean }>('DELETE', `/api/organizations/${org.id}/outbound-messages/${messageId}`);
+}

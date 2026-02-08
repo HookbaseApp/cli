@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { Box, Text, useInput } from 'ink';
 import SelectInput from 'ink-select-input';
 import Spinner from 'ink-spinner';
@@ -56,10 +56,10 @@ function RouteList({ routes, onSelect, onCreate }: {
       <Box flexDirection="column" borderStyle="round" borderColor="gray" paddingX={1}>
         {/* Header */}
         <Box borderBottom>
-          <Box width={4}><Text> </Text></Box>
-          <Box width={22}><Text bold dimColor>Name</Text></Box>
-          <Box width={20}><Text bold dimColor>Source</Text></Box>
-          <Box width={20}><Text bold dimColor>Destination</Text></Box>
+          <Box width={2}><Text> </Text></Box>
+          <Box width={24}><Text bold dimColor>Name</Text></Box>
+          <Box width={22}><Text bold dimColor>Source</Text></Box>
+          <Box width={22}><Text bold dimColor>Destination</Text></Box>
           <Box width={10}><Text bold dimColor>Priority</Text></Box>
           <Box width={10}><Text bold dimColor>Status</Text></Box>
           <Box width={12}><Text bold dimColor>Deliveries</Text></Box>
@@ -79,9 +79,11 @@ function RouteList({ routes, onSelect, onCreate }: {
 
           return (
             <Box key={item.id}>
-              <Text color={isSelected ? 'cyan' : undefined} bold={isSelected}>
-                {isSelected ? '▶ ' : '  '}
-              </Text>
+              <Box width={2}>
+                <Text color={isSelected ? 'cyan' : undefined} bold={isSelected}>
+                  {isSelected ? '▶' : ' '}
+                </Text>
+              </Box>
               {isAction ? (
                 <Text color="green">{item.name}</Text>
               ) : (() => {
@@ -91,16 +93,16 @@ function RouteList({ routes, onSelect, onCreate }: {
                 const deliveryCount = item.deliveryCount ?? item.delivery_count ?? 0;
                 return (
                   <>
-                    <Box width={22}>
+                    <Box width={24}>
                       <Text color={isSelected ? 'cyan' : undefined} bold={isSelected}>
-                        {truncate(item.name, 20)}
+                        {truncate(item.name, 22)}
                       </Text>
                     </Box>
-                    <Box width={20}>
-                      <Text dimColor>{truncate(sourceName, 18)}</Text>
+                    <Box width={22}>
+                      <Text dimColor>{truncate(sourceName, 20)}</Text>
                     </Box>
-                    <Box width={20}>
-                      <Text dimColor>{truncate(destName, 18)}</Text>
+                    <Box width={22}>
+                      <Text dimColor>{truncate(destName, 20)}</Text>
                     </Box>
                     <Box width={10}>
                       <Text>{item.priority}</Text>
@@ -147,14 +149,13 @@ function RouteDetail({ routeId, routes, onBack, onRefresh }: {
   const [deleting, setDeleting] = useState(false);
   const [toggling, setToggling] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  // Track local active state for immediate UI feedback
   const [localIsActive, setLocalIsActive] = useState<boolean | null>(null);
+  const busy = useRef(false);
 
-  // Use local state if set, otherwise use route data
   const isActive = localIsActive !== null ? localIsActive : getRouteIsActive(route);
 
   useInput(async (input, key) => {
-    if (deleting || toggling) return;
+    if (busy.current) return;
 
     if (key.escape || input === 'b') {
       if (confirmDelete) {
@@ -167,22 +168,22 @@ function RouteDetail({ routeId, routes, onBack, onRefresh }: {
       setConfirmDelete(true);
     }
     if (input === 'y' && confirmDelete) {
+      busy.current = true;
       setDeleting(true);
       try {
         const result = await api.deleteRoute(routeId);
         if (result.error) {
           setMessage(`Error: ${result.error}`);
           setConfirmDelete(false);
+          setTimeout(() => { busy.current = false; }, 300);
         } else {
           setMessage('Route deleted successfully');
-          setTimeout(() => {
-            onRefresh();
-            onBack();
-          }, 1500);
+          setTimeout(() => { onRefresh(); onBack(); }, 1500);
         }
       } catch (err) {
         setMessage('Failed to delete');
         setConfirmDelete(false);
+        setTimeout(() => { busy.current = false; }, 300);
       }
       setDeleting(false);
     }
@@ -190,6 +191,7 @@ function RouteDetail({ routeId, routes, onBack, onRefresh }: {
       setConfirmDelete(false);
     }
     if (input === 't' && route && !confirmDelete) {
+      busy.current = true;
       setToggling(true);
       const newActiveState = !isActive;
       try {
@@ -205,6 +207,7 @@ function RouteDetail({ routeId, routes, onBack, onRefresh }: {
         setMessage('Failed to toggle');
       }
       setToggling(false);
+      setTimeout(() => { busy.current = false; }, 300);
     }
   });
 

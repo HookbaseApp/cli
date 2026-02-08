@@ -145,11 +145,12 @@ export async function cronListCommand(options: { json?: boolean; all?: boolean }
 
   spinner.stop();
 
-  let jobs = result.data?.cronJobs || [];
+  const raw = result.data as any;
+  let jobs: any[] = raw?.cronJobs || raw?.cron_jobs || raw?.data || [];
 
   // Filter to active only by default
   if (!options.all) {
-    jobs = jobs.filter(j => j.is_active);
+    jobs = jobs.filter((j: any) => j.is_active ?? j.isActive);
   }
 
   if (options.json) {
@@ -168,14 +169,14 @@ export async function cronListCommand(options: { json?: boolean; all?: boolean }
 
   logger.table(
     ['ID', 'Name', 'Schedule', 'URL', 'Status', 'Next Run', 'Last Run'],
-    jobs.map(j => [
+    jobs.map((j: any) => [
       j.id,
       j.name.slice(0, 20) + (j.name.length > 20 ? '...' : ''),
-      describeCronExpression(j.cron_expression),
+      describeCronExpression(j.cron_expression || j.cronExpression),
       j.url.slice(0, 30) + (j.url.length > 30 ? '...' : ''),
-      j.is_active ? logger.green('active') : logger.dimText('inactive'),
-      formatRelativeTime(j.next_run_at),
-      formatRelativeTime(j.last_run_at),
+      (j.is_active ?? j.isActive) ? logger.green('active') : logger.dimText('inactive'),
+      formatRelativeTime(j.next_run_at || j.nextRunAt),
+      formatRelativeTime(j.last_run_at || j.lastRunAt),
     ])
   );
 
@@ -320,13 +321,14 @@ export async function cronCreateCommand(options: {
 
       // Optional group selection
       const groupsResult = await api.getCronGroups();
-      if (groupsResult.data?.groups && groupsResult.data.groups.length > 0) {
-        const groups = groupsResult.data.groups;
+      const grpRaw = groupsResult.data as any;
+      const availGroups: any[] = grpRaw?.groups || grpRaw?.data || [];
+      if (availGroups.length > 0) {
         const groupChoice = await select({
           message: 'Add to a group? (optional):',
           choices: [
             { name: 'No group', value: '' },
-            ...groups.map(g => ({ name: g.name, value: g.id })),
+            ...availGroups.map((g: any) => ({ name: g.name, value: g.id })),
           ],
         });
         if (groupChoice) {
@@ -385,22 +387,24 @@ export async function cronCreateCommand(options: {
 
   spinner.succeed('Cron job created');
 
+  const createRaw = result.data as any;
+  const job = createRaw?.cronJob || createRaw?.cron_job || createRaw?.data;
+
   if (options.json) {
-    console.log(JSON.stringify(result.data?.cronJob, null, 2));
+    console.log(JSON.stringify(job, null, 2));
     return;
   }
 
-  const job = result.data?.cronJob;
   if (job) {
     logger.log('');
     logger.box('Cron Job Created', [
       `ID:       ${job.id}`,
       `Name:     ${job.name}`,
-      `Schedule: ${describeCronExpression(job.cron_expression)}`,
+      `Schedule: ${describeCronExpression(job.cron_expression || job.cronExpression)}`,
       `URL:      ${job.method} ${job.url}`,
       `Timezone: ${job.timezone}`,
       ``,
-      `Next run: ${formatDate(job.next_run_at)}`,
+      `Next run: ${formatDate(job.next_run_at || job.nextRunAt)}`,
     ].join('\n'));
   }
 }
@@ -422,7 +426,8 @@ export async function cronGetCommand(
 
   spinner.stop();
 
-  const job = result.data?.cronJob;
+  const getRaw = result.data as any;
+  const job: any = getRaw?.cronJob || getRaw?.cron_job || getRaw?.data;
 
   if (options.json) {
     console.log(JSON.stringify(job, null, 2));
@@ -434,6 +439,17 @@ export async function cronGetCommand(
     return;
   }
 
+  const cronExpr = job.cron_expression || job.cronExpression;
+  const nextRun = job.next_run_at || job.nextRunAt;
+  const lastRun = job.last_run_at || job.lastRunAt;
+  const createdAt = job.created_at || job.createdAt;
+  const updatedAt = job.updated_at || job.updatedAt;
+  const timeoutMs = job.timeout_ms ?? job.timeoutMs ?? 30000;
+  const notifyFailure = job.notify_on_failure ?? job.notifyOnFailure;
+  const notifySuccess = job.notify_on_success ?? job.notifyOnSuccess;
+  const notifyEmails = job.notify_emails || job.notifyEmails;
+  const consecutiveFailures = job.consecutive_failures ?? job.consecutiveFailures;
+
   logger.log('');
   logger.log(logger.bold('Cron Job Details'));
   logger.log('');
@@ -442,14 +458,14 @@ export async function cronGetCommand(
   if (job.description) {
     logger.log(`Description:  ${job.description}`);
   }
-  logger.log(`Schedule:     ${job.cron_expression} (${describeCronExpression(job.cron_expression)})`);
+  logger.log(`Schedule:     ${cronExpr} (${describeCronExpression(cronExpr)})`);
   logger.log(`Timezone:     ${job.timezone}`);
-  logger.log(`Status:       ${job.is_active ? logger.green('active') : logger.red('inactive')}`);
+  logger.log(`Status:       ${(job.is_active ?? job.isActive) ? logger.green('active') : logger.red('inactive')}`);
   logger.log('');
   logger.log(logger.bold('Request'));
   logger.log(`URL:          ${job.url}`);
   logger.log(`Method:       ${job.method}`);
-  logger.log(`Timeout:      ${job.timeout_ms}ms`);
+  logger.log(`Timeout:      ${timeoutMs}ms`);
   if (job.headers) {
     logger.log(`Headers:      ${job.headers}`);
   }
@@ -458,21 +474,21 @@ export async function cronGetCommand(
   }
   logger.log('');
   logger.log(logger.bold('Timing'));
-  logger.log(`Next run:     ${formatDate(job.next_run_at)} (${formatRelativeTime(job.next_run_at)})`);
-  logger.log(`Last run:     ${formatDate(job.last_run_at)} (${formatRelativeTime(job.last_run_at)})`);
-  logger.log(`Created:      ${formatDate(job.created_at)}`);
-  logger.log(`Updated:      ${formatDate(job.updated_at)}`);
+  logger.log(`Next run:     ${formatDate(nextRun)} (${formatRelativeTime(nextRun)})`);
+  logger.log(`Last run:     ${formatDate(lastRun)} (${formatRelativeTime(lastRun)})`);
+  logger.log(`Created:      ${formatDate(createdAt)}`);
+  logger.log(`Updated:      ${formatDate(updatedAt)}`);
 
-  if (job.notify_on_failure || job.notify_on_success) {
+  if (notifyFailure || notifySuccess) {
     logger.log('');
     logger.log(logger.bold('Notifications'));
-    logger.log(`On failure:   ${job.notify_on_failure ? 'Yes' : 'No'}`);
-    logger.log(`On success:   ${job.notify_on_success ? 'Yes' : 'No'}`);
-    if (job.notify_emails) {
-      logger.log(`Emails:       ${job.notify_emails}`);
+    logger.log(`On failure:   ${notifyFailure ? 'Yes' : 'No'}`);
+    logger.log(`On success:   ${notifySuccess ? 'Yes' : 'No'}`);
+    if (notifyEmails) {
+      logger.log(`Emails:       ${notifyEmails}`);
     }
-    if (job.consecutive_failures) {
-      logger.log(`Consecutive failures: ${job.consecutive_failures}`);
+    if (consecutiveFailures) {
+      logger.log(`Consecutive failures: ${consecutiveFailures}`);
     }
   }
   logger.log('');
@@ -593,24 +609,29 @@ export async function cronTriggerCommand(
 
   spinner.succeed('Cron job triggered');
 
+  const trigRaw = result.data as any;
+  const execution: any = trigRaw?.execution || trigRaw?.data;
+
   if (options.json) {
-    console.log(JSON.stringify(result.data?.execution, null, 2));
+    console.log(JSON.stringify(execution, null, 2));
     return;
   }
 
-  const execution = result.data?.execution;
   if (execution) {
     logger.log('');
     logger.log(`Execution ID: ${execution.id}`);
     logger.log(`Status:       ${getStatusDisplay(execution.status)}`);
-    if (execution.responseStatus) {
-      logger.log(`Response:     ${execution.responseStatus}`);
+    const respStatus = execution.responseStatus ?? execution.response_status;
+    if (respStatus) {
+      logger.log(`Response:     ${respStatus}`);
     }
-    if (execution.latencyMs) {
-      logger.log(`Latency:      ${execution.latencyMs}ms`);
+    const latency = execution.latencyMs ?? execution.latency_ms;
+    if (latency) {
+      logger.log(`Latency:      ${latency}ms`);
     }
-    if (execution.error) {
-      logger.log(`Error:        ${logger.red(execution.error)}`);
+    const execError = execution.error || execution.error_message || execution.errorMessage;
+    if (execError) {
+      logger.log(`Error:        ${logger.red(execError)}`);
     }
     logger.log('');
   }
@@ -648,7 +669,8 @@ export async function cronHistoryCommand(
 
   spinner.stop();
 
-  const executions = result.data?.executions || [];
+  const histRaw = result.data as any;
+  const executions: any[] = histRaw?.executions || histRaw?.data || [];
 
   if (options.json) {
     console.log(JSON.stringify(executions, null, 2));
@@ -663,20 +685,27 @@ export async function cronHistoryCommand(
 
   logger.table(
     ['ID', 'Status', 'HTTP Status', 'Latency', 'Started', 'Completed'],
-    executions.map(e => [
-      e.id,
-      getStatusDisplay(e.status),
-      e.response_status ? String(e.response_status) : '-',
-      e.latency_ms ? `${e.latency_ms}ms` : '-',
-      formatRelativeTime(e.started_at),
-      e.completed_at ? formatRelativeTime(e.completed_at) : '-',
-    ])
+    executions.map((e: any) => {
+      const respStatus = e.response_status ?? e.responseStatus;
+      const latency = e.latency_ms ?? e.latencyMs;
+      const startedAt = e.started_at || e.startedAt;
+      const completedAt = e.completed_at || e.completedAt;
+      return [
+        e.id,
+        getStatusDisplay(e.status),
+        respStatus ? String(respStatus) : '-',
+        latency ? `${latency}ms` : '-',
+        formatRelativeTime(startedAt),
+        completedAt ? formatRelativeTime(completedAt) : '-',
+      ];
+    })
   );
 
   // Show summary stats
-  const successCount = executions.filter(e => e.status === 'success').length;
-  const failedCount = executions.filter(e => e.status === 'failed').length;
-  const avgLatency = executions.filter(e => e.latency_ms).reduce((sum, e) => sum + (e.latency_ms || 0), 0) / executions.filter(e => e.latency_ms).length;
+  const successCount = executions.filter((e: any) => e.status === 'success').length;
+  const failedCount = executions.filter((e: any) => e.status === 'failed').length;
+  const execsWithLatency = executions.filter((e: any) => e.latency_ms ?? e.latencyMs);
+  const avgLatency = execsWithLatency.reduce((sum: number, e: any) => sum + (e.latency_ms ?? e.latencyMs ?? 0), 0) / (execsWithLatency.length || 1);
 
   logger.log('');
   logger.dim(`Showing ${executions.length} execution(s)`);
@@ -888,9 +917,11 @@ export async function cronFollowCommand(options: {
   let jobName: string | undefined;
   if (options.job) {
     const jobResult = await api.getCronJob(options.job);
-    if (jobResult.data?.cronJob) {
-      jobName = jobResult.data.cronJob.name;
-      logger.log(`Monitoring job: ${logger.cyan(jobName)}`);
+    const followJobRaw = jobResult.data as any;
+    const followJob = followJobRaw?.cronJob || followJobRaw?.cron_job || followJobRaw?.data;
+    if (followJob) {
+      jobName = followJob.name;
+      logger.log(`Monitoring job: ${logger.cyan(jobName!)}`);
       logger.log('');
     }
   } else {
@@ -903,8 +934,10 @@ export async function cronFollowCommand(options: {
       if (options.job) {
         // Monitor specific job
         const result = await api.getCronExecutions(options.job, 10);
-        if (result.data?.executions) {
-          const executions = result.data.executions;
+        const pollRaw = result.data as any;
+        const pollExecs = pollRaw?.executions || pollRaw?.data || [];
+        if (pollExecs.length > 0) {
+          const executions = pollExecs;
 
           for (const exec of executions.reverse()) {
             if (!lastSeenExecutions.has(exec.id)) {
@@ -918,11 +951,15 @@ export async function cronFollowCommand(options: {
       } else {
         // Monitor all jobs - need to fetch all jobs first
         const jobsResult = await api.getCronJobs();
-        if (jobsResult.data?.cronJobs) {
-          for (const job of jobsResult.data.cronJobs) {
+        const allJobsRaw = jobsResult.data as any;
+        const allJobs: any[] = allJobsRaw?.cronJobs || allJobsRaw?.cron_jobs || allJobsRaw?.data || [];
+        if (allJobs.length > 0) {
+          for (const job of allJobs) {
             const execResult = await api.getCronExecutions(job.id, 5);
-            if (execResult.data?.executions) {
-              for (const exec of execResult.data.executions.reverse()) {
+            const execRaw = execResult.data as any;
+            const jobExecs: any[] = execRaw?.executions || execRaw?.data || [];
+            if (jobExecs.length > 0) {
+              for (const exec of jobExecs.reverse()) {
                 if (!lastSeenExecutions.has(exec.id)) {
                   if (!isFirstPoll) {
                     printExecution(exec, job.name);
@@ -960,21 +997,23 @@ export async function cronFollowCommand(options: {
   await new Promise(() => {});
 }
 
-function printExecution(exec: api.CronExecution, jobName?: string): void {
-  const timestamp = new Date(exec.started_at).toLocaleTimeString();
+function printExecution(exec: any, jobName?: string): void {
+  const startedAt = exec.started_at || exec.startedAt;
+  const timestamp = new Date(startedAt).toLocaleTimeString();
   const status = exec.status === 'success'
     ? logger.green('SUCCESS')
     : exec.status === 'failed'
     ? logger.red('FAILED')
     : logger.yellow('PENDING');
 
-  const httpStatus = exec.response_status
-    ? (exec.response_status >= 200 && exec.response_status < 300
-        ? logger.green(String(exec.response_status))
-        : logger.red(String(exec.response_status)))
+  const respStatus = exec.response_status ?? exec.responseStatus;
+  const httpStatus = respStatus
+    ? (respStatus >= 200 && respStatus < 300
+        ? logger.green(String(respStatus))
+        : logger.red(String(respStatus)))
     : '-';
 
-  const latency = exec.latency_ms ? `${exec.latency_ms}ms` : '-';
+  const latency = (exec.latency_ms ?? exec.latencyMs) ? `${exec.latency_ms ?? exec.latencyMs}ms` : '-';
 
   logger.log(
     `${logger.dimText(timestamp)} ` +
@@ -984,8 +1023,9 @@ function printExecution(exec: api.CronExecution, jobName?: string): void {
     `${logger.dimText(latency)}`
   );
 
-  if (exec.error_message) {
-    logger.log(`  ${logger.red('Error:')} ${exec.error_message}`);
+  const errorMsg = exec.error_message || exec.errorMessage;
+  if (errorMsg) {
+    logger.log(`  ${logger.red('Error:')} ${errorMsg}`);
   }
 }
 
@@ -1008,23 +1048,26 @@ export async function cronStatusCommand(options: { json?: boolean }): Promise<vo
 
   spinner.stop();
 
-  const jobs = jobsResult.data?.cronJobs || [];
-  const groups = groupsResult.data?.groups || [];
+  const statusJobsRaw = jobsResult.data as any;
+  const jobs: any[] = statusJobsRaw?.cronJobs || statusJobsRaw?.cron_jobs || statusJobsRaw?.data || [];
+  const statusGroupsRaw = groupsResult.data as any;
+  const groups: any[] = statusGroupsRaw?.groups || statusGroupsRaw?.data || [];
 
   if (options.json) {
     console.log(JSON.stringify({ jobs, groups }, null, 2));
     return;
   }
 
-  const activeJobs = jobs.filter(j => j.is_active);
-  const inactiveJobs = jobs.filter(j => !j.is_active);
+  const activeJobs = jobs.filter((j: any) => j.is_active ?? j.isActive);
+  const inactiveJobs = jobs.filter((j: any) => !(j.is_active ?? j.isActive));
 
   // Jobs with upcoming executions (next 1 hour)
   const now = new Date();
   const oneHourLater = new Date(now.getTime() + 60 * 60 * 1000);
-  const upcomingJobs = activeJobs.filter(j => {
-    if (!j.next_run_at) return false;
-    const nextRun = new Date(j.next_run_at);
+  const upcomingJobs = activeJobs.filter((j: any) => {
+    const nextRunAt = j.next_run_at || j.nextRunAt;
+    if (!nextRunAt) return false;
+    const nextRun = new Date(nextRunAt);
     return nextRun >= now && nextRun <= oneHourLater;
   });
 
@@ -1042,9 +1085,9 @@ export async function cronStatusCommand(options: { json?: boolean }): Promise<vo
     logger.log('');
 
     upcomingJobs
-      .sort((a, b) => new Date(a.next_run_at!).getTime() - new Date(b.next_run_at!).getTime())
-      .forEach(job => {
-        const nextRun = new Date(job.next_run_at!);
+      .sort((a: any, b: any) => new Date(a.next_run_at || a.nextRunAt).getTime() - new Date(b.next_run_at || b.nextRunAt).getTime())
+      .forEach((job: any) => {
+        const nextRun = new Date(job.next_run_at || job.nextRunAt);
         const diffMinutes = Math.round((nextRun.getTime() - now.getTime()) / (1000 * 60));
         logger.log(`  ${logger.cyan(job.name.padEnd(25))} in ${diffMinutes}m (${nextRun.toLocaleTimeString()})`);
       });
@@ -1053,13 +1096,14 @@ export async function cronStatusCommand(options: { json?: boolean }): Promise<vo
   }
 
   // Show recently failed jobs if any
-  const recentlyFailed = jobs.filter(j => j.consecutive_failures && j.consecutive_failures > 0);
+  const recentlyFailed = jobs.filter((j: any) => (j.consecutive_failures ?? j.consecutiveFailures ?? 0) > 0);
   if (recentlyFailed.length > 0) {
     logger.log(logger.bold(logger.red('Jobs with Recent Failures:')));
     logger.log('');
 
-    recentlyFailed.forEach(job => {
-      logger.log(`  ${logger.red(job.name.padEnd(25))} ${job.consecutive_failures} consecutive failure(s)`);
+    recentlyFailed.forEach((job: any) => {
+      const failures = job.consecutive_failures ?? job.consecutiveFailures ?? 0;
+      logger.log(`  ${logger.red(job.name.padEnd(25))} ${failures} consecutive failure(s)`);
     });
 
     logger.log('');
