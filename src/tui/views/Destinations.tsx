@@ -211,6 +211,10 @@ function DestinationDetail({ destId, destinations, onBack, onRefresh }: {
           <Text bold>{dest.name}</Text>
         </Box>
         <Box>
+          <Box width={16}><Text dimColor>Slug:</Text></Box>
+          <Text>{(dest as any).slug || '-'}</Text>
+        </Box>
+        <Box>
           <Box width={16}><Text dimColor>URL:</Text></Box>
           <Text color="blue">{dest.url}</Text>
         </Box>

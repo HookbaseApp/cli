@@ -46,10 +46,11 @@ export async function destinationsListCommand(options: { json?: boolean }): Prom
   }
 
   logger.table(
-    ['ID', 'Name', 'URL', 'Method', 'Status', 'Deliveries'],
+    ['ID', 'Name', 'Slug', 'URL', 'Method', 'Status', 'Deliveries'],
     destinations.map((d: any) => [
       d.id,
       d.name,
+      d.slug || '-',
       d.url.length > 40 ? d.url.slice(0, 37) + '...' : d.url,
       d.method || 'POST',
       (d.is_active ?? d.isActive ?? !d.isDisabled) ? logger.green('active') : logger.dimText('inactive'),

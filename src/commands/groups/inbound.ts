@@ -57,15 +57,15 @@ export function registerSourcesCommands(parent: Command): Command {
     .action(sourcesCreateCommand);
 
   sources
-    .command('get <sourceId>')
+    .command('get <source>')
     .alias('show')
-    .description('Get source details')
+    .description('Get source details (accepts ID or slug)')
     .option('--json', 'Output as JSON')
     .action(sourcesGetCommand);
 
   sources
-    .command('update <sourceId>')
-    .description('Update a source')
+    .command('update <source>')
+    .description('Update a source (accepts ID or slug)')
     .option('-n, --name <name>', 'New name')
     .option('-p, --provider <provider>', 'New provider')
     .option('-d, --description <description>', 'New description')
@@ -75,16 +75,16 @@ export function registerSourcesCommands(parent: Command): Command {
     .action(sourcesUpdateCommand);
 
   sources
-    .command('delete <sourceId>')
+    .command('delete <source>')
     .alias('rm')
-    .description('Delete a source')
+    .description('Delete a source (accepts ID or slug)')
     .option('-y, --yes', 'Skip confirmation')
     .option('--json', 'Output as JSON')
     .action(sourcesDeleteCommand);
 
   sources
-    .command('rotate-secret <sourceId>')
-    .description('Rotate the signing secret for a source')
+    .command('rotate-secret <source>')
+    .description('Rotate the signing secret for a source (accepts ID or slug)')
     .option('-y, --yes', 'Skip confirmation')
     .option('--json', 'Output as JSON')
     .action(sourcesRotateSecretCommand);
@@ -115,15 +115,15 @@ export function registerDestinationsCommands(parent: Command): Command {
     .action(destinationsCreateCommand);
 
   destinations
-    .command('get <destId>')
+    .command('get <destination>')
     .alias('show')
-    .description('Get destination details')
+    .description('Get destination details (accepts ID or slug)')
     .option('--json', 'Output as JSON')
     .action(destinationsGetCommand);
 
   destinations
-    .command('update <destId>')
-    .description('Update a destination')
+    .command('update <destination>')
+    .description('Update a destination (accepts ID or slug)')
     .option('-n, --name <name>', 'New name')
     .option('-u, --url <url>', 'New URL')
     .option('-m, --method <method>', 'New HTTP method')
@@ -133,16 +133,16 @@ export function registerDestinationsCommands(parent: Command): Command {
     .action(destinationsUpdateCommand);
 
   destinations
-    .command('delete <destId>')
+    .command('delete <destination>')
     .alias('rm')
-    .description('Delete a destination')
+    .description('Delete a destination (accepts ID or slug)')
     .option('-y, --yes', 'Skip confirmation')
     .option('--json', 'Output as JSON')
     .action(destinationsDeleteCommand);
 
   destinations
-    .command('test <destId>')
-    .description('Test a destination with a sample webhook')
+    .command('test <destination>')
+    .description('Test a destination with a sample webhook (accepts ID or slug)')
     .option('--json', 'Output as JSON')
     .action(destinationsTestCommand);
 

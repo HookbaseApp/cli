@@ -166,15 +166,15 @@ export function registerCronCommands(parent: Command): Command {
     .action(cronGroupsCreateCommand);
 
   cronGroups
-    .command('get <groupId>')
+    .command('get <group>')
     .alias('show')
-    .description('Get cron group details')
+    .description('Get cron group details (accepts ID or slug)')
     .option('--json', 'Output as JSON')
     .action(cronGroupsGetCommand);
 
   cronGroups
-    .command('update <groupId>')
-    .description('Update a cron group')
+    .command('update <group>')
+    .description('Update a cron group (accepts ID or slug)')
     .option('-n, --name <name>', 'New name')
     .option('-d, --description <description>', 'New description')
     .option('-o, --order <number>', 'New sort order')
@@ -182,9 +182,9 @@ export function registerCronCommands(parent: Command): Command {
     .action(cronGroupsUpdateCommand);
 
   cronGroups
-    .command('delete <groupId>')
+    .command('delete <group>')
     .alias('rm')
-    .description('Delete a cron group (jobs become ungrouped)')
+    .description('Delete a cron group (accepts ID or slug, jobs become ungrouped)')
     .option('-y, --yes', 'Skip confirmation')
     .option('--json', 'Output as JSON')
     .action(cronGroupsDeleteCommand);

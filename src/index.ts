@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 
+import { createRequire } from 'module';
 import { Command } from 'commander';
+const require = createRequire(import.meta.url);
+const pkg = require('../package.json');
 import { loginCommand } from './commands/login.js';
 import { logoutCommand } from './commands/logout.js';
 import { logsCommand } from './commands/logs.js';
@@ -29,7 +32,7 @@ const program = new Command();
 program
   .name('hookbase')
   .description('CLI tool for Hookbase - manage webhooks and localhost tunnels')
-  .version('1.0.0')
+  .version(pkg.version)
   .option('--json', 'Output as JSON (for scripting)')
   .option('-y, --yes', 'Skip confirmation prompts');
 
@@ -297,9 +300,14 @@ Command Groups:
 Examples:
   $ hookbase login
   $ hookbase inbound sources list
+  $ hookbase inbound sources get my-source-slug
+  $ hookbase inbound destinations get my-dest-slug
   $ hookbase outbound applications create
   $ hookbase tools tunnels start 3000
+  $ hookbase tools cron groups get my-group-slug
   $ hookbase sources list              (backward-compatible shorthand)
+
+Tip: Sources, destinations, and cron groups accept slugs in place of IDs.
 `);
 
 // Parse arguments

@@ -330,7 +330,7 @@ function Logo() {
       <Box flexDirection="column" marginLeft={2}>
         <Box height={5} />
         <Text bold>HOOKBASE</Text>
-        <Text dimColor>v1.0.1{org ? ` | ${org.slug}` : ''}</Text>
+        <Text dimColor>v1.0.3{org ? ` | ${org.slug}` : ''}</Text>
       </Box>
     </Box>
   );
