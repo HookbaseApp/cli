@@ -13,7 +13,11 @@ function isPromptCancelled(error: unknown): boolean {
 
 function requireAuth(): boolean {
   if (!config.isAuthenticated()) {
-    logger.error('Not logged in. Run "hookbase login" first.');
+    if (config.hasStaleJwtToken()) {
+      logger.error('Your session uses a JWT token which is no longer supported. Please re-login with an API key: hookbase login');
+    } else {
+      logger.error('Not logged in. Run "hookbase login" with an API key.');
+    }
     process.exit(1);
   }
   return true;
@@ -283,12 +287,6 @@ export async function tunnelsStartCommand(
   options: { name?: string; subdomain?: string; json?: boolean }
 ): Promise<void> {
   requireAuth();
-
-  const org = config.getCurrentOrg();
-  if (!org) {
-    logger.error('No organization selected.');
-    process.exit(1);
-  }
 
   const localPort = parseInt(port, 10);
   if (isNaN(localPort) || localPort < 1 || localPort > 65535) {

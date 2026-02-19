@@ -108,6 +108,9 @@ function SourceList({ sources, onSelect, onCreate }: {
                   <Box width={8}>
                     <Text dimColor>{(item as any).event_count ?? (item as any).eventCount ?? 0}</Text>
                   </Box>
+                  {(item.transient_mode || item.transientMode) ? (
+                    <Box><Text color="magenta"> [TRANSIENT]</Text></Box>
+                  ) : null}
                 </>
               )}
             </Box>
@@ -118,11 +121,12 @@ function SourceList({ sources, onSelect, onCreate }: {
   );
 }
 
-function SourceDetail({ sourceId, sources, onBack, onRefresh }: {
+function SourceDetail({ sourceId, sources, onBack, onRefresh, onEdit }: {
   sourceId: string;
   sources: api.Source[];
   onBack: () => void;
   onRefresh: () => void;
+  onEdit: () => void;
 }) {
   const source = sources.find(s => s.id === sourceId);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -139,6 +143,9 @@ function SourceDetail({ sourceId, sources, onBack, onRefresh }: {
       } else {
         onBack();
       }
+    }
+    if (input === 'e' && !confirmDelete) {
+      onEdit();
     }
     if (input === 'd' && !confirmDelete) {
       setConfirmDelete(true);
@@ -180,12 +187,13 @@ function SourceDetail({ sourceId, sources, onBack, onRefresh }: {
 
   const org = config.getCurrentOrg();
   const apiUrl = config.getApiUrl();
+  const isTransient = source.transient_mode || source.transientMode;
 
   return (
     <Box flexDirection="column">
       <Box marginBottom={1}>
         <Text bold>Source Details</Text>
-        <Text dimColor> - Esc: back | d: delete</Text>
+        <Text dimColor> - Esc: back | e: edit | d: delete</Text>
       </Box>
 
       <Box flexDirection="column" borderStyle="round" borderColor="cyan" paddingX={2} paddingY={1}>
@@ -219,6 +227,14 @@ function SourceDetail({ sourceId, sources, onBack, onRefresh }: {
           <Box width={16}><Text dimColor>Routes:</Text></Box>
           <Text>{source.route_count ?? source.routeCount ?? 0}</Text>
         </Box>
+        <Box>
+          <Box width={16}><Text dimColor>Transient:</Text></Box>
+          {isTransient ? (
+            <Text color="magenta">Enabled (payloads not stored)</Text>
+          ) : (
+            <Text dimColor>Disabled</Text>
+          )}
+        </Box>
         <Box marginTop={1}>
           <Box width={16}><Text dimColor>Ingest URL:</Text></Box>
           <Text color="cyan">{apiUrl}/ingest/{org?.slug}/{source.slug}</Text>
@@ -247,14 +263,202 @@ function SourceDetail({ sourceId, sources, onBack, onRefresh }: {
   );
 }
 
+function EditSource({ sourceId, sources, onBack, onSaved }: {
+  sourceId: string;
+  sources: api.Source[];
+  onBack: () => void;
+  onSaved: () => void;
+}) {
+  const source = sources.find(s => s.id === sourceId);
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const [editingField, setEditingField] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState('');
+  const [message, setMessage] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const busy = useRef(false);
+
+  // Editable fields
+  const isTransient = source?.transient_mode || source?.transientMode;
+  const isActive = source?.is_active || source?.isActive;
+  const fields = [
+    { key: 'name', label: 'Name', value: source?.name || '', type: 'text' as const },
+    { key: 'provider', label: 'Provider', value: source?.provider || 'custom', type: 'text' as const },
+    { key: 'description', label: 'Description', value: source?.description || '', type: 'text' as const },
+    { key: 'isActive', label: 'Status', value: isActive ? 'Active' : 'Inactive', type: 'toggle' as const },
+    { key: 'transientMode', label: 'Transient Mode', value: isTransient ? 'Enabled' : 'Disabled', type: 'toggle' as const },
+  ];
+
+  useInput(async (input, key) => {
+    if (busy.current || saving) return;
+
+    if (editingField) {
+      // In text editing mode, Esc cancels the edit
+      if (key.escape) {
+        setEditingField(null);
+      }
+      return; // Let TextInput handle the rest
+    }
+
+    if (key.escape || input === 'b') {
+      onBack();
+    }
+    if (key.upArrow || input === 'k') {
+      setSelectedIndex(prev => Math.max(0, prev - 1));
+    }
+    if (key.downArrow || input === 'j') {
+      setSelectedIndex(prev => Math.min(fields.length - 1, prev + 1));
+    }
+    if (key.return || input === ' ') {
+      const field = fields[selectedIndex];
+      if (field.type === 'toggle') {
+        // Toggle immediately
+        busy.current = true;
+        setSaving(true);
+        const updateData: Record<string, unknown> = {};
+        if (field.key === 'isActive') {
+          updateData.isActive = !isActive;
+        } else if (field.key === 'transientMode') {
+          updateData.transientMode = !isTransient;
+        }
+        try {
+          const result = await api.updateSource(sourceId, updateData as any);
+          if (result.error) {
+            setMessage(`Error: ${result.error}`);
+          } else {
+            setMessage(`${field.label} updated`);
+            onSaved();
+          }
+        } catch (err) {
+          setMessage(`Failed to update ${field.label}`);
+        }
+        setSaving(false);
+        setTimeout(() => { busy.current = false; setMessage(null); }, 1500);
+      } else {
+        // Enter text editing mode
+        setEditValue(field.value);
+        setEditingField(field.key);
+      }
+    }
+  });
+
+  const handleTextSubmit = async () => {
+    if (!editingField) return;
+    busy.current = true;
+    setSaving(true);
+    const updateData: Record<string, unknown> = { [editingField]: editValue };
+    try {
+      const result = await api.updateSource(sourceId, updateData as any);
+      if (result.error) {
+        setMessage(`Error: ${result.error}`);
+      } else {
+        setMessage(`${editingField} updated`);
+        onSaved();
+      }
+    } catch (err) {
+      setMessage(`Failed to update`);
+    }
+    setEditingField(null);
+    setSaving(false);
+    setTimeout(() => { busy.current = false; setMessage(null); }, 1500);
+  };
+
+  if (!source) {
+    return (
+      <Box flexDirection="column">
+        <Text color="red">Source not found: {sourceId}</Text>
+        <Text dimColor>Press Esc to go back</Text>
+      </Box>
+    );
+  }
+
+  return (
+    <Box flexDirection="column">
+      <Box marginBottom={1}>
+        <Text bold>Edit Source</Text>
+        <Text dimColor> - j/k: navigate | Enter/Space: edit | Esc: back</Text>
+      </Box>
+
+      <Box flexDirection="column" borderStyle="round" borderColor="yellow" paddingX={2} paddingY={1}>
+        {fields.map((field, index) => {
+          const isSelected = index === selectedIndex;
+          const isEditing = editingField === field.key;
+
+          return (
+            <Box key={field.key}>
+              <Box width={2}>
+                <Text color={isSelected ? 'yellow' : undefined} bold={isSelected}>
+                  {isSelected ? '▶' : ' '}
+                </Text>
+              </Box>
+              <Box width={18}>
+                <Text dimColor>{field.label}:</Text>
+              </Box>
+              {isEditing ? (
+                <Box>
+                  <TextInput
+                    value={editValue}
+                    onChange={setEditValue}
+                    onSubmit={handleTextSubmit}
+                  />
+                  <Text dimColor> (Enter to save, Esc to cancel)</Text>
+                </Box>
+              ) : (
+                <Box>
+                  {field.key === 'transientMode' ? (
+                    <Text color={isTransient ? 'magenta' : undefined} dimColor={!isTransient}>
+                      {field.value}
+                    </Text>
+                  ) : field.key === 'isActive' ? (
+                    <Text color={isActive ? 'green' : 'red'}>
+                      {field.value}
+                    </Text>
+                  ) : (
+                    <Text color={isSelected ? 'yellow' : undefined}>{field.value || '(empty)'}</Text>
+                  )}
+                  {isSelected && field.type === 'toggle' && (
+                    <Text dimColor> ← Enter/Space to toggle</Text>
+                  )}
+                  {isSelected && field.type === 'text' && (
+                    <Text dimColor> ← Enter to edit</Text>
+                  )}
+                </Box>
+              )}
+            </Box>
+          );
+        })}
+
+        {/* Transient warning */}
+        {isTransient && (
+          <Box marginTop={1} paddingX={1}>
+            <Text color="magenta">⚠ Transient: Payloads not stored. Replay unavailable.</Text>
+          </Box>
+        )}
+
+        {saving && (
+          <Box marginTop={1}>
+            <Text color="yellow">Saving...</Text>
+          </Box>
+        )}
+
+        {message && (
+          <Box marginTop={1}>
+            <Text color={message.startsWith('Error') || message.startsWith('Failed') ? 'red' : 'green'}>{message}</Text>
+          </Box>
+        )}
+      </Box>
+    </Box>
+  );
+}
+
 function CreateSource({ onBack, onCreated }: {
   onBack: () => void;
   onCreated: () => void;
 }) {
-  const [step, setStep] = useState<'name' | 'slug' | 'provider' | 'confirm' | 'creating' | 'done'>('name');
+  const [step, setStep] = useState<'name' | 'slug' | 'provider' | 'transient' | 'confirm' | 'creating' | 'done'>('name');
   const [name, setName] = useState('');
   const [slug, setSlug] = useState('');
   const [provider, setProvider] = useState('');
+  const [transient, setTransient] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [createdSource, setCreatedSource] = useState<api.Source | null>(null);
 
@@ -277,12 +481,20 @@ function CreateSource({ onBack, onCreated }: {
     }
   };
 
-  const handleProviderSelect = async (item: { value: string }) => {
+  const handleProviderSelect = (item: { value: string }) => {
     setProvider(item.value);
+    setStep('transient');
+  };
+
+  const handleTransientSelect = async (item: { value: string }) => {
+    const isTransient = item.value === 'yes';
+    setTransient(isTransient);
     setStep('creating');
 
     try {
-      const result = await api.createSource(name, slug, item.value);
+      const result = await api.createSource(name, slug, provider, {
+        transientMode: isTransient,
+      });
       if (result.error) {
         setError(result.error);
         setStep('confirm');
@@ -353,6 +565,25 @@ function CreateSource({ onBack, onCreated }: {
           </Box>
         )}
 
+        {step === 'transient' && (
+          <Box flexDirection="column">
+            <Box marginBottom={1}>
+              <Text dimColor>Name: {name} | Slug: {slug} | Provider: {provider}</Text>
+            </Box>
+            <Text>Enable transient mode?</Text>
+            <Text dimColor>Payloads are never stored at rest. Replay is unavailable.</Text>
+            <Box marginTop={1}>
+              <SelectInput
+                items={[
+                  { label: 'No - Store payloads normally', value: 'no' },
+                  { label: 'Yes - Transient (HIPAA/GDPR compliance)', value: 'yes' },
+                ]}
+                onSelect={handleTransientSelect}
+              />
+            </Box>
+          </Box>
+        )}
+
         {step === 'creating' && (
           <Box>
             <Text color="yellow">Creating source...</Text>
@@ -366,6 +597,11 @@ function CreateSource({ onBack, onCreated }: {
               <Text dimColor>ID: </Text>
               <Text>{createdSource.id}</Text>
             </Box>
+            {transient && (
+              <Box>
+                <Text color="magenta">Mode: Transient (payloads not stored)</Text>
+              </Box>
+            )}
             <Box>
               <Text dimColor>Returning to list...</Text>
             </Box>
@@ -392,6 +628,18 @@ export function SourcesView({ sources, subView, onNavigate, onRefresh }: Sources
     );
   }
 
+  if (subView && subView.startsWith('edit:')) {
+    const sourceId = subView.replace('edit:', '');
+    return (
+      <EditSource
+        sourceId={sourceId}
+        sources={sources}
+        onBack={() => onNavigate(`detail:${sourceId}`)}
+        onSaved={onRefresh}
+      />
+    );
+  }
+
   if (subView && subView.startsWith('detail:')) {
     const sourceId = subView.replace('detail:', '');
     return (
@@ -400,6 +648,7 @@ export function SourcesView({ sources, subView, onNavigate, onRefresh }: Sources
         sources={sources}
         onBack={() => onNavigate(null)}
         onRefresh={onRefresh}
+        onEdit={() => onNavigate(`edit:${sourceId}`)}
       />
     );
   }

@@ -193,14 +193,26 @@ function EventDetail({ eventId, events, onBack }: {
           </Box>
         )}
 
+        {/* Transient mode indicator */}
+        {((event as any).payloadKey === 'transient:inline' || (event as any).payload_key === 'transient:inline' ||
+          ((event as any).payloadKey || (event as any).payload_key || '').startsWith('transient/')) && (
+          <Box marginTop={1}>
+            <Text color="magenta">Transient event - payload was not stored (compliance mode)</Text>
+          </Box>
+        )}
+
         {showPayload && (
           <Box marginTop={1} flexDirection="column">
             <Text bold dimColor>Payload:</Text>
             <Box marginLeft={2} borderStyle="single" borderColor="gray" paddingX={1}>
-              <Text dimColor>
-                Payload size: {event.payload_size ?? 'unknown'} bytes
-                {'\n'}Use CLI command: hookbase events get {event.id}
-              </Text>
+              {((event as any).payloadKey === 'transient:inline' || (event as any).payload_key === 'transient:inline') ? (
+                <Text color="magenta">Payload not available - transient mode (not stored)</Text>
+              ) : (
+                <Text dimColor>
+                  Payload size: {event.payload_size ?? 'unknown'} bytes
+                  {'\n'}Use CLI command: hookbase events get {event.id}
+                </Text>
+              )}
             </Box>
           </Box>
         )}

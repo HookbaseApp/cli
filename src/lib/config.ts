@@ -68,7 +68,16 @@ export function clearAuth(): void {
 }
 
 export function isAuthenticated(): boolean {
-  return !!(process.env.HOOKBASE_API_KEY || config.get('authToken'));
+  const token = getAuthToken();
+  return !!token && token.startsWith('whr_');
+}
+
+/**
+ * Check if there's a stale JWT token stored (user logged in with JWT before API-key-only enforcement)
+ */
+export function hasStaleJwtToken(): boolean {
+  const token = config.get('authToken');
+  return !!token && !token.startsWith('whr_');
 }
 
 export function getCurrentUser(): { id: string; email: string; displayName: string } | null {

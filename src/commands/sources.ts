@@ -25,7 +25,11 @@ const PROVIDERS = [
 
 function requireAuth(): boolean {
   if (!config.isAuthenticated()) {
-    logger.error('Not logged in. Run "hookbase login" first.');
+    if (config.hasStaleJwtToken()) {
+      logger.error('Your session uses a JWT token which is no longer supported. Please re-login with an API key: hookbase login');
+    } else {
+      logger.error('Not logged in. Run "hookbase login" with an API key.');
+    }
     process.exit(1);
   }
   return true;
@@ -83,6 +87,7 @@ export async function sourcesCreateCommand(options: {
   name?: string;
   slug?: string;
   provider?: string;
+  transient?: boolean;
   yes?: boolean;
   json?: boolean;
 }): Promise<void> {
@@ -119,6 +124,13 @@ export async function sourcesCreateCommand(options: {
         message: 'Select provider (for signature verification):',
         choices: PROVIDERS,
       });
+
+      if (options.transient === undefined) {
+        options.transient = await confirm({
+          message: 'Enable transient mode? (payloads are not stored)',
+          default: false,
+        });
+      }
     } else {
       slug = slug || name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
     }
@@ -143,7 +155,9 @@ export async function sourcesCreateCommand(options: {
   }
 
   const spinner = logger.spinner('Creating source...');
-  const result = await api.createSource(name!, slug!, provider);
+  const result = await api.createSource(name!, slug!, provider, {
+    transientMode: options.transient,
+  });
 
   if (result.error) {
     spinner.fail('Failed to create source');
@@ -234,6 +248,7 @@ export async function sourcesUpdateCommand(
     description?: string;
     active?: boolean;
     inactive?: boolean;
+    transient?: boolean;
     json?: boolean;
   }
 ): Promise<void> {
@@ -246,9 +261,10 @@ export async function sourcesUpdateCommand(
   if (options.description) updateData.description = options.description;
   if (options.active) updateData.isActive = true;
   if (options.inactive) updateData.isActive = false;
+  if (options.transient !== undefined) updateData.transientMode = options.transient;
 
   if (Object.keys(updateData).length === 0) {
-    logger.error('No updates specified. Use --name, --provider, --description, --active, or --inactive');
+    logger.error('No updates specified. Use --name, --provider, --description, --active, --inactive, or --transient');
     return;
   }
 

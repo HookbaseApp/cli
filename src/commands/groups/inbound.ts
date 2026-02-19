@@ -53,6 +53,7 @@ export function registerSourcesCommands(parent: Command): Command {
     .option('-s, --slug <slug>', 'Custom slug')
     .option('-p, --provider <provider>', 'Provider (github, stripe, etc.)')
     .option('-y, --yes', 'Skip confirmation')
+    .option('--transient', 'Enable transient mode (payloads not stored)')
     .option('--json', 'Output as JSON')
     .action(sourcesCreateCommand);
 
@@ -71,6 +72,8 @@ export function registerSourcesCommands(parent: Command): Command {
     .option('-d, --description <description>', 'New description')
     .option('--active', 'Set source as active')
     .option('--inactive', 'Set source as inactive')
+    .option('--transient', 'Enable transient mode (payloads not stored)')
+    .option('--no-transient', 'Disable transient mode')
     .option('--json', 'Output as JSON')
     .action(sourcesUpdateCommand);
 

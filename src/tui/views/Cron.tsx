@@ -74,7 +74,8 @@ function formatRelativeTime(dateStr: string | null | undefined): string {
   }
 }
 
-function describeCronExpression(expr: string): string {
+function describeCronExpression(expr?: string): string {
+  if (!expr) return '-';
   if (expr === '* * * * *') return 'Every minute';
   if (expr === '0 * * * *') return 'Every hour';
   if (expr === '0 0 * * *') return 'Daily';
@@ -90,8 +91,8 @@ function CronList({ jobs, onSelect, onCreate }: {
   onCreate: () => void;
 }) {
   const [selectedIndex, setSelectedIndex] = useState(0);
-  const activeJobs = jobs.filter(j => j.is_active);
-  const inactiveJobs = jobs.filter(j => !j.is_active);
+  const activeJobs = jobs.filter(j => j.isActive);
+  const inactiveJobs = jobs.filter(j => !j.isActive);
 
   const items = [
     { id: 'create', name: '+ Create New Cron Job', isAction: true },
@@ -162,20 +163,20 @@ function CronList({ jobs, onSelect, onCreate }: {
               ) : (
                 <>
                   <Box width={26}>
-                    <Text color={item.is_active ? (isSelected ? 'cyan' : undefined) : 'gray'} bold={isSelected}>
+                    <Text color={item.isActive ? (isSelected ? 'cyan' : undefined) : 'gray'} bold={isSelected}>
                       {item.name.slice(0, 24)}{item.name.length > 24 ? '…' : ''}
                     </Text>
                   </Box>
                   <Box width={16}>
-                    <Text dimColor>{describeCronExpression(item.cron_expression)}</Text>
+                    <Text dimColor>{describeCronExpression(item.cronExpression)}</Text>
                   </Box>
                   <Box width={10}>
-                    <Text color={item.is_active ? 'green' : 'gray'}>
-                      {item.is_active ? 'active' : 'inactive'}
+                    <Text color={item.isActive ? 'green' : 'gray'}>
+                      {item.isActive ? 'active' : 'inactive'}
                     </Text>
                   </Box>
                   <Box width={14}>
-                    <Text dimColor>{formatRelativeTime(item.next_run_at)}</Text>
+                    <Text dimColor>{formatRelativeTime(item.nextRunAt)}</Text>
                   </Box>
                 </>
               )}
@@ -204,7 +205,7 @@ function CronDetail({ jobId, jobs, onBack, onRefresh }: {
   const [localIsActive, setLocalIsActive] = useState<boolean | null>(null);
   const busy = useRef(false);
 
-  const isActive = localIsActive !== null ? localIsActive : job?.is_active;
+  const isActive = localIsActive !== null ? localIsActive : job?.isActive;
 
   useEffect(() => {
     const fetchExecutions = async () => {
@@ -329,8 +330,8 @@ function CronDetail({ jobId, jobs, onBack, onRefresh }: {
         )}
         <Box>
           <Box width={16}><Text dimColor>Schedule:</Text></Box>
-          <Text>{job.cron_expression}</Text>
-          <Text dimColor> ({describeCronExpression(job.cron_expression)})</Text>
+          <Text>{job.cronExpression}</Text>
+          <Text dimColor> ({describeCronExpression(job.cronExpression)})</Text>
         </Box>
         <Box>
           <Box width={16}><Text dimColor>Timezone:</Text></Box>
@@ -349,7 +350,7 @@ function CronDetail({ jobId, jobs, onBack, onRefresh }: {
         </Box>
         <Box>
           <Box width={16}><Text dimColor>Timeout:</Text></Box>
-          <Text>{job.timeout_ms}ms</Text>
+          <Text>{job.timeoutMs}ms</Text>
         </Box>
         {job.headers && (
           <Box>
@@ -365,12 +366,12 @@ function CronDetail({ jobId, jobs, onBack, onRefresh }: {
         )}
         <Box marginTop={1}>
           <Box width={16}><Text dimColor>Next run:</Text></Box>
-          <Text color="cyan">{formatRelativeTime(job.next_run_at)}</Text>
-          {job.next_run_at && <Text dimColor> ({formatLocalDateTime(job.next_run_at)})</Text>}
+          <Text color="cyan">{formatRelativeTime(job.nextRunAt)}</Text>
+          {job.nextRunAt && <Text dimColor> ({formatLocalDateTime(job.nextRunAt)})</Text>}
         </Box>
         <Box>
           <Box width={16}><Text dimColor>Last run:</Text></Box>
-          <Text>{formatRelativeTime(job.last_run_at)}</Text>
+          <Text>{formatRelativeTime(job.lastRunAt)}</Text>
         </Box>
 
         {/* Recent Executions */}
@@ -386,12 +387,12 @@ function CronDetail({ jobId, jobs, onBack, onRefresh }: {
           ) : (
             executions.slice(0, 5).map(exec => (
               <Box key={exec.id}>
-                <Text dimColor>{formatLocalTime(exec.started_at)} </Text>
+                <Text dimColor>{formatLocalTime(exec.startedAt)} </Text>
                 <Text color={exec.status === 'success' ? 'green' : exec.status === 'failed' ? 'red' : 'yellow'}>
                   {exec.status.padEnd(7)}
                 </Text>
-                <Text dimColor> HTTP {exec.response_status || '-'} </Text>
-                <Text dimColor>{exec.latency_ms ? `${exec.latency_ms}ms` : ''}</Text>
+                <Text dimColor> HTTP {exec.responseStatus || '-'} </Text>
+                <Text dimColor>{exec.latencyMs ? `${exec.latencyMs}ms` : ''}</Text>
               </Box>
             ))
           )}
@@ -584,7 +585,7 @@ function CreateCron({ onBack, onCreated }: {
             </Box>
             <Box>
               <Text dimColor>Next run: </Text>
-              <Text color="cyan">{formatRelativeTime((createdJob as any).nextRunAt || (createdJob as any).next_run_at)}</Text>
+              <Text color="cyan">{formatRelativeTime(createdJob.nextRunAt)}</Text>
             </Box>
             <Box marginTop={1}>
               <Text dimColor>Returning to list...</Text>

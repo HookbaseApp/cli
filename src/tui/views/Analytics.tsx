@@ -33,7 +33,25 @@ export function AnalyticsView({ onNavigate }: AnalyticsViewProps) {
       ]);
 
       if (analyticsRes.data) {
-        setData(analyticsRes.data);
+        // API returns 'sources'/'destinations', normalize to 'topSources'/'topDestinations'
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const raw = analyticsRes.data as any;
+        const normalized: api.DashboardAnalytics = {
+          ...raw,
+          topSources: (raw.topSources || raw.sources || []).map((s: any) => ({
+            id: s.id,
+            name: s.name,
+            slug: s.slug,
+            eventCount: s.eventCount ?? s.event_count ?? 0,
+          })),
+          topDestinations: (raw.topDestinations || raw.destinations || []).map((d: any) => ({
+            id: d.id,
+            name: d.name,
+            deliveryCount: d.deliveryCount ?? d.total_deliveries ?? 0,
+            successRate: d.successRate ?? d.success_rate ?? 0,
+          })),
+        };
+        setData(normalized);
       }
       if (eventsRes.data?.events) {
         setLiveEvents(eventsRes.data.events);

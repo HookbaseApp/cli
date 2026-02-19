@@ -286,7 +286,7 @@ export function registerApiKeysCommands(parent: Command): Command {
     .command('create')
     .description('Create a new API key')
     .option('-n, --name <name>', 'API key name')
-    .option('-s, --scopes <scopes>', 'Comma-separated scopes (read,write)')
+    .option('-s, --scopes <scopes>', 'Comma-separated scopes (read,write,delete)')
     .option('-e, --expires <days>', 'Expiration in days')
     .option('-y, --yes', 'Skip confirmation')
     .option('--json', 'Output as JSON')

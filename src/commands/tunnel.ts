@@ -9,13 +9,11 @@ export async function tunnelCommand(
 ): Promise<void> {
   // Check auth
   if (!config.isAuthenticated()) {
-    logger.error('Not logged in. Run "webhookrelay login" first.');
-    process.exit(1);
-  }
-
-  const org = config.getCurrentOrg();
-  if (!org) {
-    logger.error('No organization selected.');
+    if (config.hasStaleJwtToken()) {
+      logger.error('Your session uses a JWT token which is no longer supported. Please re-login with an API key: hookbase login');
+    } else {
+      logger.error('Not logged in. Run "hookbase login" with an API key.');
+    }
     process.exit(1);
   }
 
@@ -144,7 +142,11 @@ export async function tunnelCommand(
 
 export async function tunnelListCommand(): Promise<void> {
   if (!config.isAuthenticated()) {
-    logger.error('Not logged in. Run "webhookrelay login" first.');
+    if (config.hasStaleJwtToken()) {
+      logger.error('Your session uses a JWT token which is no longer supported. Please re-login with an API key: hookbase login');
+    } else {
+      logger.error('Not logged in. Run "hookbase login" with an API key.');
+    }
     process.exit(1);
   }
 

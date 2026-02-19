@@ -4,7 +4,11 @@ import * as logger from '../lib/logger.js';
 
 function requireAuth(): boolean {
   if (!config.isAuthenticated()) {
-    logger.error('Not logged in. Run "hookbase login" first.');
+    if (config.hasStaleJwtToken()) {
+      logger.error('Your session uses a JWT token which is no longer supported. Please re-login with an API key: hookbase login');
+    } else {
+      logger.error('Not logged in. Run "hookbase login" with an API key.');
+    }
     process.exit(1);
   }
   return true;
@@ -160,12 +164,6 @@ export async function eventsFollowCommand(options: {
 }): Promise<void> {
   requireAuth();
 
-  const org = config.getCurrentOrg();
-  if (!org) {
-    logger.error('No organization selected');
-    return;
-  }
-
   logger.info('Connecting to event stream...');
   logger.dim('Press Ctrl+C to stop');
   logger.log('');
@@ -174,7 +172,7 @@ export async function eventsFollowCommand(options: {
   const token = config.getAuthToken();
 
   // Build SSE URL
-  let sseUrl = `${apiUrl}/api/organizations/${org.id}/realtime/events`;
+  let sseUrl = `${apiUrl}/api/realtime/events`;
   if (options.source) {
     sseUrl += `?sourceId=${options.source}`;
   }

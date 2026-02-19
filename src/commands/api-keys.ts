@@ -12,7 +12,11 @@ function isPromptCancelled(error: unknown): boolean {
 
 function requireAuth(): boolean {
   if (!config.isAuthenticated()) {
-    logger.error('Not logged in. Run "hookbase login" first.');
+    if (config.hasStaleJwtToken()) {
+      logger.error('Your session uses a JWT token which is no longer supported. Please re-login with an API key: hookbase login');
+    } else {
+      logger.error('Not logged in. Run "hookbase login" with an API key.');
+    }
     process.exit(1);
   }
   return true;
@@ -140,7 +144,7 @@ export async function apiKeysCreateCommand(options: {
   }
 
   const spinner = logger.spinner('Creating API key...');
-  const result = await api.createApiKey(name, scopes || ['read', 'write'], expiresInDays);
+  const result = await api.createApiKey(name, scopes || ['read', 'write', 'delete'], expiresInDays);
 
   if (result.error) {
     spinner.fail('Failed to create API key');

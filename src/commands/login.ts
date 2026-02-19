@@ -61,6 +61,12 @@ export async function loginCommand(): Promise<void> {
       return;
     }
 
+    if (!apiKey.trim().startsWith('whr_')) {
+      logger.error('Invalid API key format. API keys start with "whr_".');
+      logger.dim('Get your API key from: https://www.hookbase.app/settings');
+      return;
+    }
+
     const spinner = logger.spinner('Verifying API key...');
 
     // Verify the API key by calling /auth/me

@@ -1,4 +1,4 @@
-import { getApiUrl, getAuthToken, getCurrentOrg } from './config.js';
+import { getApiUrl, getAuthToken } from './config.js';
 
 interface ApiResponse<T> {
   data?: T;
@@ -14,13 +14,17 @@ async function request<T>(
   const apiUrl = getApiUrl();
   const token = getAuthToken();
 
+  if (!token || !token.startsWith('whr_')) {
+    return {
+      error: 'Not authenticated. Run "hookbase login" with a valid API key (whr_...).',
+      status: 0,
+    };
+  }
+
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
+    'Authorization': `Bearer ${token}`,
   };
-
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
 
   try {
     const response = await fetch(`${apiUrl}${path}`, {
@@ -32,8 +36,12 @@ async function request<T>(
     const data = await response.json() as Record<string, unknown>;
 
     if (!response.ok) {
+      let errorMsg = (data.error as string) || (data.message as string) || 'Request failed';
+      if (data.details) {
+        errorMsg += ` - ${JSON.stringify(data.details)}`;
+      }
       return {
-        error: (data.error as string) || (data.message as string) || 'Request failed',
+        error: errorMsg,
         status: response.status,
       };
     }
@@ -45,12 +53,6 @@ async function request<T>(
       status: 0,
     };
   }
-}
-
-// Helper to ensure org is selected
-function requireOrg(): { id: string; slug: string } | null {
-  const org = getCurrentOrg();
-  return org;
 }
 
 // ============================================================================
@@ -140,19 +142,17 @@ export interface CreateApiKeyResponse {
 }
 
 export async function listApiKeys(): Promise<ApiResponse<{ apiKeys: ApiKey[] }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ apiKeys: ApiKey[] }>('GET', `/api/organizations/${org.id}/api-keys`);
+
+  return request<{ apiKeys: ApiKey[] }>('GET', `/api/api-keys`);
 }
 
 export async function createApiKey(
   name: string,
-  scopes: string[] = ['read', 'write'],
+  scopes: string[] = ['read', 'write', 'delete'],
   expiresInDays?: number
 ): Promise<ApiResponse<CreateApiKeyResponse>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<CreateApiKeyResponse>('POST', `/api/organizations/${org.id}/api-keys`, {
+
+  return request<CreateApiKeyResponse>('POST', `/api/api-keys`, {
     name,
     scopes,
     expiresInDays,
@@ -160,9 +160,8 @@ export async function createApiKey(
 }
 
 export async function revokeApiKey(keyId: string): Promise<ApiResponse<{ success: boolean }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ success: boolean }>('DELETE', `/api/organizations/${org.id}/api-keys/${keyId}`);
+
+  return request<{ success: boolean }>('DELETE', `/api/api-keys/${keyId}`);
 }
 
 // ============================================================================
@@ -184,19 +183,19 @@ export interface Source {
   event_count?: number;
   routeCount?: number;
   route_count?: number;
+  transientMode?: boolean;
+  transient_mode?: number;
   created_at?: string;
 }
 
 export async function getSources(): Promise<ApiResponse<{ sources: Source[] }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ sources: Source[] }>('GET', `/api/organizations/${org.id}/sources`);
+
+  return request<{ sources: Source[] }>('GET', `/api/sources?pageSize=100`);
 }
 
 export async function getSource(sourceId: string): Promise<ApiResponse<{ source: Source }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ source: Source }>('GET', `/api/organizations/${org.id}/sources/${sourceId}`);
+
+  return request<{ source: Source }>('GET', `/api/sources/${sourceId}`);
 }
 
 export async function createSource(
@@ -207,10 +206,9 @@ export async function createSource(
     description?: string;
     rejectInvalidSignatures?: boolean;
     rateLimitPerMinute?: number;
+    transientMode?: boolean;
   }
 ): Promise<ApiResponse<{ source: Source }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
 
   const body: Record<string, unknown> = {
     name,
@@ -218,6 +216,7 @@ export async function createSource(
     description: options?.description,
     rejectInvalidSignatures: options?.rejectInvalidSignatures,
     rateLimitPerMinute: options?.rateLimitPerMinute,
+    transientMode: options?.transientMode,
   };
 
   // Only include provider if it's a valid value (not empty)
@@ -225,7 +224,7 @@ export async function createSource(
     body.provider = provider;
   }
 
-  return request<{ source: Source }>('POST', `/api/organizations/${org.id}/sources`, body);
+  return request<{ source: Source }>('POST', `/api/sources`, body);
 }
 
 export async function updateSource(
@@ -237,30 +236,29 @@ export async function updateSource(
     isActive?: boolean;
     rejectInvalidSignatures?: boolean;
     rateLimitPerMinute?: number;
+    transientMode?: boolean;
   }
 ): Promise<ApiResponse<{ source: Source }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ source: Source }>('PATCH', `/api/organizations/${org.id}/sources/${sourceId}`, {
+
+  return request<{ source: Source }>('PATCH', `/api/sources/${sourceId}`, {
     name: data.name,
     provider: data.provider,
     description: data.description,
     isActive: data.isActive,
     rejectInvalidSignatures: data.rejectInvalidSignatures,
     rateLimitPerMinute: data.rateLimitPerMinute,
+    transientMode: data.transientMode,
   });
 }
 
 export async function deleteSource(sourceId: string): Promise<ApiResponse<{ success: boolean }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ success: boolean }>('DELETE', `/api/organizations/${org.id}/sources/${sourceId}`);
+
+  return request<{ success: boolean }>('DELETE', `/api/sources/${sourceId}`);
 }
 
 export async function rotateSourceSecret(sourceId: string): Promise<ApiResponse<{ source: Source; signingSecret: string }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ source: Source; signingSecret: string }>('POST', `/api/organizations/${org.id}/sources/${sourceId}/rotate-secret`);
+
+  return request<{ source: Source; signingSecret: string }>('POST', `/api/sources/${sourceId}/rotate-secret`);
 }
 
 // ============================================================================
@@ -287,15 +285,13 @@ export interface Destination {
 }
 
 export async function getDestinations(): Promise<ApiResponse<{ destinations: Destination[] }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ destinations: Destination[] }>('GET', `/api/organizations/${org.id}/destinations`);
+
+  return request<{ destinations: Destination[] }>('GET', `/api/destinations?pageSize=100`);
 }
 
 export async function getDestination(destId: string): Promise<ApiResponse<{ destination: Destination }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ destination: Destination }>('GET', `/api/organizations/${org.id}/destinations/${destId}`);
+
+  return request<{ destination: Destination }>('GET', `/api/destinations/${destId}`);
 }
 
 export async function createDestination(data: {
@@ -310,12 +306,11 @@ export async function createDestination(data: {
   rateLimitPerMinute?: number;
   mockMode?: boolean;
 }): Promise<ApiResponse<{ destination: Destination }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
+
   // Generate slug from name if not provided
   const slug = data.slug || data.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 
-  return request<{ destination: Destination }>('POST', `/api/organizations/${org.id}/destinations`, {
+  return request<{ destination: Destination }>('POST', `/api/destinations`, {
     name: data.name,
     slug: slug,
     url: data.url,
@@ -343,9 +338,8 @@ export async function updateDestination(
     isActive?: boolean;
   }
 ): Promise<ApiResponse<{ destination: Destination }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ destination: Destination }>('PATCH', `/api/organizations/${org.id}/destinations/${destId}`, {
+
+  return request<{ destination: Destination }>('PATCH', `/api/destinations/${destId}`, {
     name: data.name,
     url: data.url,
     method: data.method,
@@ -359,9 +353,8 @@ export async function updateDestination(
 }
 
 export async function deleteDestination(destId: string): Promise<ApiResponse<{ success: boolean }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ success: boolean }>('DELETE', `/api/organizations/${org.id}/destinations/${destId}`);
+
+  return request<{ success: boolean }>('DELETE', `/api/destinations/${destId}`);
 }
 
 export async function testDestination(destId: string): Promise<ApiResponse<{
@@ -371,11 +364,10 @@ export async function testDestination(destId: string): Promise<ApiResponse<{
   responseBody?: string;
   error?: string;
 }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
+
   return request<{ success: boolean; statusCode: number; responseTime: number; responseBody?: string; error?: string }>(
     'POST',
-    `/api/organizations/${org.id}/destinations/${destId}/test`
+    `/api/destinations/${destId}/test`
   );
 }
 
@@ -416,15 +408,13 @@ export interface FilterCondition {
 }
 
 export async function getRoutes(): Promise<ApiResponse<{ routes: Route[] }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ routes: Route[] }>('GET', `/api/organizations/${org.id}/routes`);
+
+  return request<{ routes: Route[] }>('GET', `/api/routes?pageSize=100`);
 }
 
 export async function getRoute(routeId: string): Promise<ApiResponse<{ route: Route }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ route: Route }>('GET', `/api/organizations/${org.id}/routes/${routeId}`);
+
+  return request<{ route: Route }>('GET', `/api/routes/${routeId}`);
 }
 
 export async function createRoute(data: {
@@ -438,9 +428,8 @@ export async function createRoute(data: {
   priority?: number;
   isActive?: boolean;
 }): Promise<ApiResponse<{ route: Route }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ route: Route }>('POST', `/api/organizations/${org.id}/routes`, {
+
+  return request<{ route: Route }>('POST', `/api/routes`, {
     name: data.name,
     sourceId: data.sourceId,
     destinationId: data.destinationId,
@@ -467,9 +456,8 @@ export async function updateRoute(
     isActive?: boolean;
   }
 ): Promise<ApiResponse<{ route: Route }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ route: Route }>('PATCH', `/api/organizations/${org.id}/routes/${routeId}`, {
+
+  return request<{ route: Route }>('PATCH', `/api/routes/${routeId}`, {
     name: data.name,
     sourceId: data.sourceId,
     destinationId: data.destinationId,
@@ -483,9 +471,8 @@ export async function updateRoute(
 }
 
 export async function deleteRoute(routeId: string): Promise<ApiResponse<{ success: boolean }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ success: boolean }>('DELETE', `/api/organizations/${org.id}/routes/${routeId}`);
+
+  return request<{ success: boolean }>('DELETE', `/api/routes/${routeId}`);
 }
 
 // ============================================================================
@@ -510,54 +497,46 @@ export interface CreateTunnelResponse {
 }
 
 export async function getTunnels(): Promise<ApiResponse<{ tunnels: Tunnel[] }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ tunnels: Tunnel[] }>('GET', `/api/organizations/${org.id}/tunnels`);
+
+  return request<{ tunnels: Tunnel[] }>('GET', `/api/tunnels?pageSize=100`);
 }
 
 export async function getTunnel(tunnelId: string): Promise<ApiResponse<{ tunnel: Tunnel }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ tunnel: Tunnel }>('GET', `/api/organizations/${org.id}/tunnels/${tunnelId}`);
+
+  return request<{ tunnel: Tunnel }>('GET', `/api/tunnels/${tunnelId}`);
 }
 
 export async function createTunnel(name: string, subdomain?: string): Promise<ApiResponse<CreateTunnelResponse>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<CreateTunnelResponse>('POST', `/api/organizations/${org.id}/tunnels`, {
+
+  return request<CreateTunnelResponse>('POST', `/api/tunnels`, {
     name,
     subdomain,
   });
 }
 
 export async function updateTunnel(tunnelId: string, data: { name?: string }): Promise<ApiResponse<{ tunnel: Tunnel }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ tunnel: Tunnel }>('PATCH', `/api/organizations/${org.id}/tunnels/${tunnelId}`, data);
+
+  return request<{ tunnel: Tunnel }>('PATCH', `/api/tunnels/${tunnelId}`, data);
 }
 
 export async function deleteTunnel(tunnelId: string): Promise<ApiResponse<{ success: boolean }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ success: boolean }>('DELETE', `/api/organizations/${org.id}/tunnels/${tunnelId}`);
+
+  return request<{ success: boolean }>('DELETE', `/api/tunnels/${tunnelId}`);
 }
 
 export async function getTunnelStatus(tunnelId: string): Promise<ApiResponse<{ tunnel: Tunnel; liveStatus: unknown }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ tunnel: Tunnel; liveStatus: unknown }>('GET', `/api/organizations/${org.id}/tunnels/${tunnelId}/status`);
+
+  return request<{ tunnel: Tunnel; liveStatus: unknown }>('GET', `/api/tunnels/${tunnelId}/status`);
 }
 
 export async function regenerateTunnelToken(tunnelId: string): Promise<ApiResponse<{ tunnel: Tunnel; authToken: string; auth_token: string; wsUrl: string }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ tunnel: Tunnel; authToken: string; auth_token: string; wsUrl: string }>('POST', `/api/organizations/${org.id}/tunnels/${tunnelId}/regenerate-token`);
+
+  return request<{ tunnel: Tunnel; authToken: string; auth_token: string; wsUrl: string }>('POST', `/api/tunnels/${tunnelId}/regenerate-token`);
 }
 
 export async function disconnectTunnel(tunnelId: string): Promise<ApiResponse<{ success: boolean }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ success: boolean }>('POST', `/api/organizations/${org.id}/tunnels/${tunnelId}/disconnect`);
+
+  return request<{ success: boolean }>('POST', `/api/tunnels/${tunnelId}/disconnect`);
 }
 
 export interface TunnelRequest {
@@ -591,8 +570,6 @@ export async function getTunnelRequests(tunnelId: string, options?: {
   limit?: number;
   offset?: number;
 }): Promise<ApiResponse<{ requests: TunnelRequest[]; total: number; stats: TunnelRequestStats; limit: number; offset: number }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
 
   const params = new URLSearchParams();
   if (options?.limit) params.set('limit', String(options.limit));
@@ -601,7 +578,7 @@ export async function getTunnelRequests(tunnelId: string, options?: {
   const query = params.toString() ? `?${params.toString()}` : '';
   return request<{ requests: TunnelRequest[]; total: number; stats: TunnelRequestStats; limit: number; offset: number }>(
     'GET',
-    `/api/organizations/${org.id}/tunnels/${tunnelId}/requests${query}`
+    `/api/tunnels/${tunnelId}/requests${query}`
   );
 }
 
@@ -649,8 +626,6 @@ export async function getEvents(options?: {
   toDate?: string;
   search?: string;
 }): Promise<ApiResponse<{ events: Event[]; total: number; hasMore: boolean }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
 
   const params = new URLSearchParams();
   if (options?.limit) params.set('limit', String(options.limit));
@@ -665,14 +640,13 @@ export async function getEvents(options?: {
   const queryString = params.toString();
   return request<{ events: Event[]; total: number; hasMore: boolean }>(
     'GET',
-    `/api/organizations/${org.id}/events${queryString ? `?${queryString}` : ''}`
+    `/api/events${queryString ? `?${queryString}` : ''}`
   );
 }
 
 export async function getEvent(eventId: string): Promise<ApiResponse<{ event: EventWithPayload }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ event: EventWithPayload }>('GET', `/api/organizations/${org.id}/events/${eventId}`);
+
+  return request<{ event: EventWithPayload }>('GET', `/api/events/${eventId}`);
 }
 
 // ============================================================================
@@ -706,8 +680,6 @@ export async function getDeliveries(options?: {
   destinationId?: string;
   status?: string;
 }): Promise<ApiResponse<{ deliveries: Delivery[]; total: number; hasMore: boolean }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
 
   const params = new URLSearchParams();
   if (options?.limit) params.set('limit', String(options.limit));
@@ -720,26 +692,23 @@ export async function getDeliveries(options?: {
   const queryString = params.toString();
   return request<{ deliveries: Delivery[]; total: number; hasMore: boolean }>(
     'GET',
-    `/api/organizations/${org.id}/deliveries${queryString ? `?${queryString}` : ''}`
+    `/api/deliveries${queryString ? `?${queryString}` : ''}`
   );
 }
 
 export async function getDelivery(deliveryId: string): Promise<ApiResponse<{ delivery: Delivery }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ delivery: Delivery }>('GET', `/api/organizations/${org.id}/deliveries/${deliveryId}`);
+
+  return request<{ delivery: Delivery }>('GET', `/api/deliveries/${deliveryId}`);
 }
 
 export async function replayDelivery(deliveryId: string): Promise<ApiResponse<{ delivery: Delivery }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ delivery: Delivery }>('POST', `/api/organizations/${org.id}/deliveries/${deliveryId}/replay`);
+
+  return request<{ delivery: Delivery }>('POST', `/api/deliveries/${deliveryId}/replay`);
 }
 
 export async function bulkReplayDeliveries(deliveryIds: string[]): Promise<ApiResponse<{ replayed: number; failed: number }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ replayed: number; failed: number }>('POST', `/api/organizations/${org.id}/deliveries/bulk-replay`, {
+
+  return request<{ replayed: number; failed: number }>('POST', `/api/deliveries/bulk-replay`, {
     deliveryIds,
   });
 }
@@ -761,15 +730,13 @@ export interface Transform {
 }
 
 export async function getTransforms(): Promise<ApiResponse<{ transforms: Transform[] }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ transforms: Transform[] }>('GET', `/api/organizations/${org.id}/transforms`);
+
+  return request<{ transforms: Transform[] }>('GET', `/api/transforms`);
 }
 
 export async function getTransform(transformId: string): Promise<ApiResponse<{ transform: Transform }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ transform: Transform }>('GET', `/api/organizations/${org.id}/transforms/${transformId}`);
+
+  return request<{ transform: Transform }>('GET', `/api/transforms/${transformId}`);
 }
 
 export async function createTransform(data: {
@@ -779,9 +746,8 @@ export async function createTransform(data: {
   inputFormat?: 'json' | 'xml' | 'text';
   outputFormat?: 'json' | 'xml' | 'text';
 }): Promise<ApiResponse<{ transform: Transform }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ transform: Transform }>('POST', `/api/organizations/${org.id}/transforms`, {
+
+  return request<{ transform: Transform }>('POST', `/api/transforms`, {
     name: data.name,
     type: data.type,
     expression: data.expression,
@@ -798,9 +764,8 @@ export async function updateTransform(
     isActive?: boolean;
   }
 ): Promise<ApiResponse<{ transform: Transform }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ transform: Transform }>('PATCH', `/api/organizations/${org.id}/transforms/${transformId}`, {
+
+  return request<{ transform: Transform }>('PATCH', `/api/transforms/${transformId}`, {
     name: data.name,
     expression: data.expression,
     is_active: data.isActive,
@@ -808,9 +773,8 @@ export async function updateTransform(
 }
 
 export async function deleteTransform(transformId: string): Promise<ApiResponse<{ success: boolean }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ success: boolean }>('DELETE', `/api/organizations/${org.id}/transforms/${transformId}`);
+
+  return request<{ success: boolean }>('DELETE', `/api/transforms/${transformId}`);
 }
 
 export async function testTransform(data: {
@@ -818,9 +782,8 @@ export async function testTransform(data: {
   expression: string;
   payload: unknown;
 }): Promise<ApiResponse<{ result: unknown; error?: string }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ result: unknown; error?: string }>('POST', `/api/organizations/${org.id}/transforms/test`, data);
+
+  return request<{ result: unknown; error?: string }>('POST', `/api/transforms/test`, data);
 }
 
 // ============================================================================
@@ -838,15 +801,13 @@ export interface Filter {
 }
 
 export async function getFilters(): Promise<ApiResponse<{ filters: Filter[] }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ filters: Filter[] }>('GET', `/api/organizations/${org.id}/filters`);
+
+  return request<{ filters: Filter[] }>('GET', `/api/filters`);
 }
 
 export async function getFilter(filterId: string): Promise<ApiResponse<{ filter: Filter }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ filter: Filter }>('GET', `/api/organizations/${org.id}/filters/${filterId}`);
+
+  return request<{ filter: Filter }>('GET', `/api/filters/${filterId}`);
 }
 
 export async function createFilter(data: {
@@ -854,9 +815,8 @@ export async function createFilter(data: {
   logic: 'AND' | 'OR';
   conditions: FilterCondition[];
 }): Promise<ApiResponse<{ filter: Filter }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ filter: Filter }>('POST', `/api/organizations/${org.id}/filters`, data);
+
+  return request<{ filter: Filter }>('POST', `/api/filters`, data);
 }
 
 export async function updateFilter(
@@ -868,9 +828,8 @@ export async function updateFilter(
     isActive?: boolean;
   }
 ): Promise<ApiResponse<{ filter: Filter }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ filter: Filter }>('PATCH', `/api/organizations/${org.id}/filters/${filterId}`, {
+
+  return request<{ filter: Filter }>('PATCH', `/api/filters/${filterId}`, {
     name: data.name,
     logic: data.logic,
     conditions: data.conditions,
@@ -879,9 +838,8 @@ export async function updateFilter(
 }
 
 export async function deleteFilter(filterId: string): Promise<ApiResponse<{ success: boolean }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ success: boolean }>('DELETE', `/api/organizations/${org.id}/filters/${filterId}`);
+
+  return request<{ success: boolean }>('DELETE', `/api/filters/${filterId}`);
 }
 
 export async function testFilter(data: {
@@ -889,9 +847,8 @@ export async function testFilter(data: {
   conditions: FilterCondition[];
   payload: unknown;
 }): Promise<ApiResponse<{ matches: boolean; details?: unknown }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ matches: boolean; details?: unknown }>('POST', `/api/organizations/${org.id}/filters/test`, data);
+
+  return request<{ matches: boolean; details?: unknown }>('POST', `/api/filters/test`, data);
 }
 
 // ============================================================================
@@ -909,9 +866,8 @@ export interface AnalyticsOverview {
 }
 
 export async function getAnalyticsOverview(): Promise<ApiResponse<AnalyticsOverview>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<AnalyticsOverview>('GET', `/api/organizations/${org.id}/analytics/overview`);
+
+  return request<AnalyticsOverview>('GET', `/api/analytics/overview`);
 }
 
 export interface DashboardAnalytics {
@@ -947,15 +903,13 @@ export interface DashboardAnalytics {
 }
 
 export async function getDashboardAnalytics(range: '1h' | '24h' | '7d' | '30d' = '24h'): Promise<ApiResponse<DashboardAnalytics>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<DashboardAnalytics>('GET', `/api/organizations/${org.id}/analytics/dashboard?range=${range}`);
+
+  return request<DashboardAnalytics>('GET', `/api/analytics/dashboard?range=${range}`);
 }
 
 export async function getRecentActivity(limit: number = 20): Promise<ApiResponse<{ events: Event[] }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ events: Event[] }>('GET', `/api/organizations/${org.id}/realtime/recent?limit=${limit}`);
+
+  return request<{ events: Event[] }>('GET', `/api/realtime/recent?limit=${limit}`);
 }
 
 // ============================================================================
@@ -964,40 +918,40 @@ export async function getRecentActivity(limit: number = 20): Promise<ApiResponse
 
 export interface CronJob {
   id: string;
-  organization_id: string;
-  group_id?: string | null;
+  organizationId: string;
+  groupId?: string | null;
   name: string;
   description?: string | null;
-  cron_expression: string;
+  cronExpression: string;
   timezone: string;
   url: string;
   method: string;
   headers?: string | null;
   payload?: string | null;
-  timeout_ms: number;
-  is_active: number;
-  last_run_at?: string | null;
-  next_run_at?: string | null;
-  notify_on_success?: number;
-  notify_on_failure?: number;
-  notify_emails?: string | null;
-  consecutive_failures?: number;
-  created_at: string;
-  updated_at: string;
+  timeoutMs: number;
+  isActive: number;
+  lastRunAt?: string | null;
+  nextRunAt?: string | null;
+  notifyOnSuccess?: number;
+  notifyOnFailure?: number;
+  notifyEmails?: string | null;
+  consecutiveFailures?: number;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface CronExecution {
   id: string;
-  organization_id: string;
-  cron_job_id: string;
+  organizationId: string;
+  cronJobId: string;
   status: 'pending' | 'success' | 'failed' | 'running';
-  response_status?: number | null;
-  response_body?: string | null;
-  response_headers?: string | null;
-  error_message?: string | null;
-  latency_ms?: number | null;
-  started_at: string;
-  completed_at?: string | null;
+  responseStatus?: number | null;
+  responseBody?: string | null;
+  responseHeaders?: string | null;
+  errorMessage?: string | null;
+  latencyMs?: number | null;
+  startedAt: string;
+  completedAt?: string | null;
 }
 
 // Trigger response uses camelCase (different from DB records)
@@ -1022,15 +976,13 @@ export interface CronGroup {
 }
 
 export async function getCronJobs(): Promise<ApiResponse<{ cronJobs: CronJob[] }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ cronJobs: CronJob[] }>('GET', `/api/organizations/${org.id}/cron`);
+
+  return request<{ cronJobs: CronJob[] }>('GET', `/api/cron?pageSize=100`);
 }
 
 export async function getCronJob(jobId: string): Promise<ApiResponse<{ cronJob: CronJob }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ cronJob: CronJob }>('GET', `/api/organizations/${org.id}/cron/${jobId}`);
+
+  return request<{ cronJob: CronJob }>('GET', `/api/cron/${jobId}`);
 }
 
 export async function createCronJob(data: {
@@ -1048,9 +1000,8 @@ export async function createCronJob(data: {
   notifyOnFailure?: boolean;
   notifyEmails?: string;
 }): Promise<ApiResponse<{ cronJob: CronJob }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ cronJob: CronJob }>('POST', `/api/organizations/${org.id}/cron`, {
+
+  return request<{ cronJob: CronJob }>('POST', `/api/cron`, {
     name: data.name,
     description: data.description,
     cronExpression: data.cronExpression,
@@ -1086,32 +1037,28 @@ export async function updateCronJob(
     notifyEmails?: string;
   }
 ): Promise<ApiResponse<{ success: boolean }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ success: boolean }>('PATCH', `/api/organizations/${org.id}/cron/${jobId}`, data);
+
+  return request<{ success: boolean }>('PATCH', `/api/cron/${jobId}`, data);
 }
 
 export async function deleteCronJob(jobId: string): Promise<ApiResponse<{ success: boolean }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ success: boolean }>('DELETE', `/api/organizations/${org.id}/cron/${jobId}`);
+
+  return request<{ success: boolean }>('DELETE', `/api/cron/${jobId}`);
 }
 
 export async function triggerCronJob(jobId: string): Promise<ApiResponse<{ execution: CronTriggerResult }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ execution: CronTriggerResult }>('POST', `/api/organizations/${org.id}/cron/${jobId}/trigger`);
+
+  return request<{ execution: CronTriggerResult }>('POST', `/api/cron/${jobId}/trigger`);
 }
 
 export async function getCronExecutions(
   jobId: string,
   limit: number = 20
 ): Promise<ApiResponse<{ executions: CronExecution[] }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
+
   return request<{ executions: CronExecution[] }>(
     'GET',
-    `/api/organizations/${org.id}/cron/${jobId}/executions?limit=${limit}`
+    `/api/cron/${jobId}/executions?limit=${limit}`
   );
 }
 
@@ -1120,24 +1067,21 @@ export async function getCronExecutions(
 // ============================================================================
 
 export async function getCronGroups(): Promise<ApiResponse<{ groups: CronGroup[] }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ groups: CronGroup[] }>('GET', `/api/organizations/${org.id}/cron-groups`);
+
+  return request<{ groups: CronGroup[] }>('GET', `/api/cron-groups`);
 }
 
 export async function getCronGroup(groupId: string): Promise<ApiResponse<{ group: CronGroup }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ group: CronGroup }>('GET', `/api/organizations/${org.id}/cron-groups/${groupId}`);
+
+  return request<{ group: CronGroup }>('GET', `/api/cron-groups/${groupId}`);
 }
 
 export async function createCronGroup(data: {
   name: string;
   description?: string;
 }): Promise<ApiResponse<{ group: CronGroup }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ group: CronGroup }>('POST', `/api/organizations/${org.id}/cron-groups`, data);
+
+  return request<{ group: CronGroup }>('POST', `/api/cron-groups`, data);
 }
 
 export async function updateCronGroup(
@@ -1149,21 +1093,18 @@ export async function updateCronGroup(
     isCollapsed?: boolean;
   }
 ): Promise<ApiResponse<{ group: CronGroup }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ group: CronGroup }>('PATCH', `/api/organizations/${org.id}/cron-groups/${groupId}`, data);
+
+  return request<{ group: CronGroup }>('PATCH', `/api/cron-groups/${groupId}`, data);
 }
 
 export async function deleteCronGroup(groupId: string): Promise<ApiResponse<{ success: boolean }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ success: boolean }>('DELETE', `/api/organizations/${org.id}/cron-groups/${groupId}`);
+
+  return request<{ success: boolean }>('DELETE', `/api/cron-groups/${groupId}`);
 }
 
 export async function reorderCronGroups(groupIds: string[]): Promise<ApiResponse<{ success: boolean }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ success: boolean }>('POST', `/api/organizations/${org.id}/cron-groups/reorder`, { groupIds });
+
+  return request<{ success: boolean }>('POST', `/api/cron-groups/reorder`, { groupIds });
 }
 
 // ============================================================================
@@ -1185,15 +1126,13 @@ export interface WebhookApplication {
 }
 
 export async function getWebhookApplications(): Promise<ApiResponse<{ applications: WebhookApplication[] }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ applications: WebhookApplication[] }>('GET', `/api/organizations/${org.id}/webhook-applications`);
+
+  return request<{ applications: WebhookApplication[] }>('GET', `/api/webhook-applications`);
 }
 
 export async function getWebhookApplication(appId: string): Promise<ApiResponse<{ application: WebhookApplication }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ application: WebhookApplication }>('GET', `/api/organizations/${org.id}/webhook-applications/${appId}`);
+
+  return request<{ application: WebhookApplication }>('GET', `/api/webhook-applications/${appId}`);
 }
 
 export async function createWebhookApplication(data: {
@@ -1202,9 +1141,8 @@ export async function createWebhookApplication(data: {
   uid?: string;
   rateLimitPerMinute?: number;
 }): Promise<ApiResponse<{ application: WebhookApplication }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ application: WebhookApplication }>('POST', `/api/organizations/${org.id}/webhook-applications`, {
+
+  return request<{ application: WebhookApplication }>('POST', `/api/webhook-applications`, {
     name: data.name,
     description: data.description,
     uid: data.uid,
@@ -1221,15 +1159,13 @@ export async function updateWebhookApplication(
     isDisabled?: boolean;
   }
 ): Promise<ApiResponse<{ application: WebhookApplication }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ application: WebhookApplication }>('PATCH', `/api/organizations/${org.id}/webhook-applications/${appId}`, data);
+
+  return request<{ application: WebhookApplication }>('PATCH', `/api/webhook-applications/${appId}`, data);
 }
 
 export async function deleteWebhookApplication(appId: string): Promise<ApiResponse<{ success: boolean }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ success: boolean }>('DELETE', `/api/organizations/${org.id}/webhook-applications/${appId}`);
+
+  return request<{ success: boolean }>('DELETE', `/api/webhook-applications/${appId}`);
 }
 
 // ============================================================================
@@ -1258,16 +1194,14 @@ export interface WebhookEndpoint {
 }
 
 export async function getWebhookEndpoints(appId?: string): Promise<ApiResponse<{ endpoints: WebhookEndpoint[] }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
+
   const query = appId ? `?applicationId=${appId}` : '';
-  return request<{ endpoints: WebhookEndpoint[] }>('GET', `/api/organizations/${org.id}/webhook-endpoints${query}`);
+  return request<{ endpoints: WebhookEndpoint[] }>('GET', `/api/webhook-endpoints${query}`);
 }
 
 export async function getWebhookEndpoint(endpointId: string): Promise<ApiResponse<{ endpoint: WebhookEndpoint }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ endpoint: WebhookEndpoint }>('GET', `/api/organizations/${org.id}/webhook-endpoints/${endpointId}`);
+
+  return request<{ endpoint: WebhookEndpoint }>('GET', `/api/webhook-endpoints/${endpointId}`);
 }
 
 export async function createWebhookEndpoint(data: {
@@ -1279,9 +1213,8 @@ export async function createWebhookEndpoint(data: {
   rateLimitPerMinute?: number;
   timeoutMs?: number;
 }): Promise<ApiResponse<{ endpoint: WebhookEndpoint; secret: string }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ endpoint: WebhookEndpoint; secret: string }>('POST', `/api/organizations/${org.id}/webhook-endpoints`, {
+
+  return request<{ endpoint: WebhookEndpoint; secret: string }>('POST', `/api/webhook-endpoints`, {
     applicationId: data.applicationId,
     url: data.url,
     description: data.description,
@@ -1304,15 +1237,13 @@ export async function updateWebhookEndpoint(
     isActive?: boolean;
   }
 ): Promise<ApiResponse<{ endpoint: WebhookEndpoint }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ endpoint: WebhookEndpoint }>('PATCH', `/api/organizations/${org.id}/webhook-endpoints/${endpointId}`, data);
+
+  return request<{ endpoint: WebhookEndpoint }>('PATCH', `/api/webhook-endpoints/${endpointId}`, data);
 }
 
 export async function deleteWebhookEndpoint(endpointId: string): Promise<ApiResponse<{ success: boolean }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ success: boolean }>('DELETE', `/api/organizations/${org.id}/webhook-endpoints/${endpointId}`);
+
+  return request<{ success: boolean }>('DELETE', `/api/webhook-endpoints/${endpointId}`);
 }
 
 export async function testWebhookEndpoint(endpointId: string): Promise<ApiResponse<{
@@ -1321,20 +1252,18 @@ export async function testWebhookEndpoint(endpointId: string): Promise<ApiRespon
   responseTime: number;
   error?: string;
 }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
+
   return request<{ success: boolean; statusCode: number; responseTime: number; error?: string }>(
     'POST',
-    `/api/organizations/${org.id}/webhook-endpoints/${endpointId}/test`
+    `/api/webhook-endpoints/${endpointId}/test`
   );
 }
 
 export async function rotateWebhookEndpointSecret(endpointId: string): Promise<ApiResponse<{ endpoint: WebhookEndpoint; secret: string }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
+
   return request<{ endpoint: WebhookEndpoint; secret: string }>(
     'POST',
-    `/api/organizations/${org.id}/webhook-endpoints/${endpointId}/rotate-secret`
+    `/api/webhook-endpoints/${endpointId}/rotate-secret`
   );
 }
 
@@ -1366,9 +1295,8 @@ export async function sendWebhookEvent(data: {
   payload: unknown;
   endpointIds?: string[];
 }): Promise<ApiResponse<{ message: WebhookMessage }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ message: WebhookMessage }>('POST', `/api/organizations/${org.id}/send-event`, {
+
+  return request<{ message: WebhookMessage }>('POST', `/api/send-event`, {
     applicationId: data.applicationId,
     eventType: data.eventType,
     payload: data.payload,
@@ -1388,8 +1316,6 @@ export async function getWebhookMessages(options?: {
   status?: string;
   eventType?: string;
 }): Promise<ApiResponse<{ messages: WebhookMessage[]; total: number; hasMore: boolean }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
 
   const params = new URLSearchParams();
   if (options?.limit) params.set('limit', String(options.limit));
@@ -1402,20 +1328,18 @@ export async function getWebhookMessages(options?: {
   const queryString = params.toString();
   return request<{ messages: WebhookMessage[]; total: number; hasMore: boolean }>(
     'GET',
-    `/api/organizations/${org.id}/outbound-messages${queryString ? `?${queryString}` : ''}`
+    `/api/outbound-messages${queryString ? `?${queryString}` : ''}`
   );
 }
 
 export async function getWebhookMessage(messageId: string): Promise<ApiResponse<{ message: WebhookMessage }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ message: WebhookMessage }>('GET', `/api/organizations/${org.id}/outbound-messages/${messageId}`);
+
+  return request<{ message: WebhookMessage }>('GET', `/api/outbound-messages/${messageId}`);
 }
 
 export async function retryWebhookMessage(messageId: string): Promise<ApiResponse<{ message: WebhookMessage }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ message: WebhookMessage }>('POST', `/api/organizations/${org.id}/outbound-messages/${messageId}/retry`);
+
+  return request<{ message: WebhookMessage }>('POST', `/api/outbound-messages/${messageId}/retry`);
 }
 
 // ============================================================================
@@ -1444,8 +1368,6 @@ export async function getDlqMessages(options?: {
   applicationId?: string;
   endpointId?: string;
 }): Promise<ApiResponse<{ messages: DlqMessage[]; total: number; hasMore: boolean }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
 
   const params = new URLSearchParams();
   params.set('status', 'dlq'); // Filter for DLQ messages
@@ -1457,25 +1379,22 @@ export async function getDlqMessages(options?: {
   const queryString = params.toString();
   return request<{ messages: DlqMessage[]; total: number; hasMore: boolean }>(
     'GET',
-    `/api/organizations/${org.id}/outbound-messages?${queryString}`
+    `/api/outbound-messages?${queryString}`
   );
 }
 
 export async function getDlqMessage(messageId: string): Promise<ApiResponse<{ message: DlqMessage }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ message: DlqMessage }>('GET', `/api/organizations/${org.id}/outbound-messages/${messageId}`);
+
+  return request<{ message: DlqMessage }>('GET', `/api/outbound-messages/${messageId}`);
 }
 
 export async function retryDlqMessage(messageId: string): Promise<ApiResponse<{ message: WebhookMessage }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
-  return request<{ message: WebhookMessage }>('POST', `/api/organizations/${org.id}/outbound-messages/${messageId}/replay`);
+
+  return request<{ message: WebhookMessage }>('POST', `/api/outbound-messages/${messageId}/replay`);
 }
 
 export async function bulkRetryDlqMessages(messageIds: string[]): Promise<ApiResponse<{ retried: number; failed: number }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
+
   // Replay each message individually since there's no bulk endpoint
   let retried = 0;
   let failed = 0;
@@ -1491,8 +1410,7 @@ export async function bulkRetryDlqMessages(messageIds: string[]): Promise<ApiRes
 }
 
 export async function deleteDlqMessage(messageId: string): Promise<ApiResponse<{ success: boolean }>> {
-  const org = requireOrg();
-  if (!org) return { error: 'No organization selected', status: 0 };
+
   // Note: Delete may not be supported - check API
-  return request<{ success: boolean }>('DELETE', `/api/organizations/${org.id}/outbound-messages/${messageId}`);
+  return request<{ success: boolean }>('DELETE', `/api/outbound-messages/${messageId}`);
 }
