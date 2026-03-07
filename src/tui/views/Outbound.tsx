@@ -121,9 +121,10 @@ function CreateEndpoint({ applications, onBack, onCreated }: {
   onBack: () => void;
   onCreated: () => void;
 }) {
-  const [step, setStep] = useState<'app' | 'url' | 'creating' | 'done'>('app');
+  const [step, setStep] = useState<'app' | 'url' | 'staticIp' | 'creating' | 'done'>('app');
   const [selectedAppId, setSelectedAppId] = useState('');
   const [url, setUrl] = useState('');
+  const [useStaticIp, setUseStaticIp] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [createdEndpoint, setCreatedEndpoint] = useState<api.WebhookEndpoint | null>(null);
   const [secret, setSecret] = useState<string | null>(null);
@@ -144,17 +145,19 @@ function CreateEndpoint({ applications, onBack, onCreated }: {
     setStep('url');
   };
 
-  const handleCreate = async () => {
-    if (!url.trim()) return;
+  const handleStaticIpSelect = async (item: { value: string }) => {
+    const staticIp = item.value === 'yes';
+    setUseStaticIp(staticIp);
     setStep('creating');
     try {
       const result = await api.createWebhookEndpoint({
         applicationId: selectedAppId,
         url: url.trim(),
+        useStaticIp: staticIp,
       });
       if (result.error) {
         setError(result.error);
-        setStep('url');
+        setStep('staticIp');
       } else {
         const resData = (result.data as any)?.data || result.data;
         setCreatedEndpoint(resData || null);
@@ -164,7 +167,7 @@ function CreateEndpoint({ applications, onBack, onCreated }: {
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create');
-      setStep('url');
+      setStep('staticIp');
     }
   };
 
@@ -195,10 +198,27 @@ function CreateEndpoint({ applications, onBack, onCreated }: {
               <TextInput
                 value={url}
                 onChange={setUrl}
-                onSubmit={handleCreate}
+                onSubmit={() => url.trim() && setStep('staticIp')}
                 placeholder="https://api.example.com/webhook"
               />
             </Box>
+          </Box>
+        )}
+
+        {step === 'staticIp' && (
+          <Box flexDirection="column">
+            <Text dimColor>App: {applications.find(a => a.id === selectedAppId)?.name}</Text>
+            <Box marginBottom={1}>
+              <Text dimColor>URL: {url}</Text>
+            </Box>
+            <Text>Enable Static IP delivery? (Pro/Business plans)</Text>
+            <SelectInput
+              items={[
+                { label: 'Yes - Route via static IP (Recommended)', value: 'yes' },
+                { label: 'No - Use direct delivery', value: 'no' },
+              ]}
+              onSelect={handleStaticIpSelect}
+            />
           </Box>
         )}
 
@@ -517,6 +537,14 @@ function EndpointDetail({ endpointId, endpoints, onBack, onRefresh }: {
         </Box>
         <Box><Box width={16}><Text dimColor>Event Types:</Text></Box><Text>{eventTypes}</Text></Box>
         <Box><Box width={16}><Text dimColor>Timeout:</Text></Box><Text>{ep.timeout_ms || ep.timeoutMs || 30000}ms</Text></Box>
+        <Box>
+          <Box width={16}><Text dimColor>Static IP:</Text></Box>
+          {(() => {
+            const staticIp = ep.use_static_ip ?? ep.useStaticIp;
+            const enabled = staticIp === 1 || staticIp === true;
+            return <Text color={enabled ? 'green' : 'gray'}>{enabled ? 'Enabled' : 'Disabled'}</Text>;
+          })()}
+        </Box>
         <Box><Box width={16}><Text dimColor>Messages:</Text></Box><Text>{ep.message_count ?? ep.messageCount ?? 0}</Text></Box>
         {(ep.success_rate !== undefined || ep.successRate !== undefined) && (
           <Box>

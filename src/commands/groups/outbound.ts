@@ -102,6 +102,8 @@ export function registerEndpointsCommands(parent: Command): Command {
     .option('-e, --event-types <types>', 'Comma-separated event types (default: *)')
     .option('-t, --timeout <ms>', 'Timeout in milliseconds')
     .option('-r, --rate-limit <limit>', 'Rate limit per minute')
+    .option('--static-ip', 'Enable static IP delivery')
+    .option('--no-static-ip', 'Disable static IP delivery')
     .option('-y, --yes', 'Skip confirmation')
     .option('--json', 'Output as JSON')
     .action(endpointsCreateCommand);
@@ -123,6 +125,8 @@ export function registerEndpointsCommands(parent: Command): Command {
     .option('-r, --rate-limit <limit>', 'New rate limit')
     .option('--active', 'Set endpoint as active')
     .option('--inactive', 'Set endpoint as inactive')
+    .option('--static-ip', 'Enable static IP delivery')
+    .option('--no-static-ip', 'Disable static IP delivery')
     .option('--json', 'Output as JSON')
     .action(endpointsUpdateCommand);
 

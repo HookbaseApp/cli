@@ -67,6 +67,8 @@ export async function destinationsCreateCommand(options: {
   name?: string;
   url?: string;
   method?: string;
+  staticIp?: boolean;
+  noStaticIp?: boolean;
   yes?: boolean;
   json?: boolean;
 }): Promise<void> {
@@ -131,6 +133,7 @@ export async function destinationsCreateCommand(options: {
     name: name!,
     url: url!,
     method: method || 'POST',
+    useStaticIp: options.noStaticIp ? false : options.staticIp ? true : undefined,
   });
 
   if (result.error) {
@@ -197,6 +200,8 @@ export async function destinationsGetCommand(
   logger.log(`Method:      ${dest.method}`);
   logger.log(`Auth Type:   ${dest.auth_type ?? (dest as any).authType ?? '-'}`);
   logger.log(`Status:      ${(dest.is_active ?? (dest as any).isActive ?? !(dest as any).isDisabled) ? logger.green('active') : logger.red('inactive')}`);
+  const staticIp = dest.use_static_ip ?? (dest as any).useStaticIp;
+  logger.log(`Static IP:   ${staticIp === 1 || staticIp === true ? logger.green('enabled') : logger.dimText('disabled')}`);
   logger.log(`Timeout:     ${dest.timeout_ms ?? (dest as any).timeoutMs ?? 30000}ms`);
   if (dest.headers && Object.keys(dest.headers).length > 0) {
     logger.log(`Headers:`);
@@ -215,6 +220,8 @@ export async function destinationsUpdateCommand(
     method?: string;
     active?: boolean;
     inactive?: boolean;
+    staticIp?: boolean;
+    noStaticIp?: boolean;
     json?: boolean;
   }
 ): Promise<void> {
@@ -227,9 +234,11 @@ export async function destinationsUpdateCommand(
   if (options.method) updateData.method = options.method;
   if (options.active) updateData.isActive = true;
   if (options.inactive) updateData.isActive = false;
+  if (options.staticIp) updateData.useStaticIp = true;
+  if (options.noStaticIp) updateData.useStaticIp = false;
 
   if (Object.keys(updateData).length === 0) {
-    logger.error('No updates specified. Use --name, --url, --method, --active, or --inactive');
+    logger.error('No updates specified. Use --name, --url, --method, --active, --inactive, --static-ip, or --no-static-ip');
     return;
   }
 

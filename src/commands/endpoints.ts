@@ -81,6 +81,8 @@ export async function endpointsCreateCommand(options: {
   eventTypes?: string;
   timeout?: string;
   rateLimit?: string;
+  staticIp?: boolean;
+  noStaticIp?: boolean;
   yes?: boolean;
   json?: boolean;
 }): Promise<void> {
@@ -168,6 +170,7 @@ export async function endpointsCreateCommand(options: {
     eventTypes,
     timeoutMs: options.timeout ? parseInt(options.timeout, 10) : undefined,
     rateLimitPerMinute: options.rateLimit ? parseInt(options.rateLimit, 10) : undefined,
+    useStaticIp: options.noStaticIp ? false : options.staticIp ? true : undefined,
   });
 
   if (result.error) {
@@ -246,6 +249,8 @@ export async function endpointsGetCommand(
   logger.log(`Circuit:       ${formatCircuitState(endpoint.circuit_state || endpoint.circuitState)}`);
   logger.log(`Event Types:   ${Array.isArray(eventTypes) ? eventTypes.join(', ') : eventTypes}`);
   logger.log(`Timeout:       ${endpoint.timeout_ms || endpoint.timeoutMs || 30000}ms`);
+  const staticIp = endpoint.use_static_ip ?? (endpoint as any).useStaticIp;
+  logger.log(`Static IP:     ${staticIp === 1 || staticIp === true ? logger.green('enabled') : logger.dimText('disabled')}`);
   if (endpoint.rate_limit_per_minute || endpoint.rateLimitPerMinute) logger.log(`Rate Limit:    ${endpoint.rate_limit_per_minute || endpoint.rateLimitPerMinute}/min`);
   logger.log(`Messages:      ${endpoint.message_count ?? endpoint.messageCount ?? 0}`);
   const sr = endpoint.success_rate ?? endpoint.successRate;
@@ -264,6 +269,8 @@ export async function endpointsUpdateCommand(
     rateLimit?: string;
     active?: boolean;
     inactive?: boolean;
+    staticIp?: boolean;
+    noStaticIp?: boolean;
     json?: boolean;
   }
 ): Promise<void> {
@@ -278,9 +285,11 @@ export async function endpointsUpdateCommand(
   if (options.rateLimit) updateData.rateLimitPerMinute = parseInt(options.rateLimit, 10);
   if (options.active) updateData.isActive = true;
   if (options.inactive) updateData.isActive = false;
+  if (options.staticIp) updateData.useStaticIp = true;
+  if (options.noStaticIp) updateData.useStaticIp = false;
 
   if (Object.keys(updateData).length === 0) {
-    logger.error('No updates specified. Use --url, --description, --event-types, --timeout, --rate-limit, --active, or --inactive');
+    logger.error('No updates specified. Use --url, --description, --event-types, --timeout, --rate-limit, --active, --inactive, --static-ip, or --no-static-ip');
     return;
   }
 

@@ -55,9 +55,10 @@ function DestinationList({ destinations, onSelect, onCreate }: {
         {/* Column headers */}
         <Box borderBottom marginBottom={0}>
           <Box width={2}><Text> </Text></Box>
-          <Box width={22}><Text bold dimColor>Name</Text></Box>
+          <Box width={20}><Text bold dimColor>Name</Text></Box>
+          <Box width={7}><Text bold dimColor>Type</Text></Box>
           <Box width={8}><Text bold dimColor>Method</Text></Box>
-          <Box width={44}><Text bold dimColor>URL</Text></Box>
+          <Box width={40}><Text bold dimColor>URL / Bucket</Text></Box>
           <Box width={12}><Text bold dimColor>Deliveries</Text></Box>
         </Box>
 
@@ -81,19 +82,38 @@ function DestinationList({ destinations, onSelect, onCreate }: {
                 </Text>
               </Box>
               {isAction ? (
-                <Box width={22}><Text color="green">+ New Destination</Text></Box>
+                <Box width={20}><Text color="green">+ New Destination</Text></Box>
               ) : (
                 <>
-                  <Box width={22}>
+                  <Box width={20}>
                     <Text color={isSelected ? 'cyan' : undefined} bold={isSelected}>
-                      {item.name.slice(0, 20)}{item.name.length > 20 ? '…' : ''}
+                      {item.name.slice(0, 18)}{item.name.length > 18 ? '…' : ''}
                     </Text>
+                  </Box>
+                  <Box width={7}>
+                    {(() => {
+                      const destType = (item as any).type || (item as any).destinationType || 'http';
+                      const typeColor = destType === 'http' ? 'gray' : destType === 's3' ? 'yellow' : destType === 'r2' ? 'magenta' : destType === 'azure_blob' ? 'cyan' : 'blue';
+                      return <Text color={typeColor}>{destType.toUpperCase().slice(0, 5)}</Text>;
+                    })()}
                   </Box>
                   <Box width={8}>
                     <Text color="yellow">{item.method || 'POST'}</Text>
                   </Box>
-                  <Box width={44}>
-                    <Text color="blue">{item.url.slice(0, 42)}{item.url.length > 42 ? '…' : ''}</Text>
+                  <Box width={40}>
+                    {(() => {
+                      const destType = (item as any).type || (item as any).destinationType || 'http';
+                      if (destType !== 'http') {
+                        try {
+                          const cfg = JSON.parse((item as any).config || '{}');
+                          const display = `${cfg.bucket || '?'}${cfg.prefix ? '/' + cfg.prefix : ''}`;
+                          return <Text color="blue">{display.slice(0, 38)}{display.length > 38 ? '…' : ''}</Text>;
+                        } catch {
+                          return <Text dimColor>-</Text>;
+                        }
+                      }
+                      return <Text color="blue">{item.url.slice(0, 38)}{item.url.length > 38 ? '…' : ''}</Text>;
+                    })()}
                   </Box>
                   <Box width={12}>
                     <Text dimColor>{(item as any).delivery_count ?? (item as any).deliveryCount ?? 0}</Text>
@@ -215,22 +235,81 @@ function DestinationDetail({ destId, destinations, onBack, onRefresh }: {
           <Text>{(dest as any).slug || '-'}</Text>
         </Box>
         <Box>
-          <Box width={16}><Text dimColor>URL:</Text></Box>
-          <Text color="blue">{dest.url}</Text>
+          <Box width={16}><Text dimColor>Type:</Text></Box>
+          <Text color={(() => {
+            const t = (dest as any).type || (dest as any).destinationType || 'http';
+            return t === 'http' ? 'white' : t === 's3' ? 'yellow' : t === 'r2' ? 'magenta' : t === 'azure_blob' ? 'cyan' : 'blue';
+          })()}>
+            {((dest as any).type || (dest as any).destinationType || 'http').toUpperCase()}
+          </Text>
         </Box>
-        <Box>
-          <Box width={16}><Text dimColor>Method:</Text></Box>
-          <Text color="yellow">{dest.method || 'POST'}</Text>
-        </Box>
-        <Box>
-          <Box width={16}><Text dimColor>Auth Type:</Text></Box>
-          <Text>{dest.auth_type || (dest as any).authType || 'none'}</Text>
-        </Box>
+        {(() => {
+          const destType = (dest as any).type || (dest as any).destinationType || 'http';
+          if (destType !== 'http') {
+            try {
+              const cfg = JSON.parse((dest as any).config || '{}');
+              return (
+                <>
+                  <Box>
+                    <Box width={16}><Text dimColor>Bucket:</Text></Box>
+                    <Text color="blue">{cfg.bucket || '-'}</Text>
+                  </Box>
+                  {cfg.region && (
+                    <Box>
+                      <Box width={16}><Text dimColor>Region:</Text></Box>
+                      <Text>{cfg.region}</Text>
+                    </Box>
+                  )}
+                  {cfg.prefix && (
+                    <Box>
+                      <Box width={16}><Text dimColor>Prefix:</Text></Box>
+                      <Text>{cfg.prefix}</Text>
+                    </Box>
+                  )}
+                  <Box>
+                    <Box width={16}><Text dimColor>File Format:</Text></Box>
+                    <Text>{cfg.fileFormat || 'jsonl'}</Text>
+                  </Box>
+                  <Box>
+                    <Box width={16}><Text dimColor>Partition:</Text></Box>
+                    <Text>{cfg.partitionBy || 'date'}</Text>
+                  </Box>
+                </>
+              );
+            } catch {
+              return null;
+            }
+          }
+          return (
+            <>
+              <Box>
+                <Box width={16}><Text dimColor>URL:</Text></Box>
+                <Text color="blue">{dest.url}</Text>
+              </Box>
+              <Box>
+                <Box width={16}><Text dimColor>Method:</Text></Box>
+                <Text color="yellow">{dest.method || 'POST'}</Text>
+              </Box>
+              <Box>
+                <Box width={16}><Text dimColor>Auth Type:</Text></Box>
+                <Text>{dest.auth_type || (dest as any).authType || 'none'}</Text>
+              </Box>
+            </>
+          );
+        })()}
         <Box>
           <Box width={16}><Text dimColor>Status:</Text></Box>
           <Text color={(dest.is_active || (dest as any).isActive) ? 'green' : 'red'}>
             {(dest.is_active || (dest as any).isActive) ? 'Active' : 'Inactive'}
           </Text>
+        </Box>
+        <Box>
+          <Box width={16}><Text dimColor>Static IP:</Text></Box>
+          {(() => {
+            const staticIp = dest.use_static_ip ?? (dest as any).useStaticIp;
+            const enabled = staticIp === 1 || staticIp === true;
+            return <Text color={enabled ? 'green' : 'gray'}>{enabled ? 'Enabled' : 'Disabled'}</Text>;
+          })()}
         </Box>
         <Box>
           <Box width={16}><Text dimColor>Deliveries:</Text></Box>
@@ -279,14 +358,46 @@ function DestinationDetail({ destId, destinations, onBack, onRefresh }: {
   );
 }
 
+type DestType = 'http' | 's3' | 'r2' | 'gcs' | 'azure_blob';
+type CreateStep = 'name' | 'type' | 'url' | 'method' | 'bucket' | 'region' | 'endpoint' | 'accessKeyId' | 'secretAccessKey' | 'projectId' | 'serviceAccountKey' | 'accountName' | 'accountKey' | 'containerName' | 'prefix' | 'staticIp' | 'creating' | 'done';
+
+// Required config fields per warehouse type
+const WAREHOUSE_FIELDS: Record<string, CreateStep[]> = {
+  s3: ['bucket', 'region', 'accessKeyId', 'secretAccessKey', 'prefix'],
+  r2: ['bucket', 'endpoint', 'accessKeyId', 'secretAccessKey', 'prefix'],
+  gcs: ['bucket', 'projectId', 'serviceAccountKey', 'prefix'],
+  azure_blob: ['accountName', 'accountKey', 'containerName', 'prefix'],
+};
+
+const FIELD_LABELS: Record<string, { label: string; placeholder: string }> = {
+  bucket: { label: 'Bucket name', placeholder: 'my-webhook-bucket' },
+  region: { label: 'AWS Region', placeholder: 'us-east-1' },
+  endpoint: { label: 'S3 API endpoint', placeholder: 'https://<account_id>.r2.cloudflarestorage.com' },
+  accessKeyId: { label: 'Access Key ID', placeholder: 'AKIA...' },
+  secretAccessKey: { label: 'Secret Access Key', placeholder: '********' },
+  projectId: { label: 'GCP Project ID', placeholder: 'my-project-123' },
+  serviceAccountKey: { label: 'Service Account Key (JSON)', placeholder: '{"type":"service_account",...}' },
+  accountName: { label: 'Storage Account Name', placeholder: 'mystorageaccount' },
+  accountKey: { label: 'Storage Account Key', placeholder: '********' },
+  containerName: { label: 'Container Name', placeholder: 'webhooks' },
+  prefix: { label: 'Key prefix (optional)', placeholder: 'webhooks/production' },
+};
+
 function CreateDestination({ onBack, onCreated }: {
   onBack: () => void;
   onCreated: () => void;
 }) {
-  const [step, setStep] = useState<'name' | 'url' | 'method' | 'creating' | 'done'>('name');
+  const [step, setStep] = useState<CreateStep>('name');
   const [name, setName] = useState('');
+  const [destType, setDestType] = useState<DestType>('http');
+  // HTTP fields
   const [url, setUrl] = useState('');
   const [method, setMethod] = useState('POST');
+  // Warehouse config fields
+  const [configFields, setConfigFields] = useState<Record<string, string>>({});
+  const [currentFieldValue, setCurrentFieldValue] = useState('');
+  // Common
+  const [useStaticIp, setUseStaticIp] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [createdDest, setCreatedDest] = useState<api.Destination | null>(null);
 
@@ -296,19 +407,80 @@ function CreateDestination({ onBack, onCreated }: {
     }
   });
 
-  const handleMethodSelect = async (item: { value: string }) => {
-    setMethod(item.value);
-    setStep('creating');
+  const isWarehouse = destType !== 'http';
 
+  const handleTypeSelect = (item: { value: string }) => {
+    const selected = item.value as DestType;
+    setDestType(selected);
+    if (selected === 'http') {
+      setStep('url');
+    } else {
+      // Start the first warehouse config field
+      const fields = WAREHOUSE_FIELDS[selected];
+      setStep(fields[0]);
+      setCurrentFieldValue('');
+    }
+  };
+
+  const handleMethodSelect = (item: { value: string }) => {
+    setMethod(item.value);
+    setStep('staticIp');
+  };
+
+  // Advance to the next warehouse config field, or to staticIp/creating
+  const advanceWarehouseField = (currentField: string, value: string) => {
+    // prefix is optional, so allow empty
+    if (currentField !== 'prefix' && !value.trim()) return;
+
+    const updated = { ...configFields, [currentField]: value.trim() };
+    setConfigFields(updated);
+    setCurrentFieldValue('');
+
+    const fields = WAREHOUSE_FIELDS[destType];
+    const currentIndex = fields.indexOf(currentField as CreateStep);
+    if (currentIndex < fields.length - 1) {
+      setStep(fields[currentIndex + 1]);
+    } else {
+      // Warehouse destinations don't use static IP (they write to object storage)
+      setStep('creating');
+      doCreate(updated);
+    }
+  };
+
+  const handleStaticIpSelect = (item: { value: string }) => {
+    const staticIp = item.value === 'yes';
+    setUseStaticIp(staticIp);
+    setStep('creating');
+    doCreate(undefined, staticIp);
+  };
+
+  const doCreate = async (warehouseConfig?: Record<string, string>, staticIp?: boolean) => {
     try {
-      const result = await api.createDestination({
+      const createData: Parameters<typeof api.createDestination>[0] = {
         name,
-        url,
-        method: item.value,
-      });
+        type: destType,
+      };
+
+      if (destType === 'http') {
+        createData.url = url;
+        createData.method = method;
+        createData.useStaticIp = staticIp;
+      } else {
+        const cfg = warehouseConfig || configFields;
+        // Build config object, filtering out empty optional fields
+        const config: Record<string, unknown> = {};
+        for (const [k, v] of Object.entries(cfg)) {
+          if (v) config[k] = v;
+        }
+        config.fileFormat = 'jsonl';
+        config.partitionBy = 'date';
+        createData.config = config;
+      }
+
+      const result = await api.createDestination(createData);
       if (result.error) {
         setError(result.error);
-        setStep('method');
+        setStep(isWarehouse ? WAREHOUSE_FIELDS[destType][0] : 'staticIp');
       } else {
         setCreatedDest(result.data?.destination || null);
         setStep('done');
@@ -319,9 +491,32 @@ function CreateDestination({ onBack, onCreated }: {
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create destination');
-      setStep('method');
+      setStep(isWarehouse ? WAREHOUSE_FIELDS[destType][0] : 'staticIp');
     }
   };
+
+  // Summary lines showing what's been entered so far
+  const summaryLines: string[] = [`Name: ${name}`];
+  if (step !== 'name' && step !== 'type') {
+    summaryLines.push(`Type: ${destType.toUpperCase()}`);
+  }
+  if (destType === 'http') {
+    if (url) summaryLines.push(`URL: ${url}`);
+    if (step === 'staticIp' || step === 'creating' || step === 'done') summaryLines.push(`Method: ${method}`);
+  } else {
+    // Show warehouse fields filled so far
+    for (const [k, v] of Object.entries(configFields)) {
+      if (v) {
+        const label = FIELD_LABELS[k]?.label || k;
+        const display = ['secretAccessKey', 'accountKey', 'serviceAccountKey'].includes(k) ? '••••••••' : v;
+        summaryLines.push(`${label}: ${display}`);
+      }
+    }
+  }
+
+  // Determine if current step is a warehouse config field
+  const isWarehouseField = Object.values(WAREHOUSE_FIELDS).flat().includes(step);
+  const fieldMeta = FIELD_LABELS[step];
 
   return (
     <Box flexDirection="column">
@@ -337,17 +532,34 @@ function CreateDestination({ onBack, onCreated }: {
             <TextInput
               value={name}
               onChange={setName}
-              onSubmit={() => name.trim() && setStep('url')}
+              onSubmit={() => name.trim() && setStep('type')}
               placeholder="My API Endpoint"
+            />
+          </Box>
+        )}
+
+        {step === 'type' && (
+          <Box flexDirection="column">
+            <Box marginBottom={1}><Text dimColor>Name: {name}</Text></Box>
+            <Text>Select destination type:</Text>
+            <SelectInput
+              items={[
+                { label: 'HTTP Endpoint', value: 'http' },
+                { label: 'Amazon S3', value: 's3' },
+                { label: 'Cloudflare R2', value: 'r2' },
+                { label: 'Google Cloud Storage', value: 'gcs' },
+                { label: 'Azure Blob Storage', value: 'azure_blob' },
+              ]}
+              onSelect={handleTypeSelect}
             />
           </Box>
         )}
 
         {step === 'url' && (
           <Box flexDirection="column">
-            <Box marginBottom={1}>
-              <Text dimColor>Name: {name}</Text>
-            </Box>
+            {summaryLines.map((line, i) => (
+              <Box key={i} marginBottom={i === summaryLines.length - 1 ? 1 : 0}><Text dimColor>{line}</Text></Box>
+            ))}
             <Box>
               <Text>URL: </Text>
               <TextInput
@@ -362,12 +574,9 @@ function CreateDestination({ onBack, onCreated }: {
 
         {step === 'method' && (
           <Box flexDirection="column">
-            <Box marginBottom={1}>
-              <Text dimColor>Name: {name}</Text>
-            </Box>
-            <Box marginBottom={1}>
-              <Text dimColor>URL: {url}</Text>
-            </Box>
+            {summaryLines.map((line, i) => (
+              <Box key={i} marginBottom={i === summaryLines.length - 1 ? 1 : 0}><Text dimColor>{line}</Text></Box>
+            ))}
             <Text>Select HTTP method:</Text>
             <SelectInput
               items={[
@@ -376,6 +585,39 @@ function CreateDestination({ onBack, onCreated }: {
                 { label: 'PATCH', value: 'PATCH' },
               ]}
               onSelect={handleMethodSelect}
+            />
+          </Box>
+        )}
+
+        {isWarehouseField && fieldMeta && (
+          <Box flexDirection="column">
+            {summaryLines.map((line, i) => (
+              <Box key={i} marginBottom={i === summaryLines.length - 1 ? 1 : 0}><Text dimColor>{line}</Text></Box>
+            ))}
+            <Box>
+              <Text>{fieldMeta.label}: </Text>
+              <TextInput
+                value={currentFieldValue}
+                onChange={setCurrentFieldValue}
+                onSubmit={(val) => advanceWarehouseField(step, val)}
+                placeholder={fieldMeta.placeholder}
+              />
+            </Box>
+          </Box>
+        )}
+
+        {step === 'staticIp' && (
+          <Box flexDirection="column">
+            {summaryLines.map((line, i) => (
+              <Box key={i} marginBottom={i === summaryLines.length - 1 ? 1 : 0}><Text dimColor>{line}</Text></Box>
+            ))}
+            <Text>Enable Static IP delivery? (Pro/Business plans)</Text>
+            <SelectInput
+              items={[
+                { label: 'Yes - Route via static IP (Recommended)', value: 'yes' },
+                { label: 'No - Use direct delivery', value: 'no' },
+              ]}
+              onSelect={handleStaticIpSelect}
             />
           </Box>
         )}
@@ -390,6 +632,10 @@ function CreateDestination({ onBack, onCreated }: {
             <Box marginTop={1}>
               <Text dimColor>ID: </Text>
               <Text>{createdDest.id}</Text>
+            </Box>
+            <Box>
+              <Text dimColor>Type: </Text>
+              <Text>{destType.toUpperCase()}</Text>
             </Box>
           </Box>
         )}

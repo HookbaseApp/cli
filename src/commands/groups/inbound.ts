@@ -113,6 +113,8 @@ export function registerDestinationsCommands(parent: Command): Command {
     .option('-n, --name <name>', 'Destination name')
     .option('-u, --url <url>', 'Destination URL')
     .option('-m, --method <method>', 'HTTP method (POST, PUT, PATCH)')
+    .option('--static-ip', 'Enable static IP delivery')
+    .option('--no-static-ip', 'Disable static IP delivery')
     .option('-y, --yes', 'Skip confirmation')
     .option('--json', 'Output as JSON')
     .action(destinationsCreateCommand);
@@ -132,6 +134,8 @@ export function registerDestinationsCommands(parent: Command): Command {
     .option('-m, --method <method>', 'New HTTP method')
     .option('--active', 'Set destination as active')
     .option('--inactive', 'Set destination as inactive')
+    .option('--static-ip', 'Enable static IP delivery')
+    .option('--no-static-ip', 'Disable static IP delivery')
     .option('--json', 'Output as JSON')
     .action(destinationsUpdateCommand);
 

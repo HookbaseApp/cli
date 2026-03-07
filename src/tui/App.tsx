@@ -310,21 +310,25 @@ const LOGO_FRAMES: string[][] = [
 function Logo() {
   const org = config.getCurrentOrg();
   const [step, setStep] = useState(0);
+  const spinning = step < LOGO_FRAMES.length;
   const frameIdx = step % LOGO_FRAMES.length;
 
   useEffect(() => {
-    if (step >= LOGO_FRAMES.length) return;
+    if (!spinning) return;
     const timer = setTimeout(() => {
       setStep(s => s + 1);
     }, 150);
     return () => clearTimeout(timer);
   }, [step]);
 
+  // Pad all lines to a fixed width to prevent layout reflow during animation
+  const maxWidth = Math.max(...LOGO_FRAMES.flat().map(l => l.length));
+
   return (
-    <Box marginBottom={1}>
-      <Box flexDirection="column">
+    <Box marginBottom={1} height={LOGO_FRAMES[0].length}>
+      <Box flexDirection="column" width={maxWidth}>
         {LOGO_FRAMES[frameIdx].map((line, i) => (
-          <Text key={i} color="#6366f1">{line}</Text>
+          <Text key={i} color="#6366f1">{line.padEnd(maxWidth)}</Text>
         ))}
       </Box>
       <Box flexDirection="column" marginLeft={2}>
@@ -700,6 +704,7 @@ function App() {
   return (
     <Box flexDirection="column">
       <Logo />
+
       <GroupTabBar
         activeGroup={activeGroup}
         activeSubTab={activeSubTab}

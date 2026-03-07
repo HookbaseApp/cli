@@ -282,6 +282,13 @@ export interface Destination {
   success_count?: number;
   failure_count?: number;
   created_at?: string;
+  // Warehouse destination fields
+  type?: 'http' | 's3' | 'r2' | 'gcs' | 'azure_blob';
+  config?: string;
+  batch_size?: number;
+  batch_window_seconds?: number;
+  field_mapping?: string;
+  use_static_ip?: number;
 }
 
 export async function getDestinations(): Promise<ApiResponse<{ destinations: Destination[] }>> {
@@ -297,7 +304,7 @@ export async function getDestination(destId: string): Promise<ApiResponse<{ dest
 export async function createDestination(data: {
   name: string;
   slug?: string;
-  url: string;
+  url?: string;
   method?: string;
   headers?: Record<string, string>;
   authType?: 'none' | 'basic' | 'bearer' | 'api_key' | 'custom_header';
@@ -305,6 +312,12 @@ export async function createDestination(data: {
   timeoutMs?: number;
   rateLimitPerMinute?: number;
   mockMode?: boolean;
+  useStaticIp?: boolean;
+  type?: 'http' | 's3' | 'r2' | 'gcs' | 'azure_blob';
+  config?: Record<string, unknown>;
+  fieldMapping?: Array<{ source: string; target: string; type: string; default?: string }>;
+  batchSize?: number;
+  batchWindowSeconds?: number;
 }): Promise<ApiResponse<{ destination: Destination }>> {
 
   // Generate slug from name if not provided
@@ -313,13 +326,19 @@ export async function createDestination(data: {
   return request<{ destination: Destination }>('POST', `/api/destinations`, {
     name: data.name,
     slug: slug,
-    url: data.url,
+    url: data.url || '',
     method: data.method || 'POST',
     headers: data.headers,
     authType: data.authType || 'none',
     authConfig: data.authConfig,
     timeoutMs: data.timeoutMs || 30000,
     rateLimitPerMinute: data.rateLimitPerMinute,
+    useStaticIp: data.useStaticIp,
+    type: data.type || 'http',
+    config: data.config,
+    fieldMapping: data.fieldMapping,
+    batchSize: data.batchSize,
+    batchWindowSeconds: data.batchWindowSeconds,
   });
 }
 
@@ -336,6 +355,10 @@ export async function updateDestination(
     rateLimitPerMinute?: number;
     mockMode?: boolean;
     isActive?: boolean;
+    useStaticIp?: boolean;
+    fieldMapping?: Array<{ source: string; target: string; type: string; default?: string }>;
+    batchSize?: number;
+    batchWindowSeconds?: number;
   }
 ): Promise<ApiResponse<{ destination: Destination }>> {
 
@@ -349,6 +372,10 @@ export async function updateDestination(
     timeoutMs: data.timeoutMs,
     rateLimitPerMinute: data.rateLimitPerMinute,
     isActive: data.isActive,
+    useStaticIp: data.useStaticIp,
+    fieldMapping: data.fieldMapping,
+    batchSize: data.batchSize,
+    batchWindowSeconds: data.batchWindowSeconds,
   });
 }
 
@@ -1189,6 +1216,7 @@ export interface WebhookEndpoint {
   failure_count?: number;
   message_count?: number;
   success_rate?: number;
+  use_static_ip?: number;
   created_at: string;
   updated_at: string;
 }
@@ -1212,6 +1240,7 @@ export async function createWebhookEndpoint(data: {
   headers?: Record<string, string>;
   rateLimitPerMinute?: number;
   timeoutMs?: number;
+  useStaticIp?: boolean;
 }): Promise<ApiResponse<{ endpoint: WebhookEndpoint; secret: string }>> {
 
   return request<{ endpoint: WebhookEndpoint; secret: string }>('POST', `/api/webhook-endpoints`, {
@@ -1222,6 +1251,7 @@ export async function createWebhookEndpoint(data: {
     headers: data.headers,
     rateLimitPerMinute: data.rateLimitPerMinute,
     timeoutMs: data.timeoutMs || 30000,
+    useStaticIp: data.useStaticIp,
   });
 }
 
@@ -1235,6 +1265,7 @@ export async function updateWebhookEndpoint(
     rateLimitPerMinute?: number;
     timeoutMs?: number;
     isActive?: boolean;
+    useStaticIp?: boolean;
   }
 ): Promise<ApiResponse<{ endpoint: WebhookEndpoint }>> {
 
