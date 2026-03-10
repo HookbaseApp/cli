@@ -533,11 +533,18 @@ export async function getTunnel(tunnelId: string): Promise<ApiResponse<{ tunnel:
   return request<{ tunnel: Tunnel }>('GET', `/api/tunnels/${tunnelId}`);
 }
 
-export async function createTunnel(name: string, subdomain?: string): Promise<ApiResponse<CreateTunnelResponse>> {
+export async function createTunnel(
+  name: string,
+  subdomain?: string,
+  direction?: 'inbound' | 'bidirectional',
+  allowedHosts?: string[]
+): Promise<ApiResponse<CreateTunnelResponse>> {
 
   return request<CreateTunnelResponse>('POST', `/api/tunnels`, {
     name,
     subdomain,
+    direction,
+    allowedHosts,
   });
 }
 

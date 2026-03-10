@@ -30,6 +30,7 @@ import {
   tunnelsDeleteCommand,
   tunnelsStatusCommand,
   tunnelsGetCommand,
+  tunnelsProxyCommand,
 } from '../tunnels.js';
 import { tunnelMonitorCommand } from '../dashboard.js';
 import {
@@ -261,6 +262,15 @@ export function registerTunnelsCommands(parent: Command): Command {
     .option('-y, --yes', 'Skip confirmation')
     .option('--json', 'Output as JSON')
     .action(tunnelsDeleteCommand);
+
+  tunnels
+    .command('proxy <port>')
+    .description('Start a bidirectional outbound proxy through Hookbase')
+    .option('-n, --name <name>', 'Tunnel name')
+    .option('-s, --subdomain <subdomain>', 'Custom subdomain (Pro plan)')
+    .option('--hosts <hosts>', 'Comma-separated allowed target hostnames (required)')
+    .option('--json', 'Output as JSON')
+    .action(tunnelsProxyCommand);
 
   tunnels
     .command('monitor <tunnelId> <port>')
