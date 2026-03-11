@@ -19,6 +19,20 @@ interface TunnelResponse {
   body: string | null;
 }
 
+export interface OutboundResponse {
+  id: string;
+  type: 'outbound_response';
+  status: number;
+  headers: Record<string, string>;
+  body?: string;
+}
+
+export interface OutboundError {
+  id: string;
+  type: 'error';
+  message: string;
+}
+
 export interface TunnelOptions {
   wsUrl: string;
   localPort: number;
@@ -37,6 +51,10 @@ export class TunnelClient {
   private reconnectDelay = 1000;
   private pingInterval: NodeJS.Timeout | null = null;
   private isClosing = false;
+  private pendingOutbound = new Map<string, {
+    resolve: (value: OutboundResponse) => void;
+    reject: (reason: Error) => void;
+  }>();
 
   constructor(options: TunnelOptions) {
     this.options = {
@@ -129,7 +147,27 @@ export class TunnelClient {
         return;
       }
 
-      // Handle request from server
+      // Handle outbound response (from bidirectional proxy)
+      if (message.type === 'outbound_response') {
+        const pending = this.pendingOutbound.get(message.id);
+        if (pending) {
+          this.pendingOutbound.delete(message.id);
+          pending.resolve(message as OutboundResponse);
+        }
+        return;
+      }
+
+      // Handle error response for outbound requests
+      if (message.type === 'error' && message.id) {
+        const pending = this.pendingOutbound.get(message.id);
+        if (pending) {
+          this.pendingOutbound.delete(message.id);
+          pending.reject(new Error(message.message || 'Unknown error'));
+        }
+        return;
+      }
+
+      // Handle request from server (inbound forwarding)
       if (message.id && message.method) {
         this.forwardRequest(message as TunnelRequest);
       }
@@ -239,6 +277,48 @@ export class TunnelClient {
       this.options.onRequest?.(request.method, request.url, 502, duration);
       logger.error(`Failed to forward request: ${errorMessage}`);
     }
+  }
+
+  sendOutboundRequest(
+    url: string,
+    method: string,
+    headers: Record<string, string>,
+    body?: string,
+    timeoutMs = 30000,
+  ): Promise<OutboundResponse> {
+    return new Promise((resolve, reject) => {
+      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+        reject(new Error('WebSocket not connected'));
+        return;
+      }
+
+      const id = `out_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+      const timer = setTimeout(() => {
+        this.pendingOutbound.delete(id);
+        reject(new Error(`Outbound request timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+
+      this.pendingOutbound.set(id, {
+        resolve: (response) => {
+          clearTimeout(timer);
+          resolve(response);
+        },
+        reject: (err) => {
+          clearTimeout(timer);
+          reject(err);
+        },
+      });
+
+      this.ws.send(JSON.stringify({
+        type: 'outbound_request',
+        id,
+        url,
+        method,
+        headers,
+        body,
+      }));
+    });
   }
 
   close(): void {
