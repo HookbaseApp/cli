@@ -98,9 +98,9 @@ hookbase deliveries bulk-replay --status failed --yes
 
 ## Documentation
 
-- [CLI Commands Reference](https://docs.hookbase.app/cli/commands)
-- [API Documentation](https://docs.hookbase.app/api/)
-- [Tunnels Guide](https://docs.hookbase.app/guide/tunnels)
+- [CLI Commands Reference](https://www.hookbase.app/docs/receive/cli/commands)
+- [API Documentation](https://www.hookbase.app/docs/receive/api)
+- [Tunnels Guide](https://www.hookbase.app/docs/receive/guide/tunnels)
 
 ## License
 
