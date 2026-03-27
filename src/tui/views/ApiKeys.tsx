@@ -6,7 +6,7 @@ import * as config from '../../lib/config.js';
 
 /** Get key prefix handling both camelCase and snake_case */
 function getKeyPrefix(apiKey: api.ApiKey): string {
-  return apiKey.key_prefix || (apiKey as any).keyPrefix || '';
+  return apiKey.keyPrefix || '';
 }
 
 /** Parse scopes from string or array */
@@ -350,7 +350,7 @@ function CreateApiKey({ onBack, onCreated }: {
         setError(result.error);
         setStep('error');
       } else {
-        setCreatedKey(result.data?.key || null);
+        setCreatedKey(result.data?.apiKey?.key || null);
         setStep('done');
       }
     } catch (err) {

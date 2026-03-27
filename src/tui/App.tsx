@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { render, Box, Text, useInput, useApp } from 'ink';
 import Spinner from 'ink-spinner';
 import * as api from '../lib/api.js';
@@ -450,8 +450,21 @@ function App() {
     setSubView(null);
   }, []);
 
+  const lastRefreshRef = useRef(0);
+  const REFRESH_COOLDOWN_MS = 30000; // 2 second cooldown between refreshes
+
   const fetchData = useCallback(async (resource?: string | boolean) => {
     const isInitial = resource === true;
+
+    // Throttle manual refreshes (not initial loads)
+    if (!isInitial) {
+      const now = Date.now();
+      if (now - lastRefreshRef.current < REFRESH_COOLDOWN_MS) {
+        return;
+      }
+      lastRefreshRef.current = now;
+    }
+
     if (isInitial) {
       setData(prev => ({ ...prev, loading: true, error: undefined }));
     }

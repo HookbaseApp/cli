@@ -597,6 +597,7 @@ function EndpointDetail({ endpointId, endpoints, onBack, onRefresh }: {
 
 export function OutboundView({ subView, onNavigate, onRefresh }: OutboundViewProps) {
   const [activeSubTab, setActiveSubTab] = useState<SubTab>('apps');
+  const lastRefreshRef = useRef(0);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [applications, setApplications] = useState<api.WebhookApplication[]>([]);
   const [endpoints, setEndpoints] = useState<api.WebhookEndpoint[]>([]);
@@ -716,6 +717,9 @@ export function OutboundView({ subView, onNavigate, onRefresh }: OutboundViewPro
 
     // Refresh
     if (input === 'r') {
+      const now = Date.now();
+      if (now - lastRefreshRef.current < 30000) return;
+      lastRefreshRef.current = now;
       fetchData();
     }
 

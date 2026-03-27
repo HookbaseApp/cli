@@ -165,7 +165,7 @@ export async function tunnelListCommand(): Promise<void> {
 
   if (tunnels.length === 0) {
     logger.info('No tunnels found');
-    logger.dim('Run "webhookrelay tunnel <port>" to create one');
+    logger.dim('Run "hookbase tunnel <port>" to create one');
     return;
   }
 

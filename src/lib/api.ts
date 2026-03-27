@@ -129,16 +129,16 @@ export async function getOrganization(orgId: string): Promise<ApiResponse<{ orga
 export interface ApiKey {
   id: string;
   name: string;
-  key_prefix: string;
+  key?: string; // Full key, only returned on creation
+  keyPrefix: string;
   scopes: string[];
-  last_used_at: string | null;
-  created_at: string;
-  expires_at: string | null;
+  lastUsedAt: string | null;
+  createdAt: string;
+  expiresAt: string | null;
 }
 
 export interface CreateApiKeyResponse {
   apiKey: ApiKey;
-  key: string; // Full key, only shown once
 }
 
 export async function listApiKeys(): Promise<ApiResponse<{ apiKeys: ApiKey[] }>> {
