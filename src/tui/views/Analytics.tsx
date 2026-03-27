@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Box, Text, useInput } from 'ink';
 import Spinner from 'ink-spinner';
 import * as api from '../../lib/api.js';
@@ -18,6 +18,7 @@ const TIME_RANGES: { key: TimeRange; label: string }[] = [
 
 export function AnalyticsView({ onNavigate }: AnalyticsViewProps) {
   const [loading, setLoading] = useState(true);
+  const lastRefreshRef = useRef(0);
   const [error, setError] = useState<string | null>(null);
   const [timeRange, setTimeRange] = useState<TimeRange>('24h');
   const [selectedRangeIndex, setSelectedRangeIndex] = useState(1);
@@ -103,6 +104,9 @@ export function AnalyticsView({ onNavigate }: AnalyticsViewProps) {
       }
     }
     if (input === 'r') {
+      const now = Date.now();
+      if (now - lastRefreshRef.current < 30000) return;
+      lastRefreshRef.current = now;
       setLoading(true);
       fetchData();
     }

@@ -1,6 +1,7 @@
 import { input, confirm, select } from '@inquirer/prompts';
 import { ExitPromptError } from '@inquirer/core';
 import * as api from '../lib/api.js';
+import type { ApiKey } from '../lib/api.js';
 import * as config from '../lib/config.js';
 import * as logger from '../lib/logger.js';
 
@@ -60,12 +61,12 @@ export async function apiKeysListCommand(options: { json?: boolean }): Promise<v
 
   logger.table(
     ['ID', 'Name', 'Key Prefix', 'Scopes', 'Created'],
-    keys.map((k: any) => [
+    keys.map((k: ApiKey) => [
       k.id || '-',
       k.name || '-',
-      (k.key_prefix || k.keyPrefix || 'whr_') + '...',
+      (k.keyPrefix || 'whr_') + '...',
       parseScopes(k.scopes),
-      (k.created_at || k.createdAt) ? new Date(k.created_at || k.createdAt).toLocaleDateString() : '-',
+      k.createdAt ? new Date(k.createdAt).toLocaleDateString() : '-',
     ])
   );
 }
@@ -168,7 +169,7 @@ export async function apiKeysCreateCommand(options: {
       ``,
       logger.yellow('Your API key (save this - it will not be shown again):'),
       ``,
-      logger.bold(key.key),
+      logger.bold(key.apiKey.key || 'Unknown'),
     ].join('\n'));
     logger.log('');
     logger.warn('Store this key securely. You won\'t be able to see it again.');

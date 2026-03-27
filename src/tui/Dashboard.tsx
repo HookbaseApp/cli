@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { render, Box, Text, useInput, useApp } from 'ink';
 import Spinner from 'ink-spinner';
 import { Panel, StatusBadge, Table } from './components/Box.js';
@@ -161,6 +161,8 @@ function Dashboard() {
     loading: true,
   });
 
+  const lastRefreshRef = useRef(0);
+
   const fetchData = async () => {
     setData(prev => ({ ...prev, loading: true, error: undefined }));
 
@@ -206,6 +208,9 @@ function Dashboard() {
       exit();
     }
     if (input === 'r') {
+      const now = Date.now();
+      if (now - lastRefreshRef.current < 30000) return;
+      lastRefreshRef.current = now;
       fetchData();
     }
   });
