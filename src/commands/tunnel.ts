@@ -177,7 +177,7 @@ export async function tunnelListCommand(): Promise<void> {
       t.status === 'connected' ? logger.green(t.status) :
         t.status === 'error' ? logger.red(t.status) :
         logger.dimText(t.status),
-      t.total_requests.toString(),
+      String((t as any).totalRequests ?? t.total_requests ?? 0),
     ])
   );
 }

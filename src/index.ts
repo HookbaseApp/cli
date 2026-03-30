@@ -9,6 +9,7 @@ import { logoutCommand } from './commands/logout.js';
 import { logsCommand } from './commands/logs.js';
 import { forwardCommand } from './commands/forward.js';
 import { dashboardCommand } from './commands/dashboard.js';
+import { triggerCommand } from './commands/trigger.js';
 import { registerInboundGroup, registerSourcesCommands, registerDestinationsCommands, registerRoutesCommands, registerEventsCommands, registerDeliveriesCommands } from './commands/groups/inbound.js';
 import { registerOutboundGroup, registerWebhooksCommands, registerEndpointsCommands, registerSendCommand, registerMessagesCommands, registerDlqCommands } from './commands/groups/outbound.js';
 import { registerToolsGroup, registerCronCommands, registerTunnelsCommands, registerApiKeysCommands } from './commands/groups/tools.js';
@@ -123,6 +124,16 @@ program
   .command('forward <url>')
   .description('Quick forward webhooks to a URL')
   .action(forwardCommand);
+
+program
+  .command('trigger')
+  .description('Send a test webhook event to a source')
+  .option('-s, --source <id>', 'Source ID or slug')
+  .option('-e, --event <template>', 'Event template (github_push, stripe_payment, shopify_order, slack_message, generic)')
+  .option('-p, --payload <json>', 'Custom JSON payload')
+  .option('-f, --file <path>', 'Load payload from a JSON file')
+  .option('--json', 'Output as JSON')
+  .action(triggerCommand);
 
 // ============================================================================
 // Configuration Commands

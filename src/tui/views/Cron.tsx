@@ -164,7 +164,7 @@ function CronList({ jobs, onSelect, onCreate }: {
                 <>
                   <Box width={26}>
                     <Text color={item.isActive ? (isSelected ? 'cyan' : undefined) : 'gray'} bold={isSelected}>
-                      {item.name.slice(0, 24)}{item.name.length > 24 ? '…' : ''}
+                      {String(item.name || '').slice(0, 24)}{String(item.name || '').length > 24 ? '…' : ''}
                     </Text>
                   </Box>
                   <Box width={16}>

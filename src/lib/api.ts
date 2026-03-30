@@ -1,4 +1,4 @@
-import { getApiUrl, getAuthToken } from './config.js';
+import { getApiUrl, getAuthToken, getCurrentOrg } from './config.js';
 
 interface ApiResponse<T> {
   data?: T;
@@ -257,8 +257,30 @@ export async function deleteSource(sourceId: string): Promise<ApiResponse<{ succ
 }
 
 export async function rotateSourceSecret(sourceId: string): Promise<ApiResponse<{ source: Source; signingSecret: string }>> {
-
   return request<{ source: Source; signingSecret: string }>('POST', `/api/sources/${sourceId}/rotate-secret`);
+}
+
+export async function triggerSource(sourceId: string, data: {
+  template?: string;
+  customPayload?: unknown;
+  customHeaders?: Record<string, string>;
+}): Promise<ApiResponse<{
+  success: boolean;
+  statusCode: number;
+  result: unknown;
+  request: { url: string; method: string; headers: Record<string, string>; payload: unknown };
+}>> {
+  const org = getCurrentOrg();
+  if (!org) return { error: 'No organization selected', status: 0 };
+  return request('POST', `/api/organizations/${org.id}/testing/sources/${sourceId}/test`, data);
+}
+
+export async function getTestTemplates(): Promise<ApiResponse<{
+  templates: Array<{ id: string; name: string; headers: Record<string, string>; body: unknown }>;
+}>> {
+  const org = getCurrentOrg();
+  if (!org) return { error: 'No organization selected', status: 0 };
+  return request('GET', `/api/organizations/${org.id}/testing/templates`);
 }
 
 // ============================================================================

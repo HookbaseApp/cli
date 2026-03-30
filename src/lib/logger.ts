@@ -64,18 +64,22 @@ export function spinner(message: string): Ora {
 // eslint-disable-next-line no-control-regex
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
 function visibleLength(str: string): number {
-  return str.replace(ANSI_RE, '').length;
+  return String(str).replace(ANSI_RE, '').length;
 }
 
 function padEndVisible(str: string, width: number): string {
-  const pad = width - visibleLength(str);
-  return pad > 0 ? str + ' '.repeat(pad) : str;
+  const s = String(str);
+  const pad = width - visibleLength(s);
+  return pad > 0 ? s + ' '.repeat(pad) : s;
 }
 
 export function table(headers: string[], rows: string[][]): void {
+  // Coerce all cells to strings for safety
+  const safeRows = rows.map(row => row.map(cell => cell == null ? '-' : String(cell)));
+
   // Calculate column widths using visible (non-ANSI) length
   const colWidths = headers.map((h, i) => {
-    const maxDataWidth = Math.max(...rows.map(r => visibleLength(r[i] || '')));
+    const maxDataWidth = safeRows.length > 0 ? Math.max(...safeRows.map(r => visibleLength(r[i] || ''))) : 0;
     return Math.max(h.length, maxDataWidth);
   });
 
@@ -85,7 +89,7 @@ export function table(headers: string[], rows: string[][]): void {
   console.log(chalk.dim('-'.repeat(headerRow.length)));
 
   // Print rows
-  for (const row of rows) {
+  for (const row of safeRows) {
     const rowStr = row.map((cell, i) => padEndVisible(cell || '', colWidths[i])).join('  ');
     console.log(rowStr);
   }

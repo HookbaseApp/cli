@@ -126,9 +126,10 @@ function RouteList({ routes, onSelect, onCreate }: {
   );
 }
 
-function truncate(str: string, len: number): string {
-  if (str.length <= len) return str;
-  return str.slice(0, len - 1) + '…';
+function truncate(str: string | unknown, len: number): string {
+  const s = String(str ?? '');
+  if (s.length <= len) return s;
+  return s.slice(0, len - 1) + '…';
 }
 
 // Helper to get active state from route (handles both naming conventions and types)

@@ -97,11 +97,11 @@ function TunnelList({ tunnels, onSelect, onCreate }: {
                 <>
                   <Box width={24}>
                     <Text color={isSelected ? 'cyan' : undefined} bold={isSelected}>
-                      {item.name.slice(0, 22)}{item.name.length > 22 ? '…' : ''}
+                      {String(item.name || '').slice(0, 22)}{String(item.name || '').length > 22 ? '…' : ''}
                     </Text>
                   </Box>
                   <Box width={24}>
-                    <Text dimColor>{item.subdomain.slice(0, 22)}{item.subdomain.length > 22 ? '…' : ''}</Text>
+                    <Text dimColor>{String(item.subdomain || '').slice(0, 22)}{String(item.subdomain || '').length > 22 ? '…' : ''}</Text>
                   </Box>
                   <Box width={18}>
                     <Text color={getStatusColor(item.status)}>● {item.status}</Text>

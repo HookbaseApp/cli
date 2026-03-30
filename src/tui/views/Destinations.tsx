@@ -87,7 +87,7 @@ function DestinationList({ destinations, onSelect, onCreate }: {
                 <>
                   <Box width={20}>
                     <Text color={isSelected ? 'cyan' : undefined} bold={isSelected}>
-                      {item.name.slice(0, 18)}{item.name.length > 18 ? '…' : ''}
+                      {String(item.name || '').slice(0, 18)}{String(item.name || '').length > 18 ? '…' : ''}
                     </Text>
                   </Box>
                   <Box width={7}>

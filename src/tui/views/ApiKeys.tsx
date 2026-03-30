@@ -117,7 +117,7 @@ function ApiKeyList({ apiKeys, onSelect, onCreate }: {
                 <>
                   <Box width={24}>
                     <Text color={isSelected ? 'cyan' : undefined} bold={isSelected}>
-                      {item.name.slice(0, 22)}{item.name.length > 22 ? '…' : ''}
+                      {String(item.name || '').slice(0, 22)}{String(item.name || '').length > 22 ? '…' : ''}
                     </Text>
                   </Box>
                   <Box width={18}>

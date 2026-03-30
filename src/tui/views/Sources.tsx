@@ -96,11 +96,11 @@ function SourceList({ sources, onSelect, onCreate }: {
                 <>
                   <Box width={24}>
                     <Text color={isSelected ? 'cyan' : undefined} bold={isSelected}>
-                      {item.name.slice(0, 22)}{item.name.length > 22 ? '…' : ''}
+                      {String(item.name || '').slice(0, 22)}{String(item.name || '').length > 22 ? '…' : ''}
                     </Text>
                   </Box>
                   <Box width={22}>
-                    <Text dimColor>{item.slug.slice(0, 20)}{item.slug.length > 20 ? '…' : ''}</Text>
+                    <Text dimColor>{String(item.slug || '').slice(0, 20)}{String(item.slug || '').length > 20 ? '…' : ''}</Text>
                   </Box>
                   <Box width={12}>
                     <Text color="blue">{item.provider || 'generic'}</Text>
