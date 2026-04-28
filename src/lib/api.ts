@@ -716,7 +716,7 @@ export interface Delivery {
   destination_id: string;
   destination_name?: string;
   route_name?: string;
-  status: 'pending' | 'success' | 'failed' | 'retrying';
+  status: 'pending' | 'delivered' | 'failed' | 'failed_over' | 'schema_failed' | 'retrying';
   attempt_count: number;
   max_attempts: number;
   response_status?: number;

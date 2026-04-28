@@ -17,12 +17,14 @@ interface OverviewProps {
 }
 
 export function OverviewView({ data, onNavigate }: OverviewProps) {
-  const activeSources = data.sources.filter(s => s.is_active || s.isActive).length;
-  const activeDests = data.destinations.filter(d => d.is_active).length;
-  const activeRoutes = data.routes.filter(r => r.is_active).length;
+  const activeSources = data.sources.filter(s => s.is_active ?? s.isActive).length;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const activeDests = data.destinations.filter(d => (d as any).is_active ?? (d as any).isActive).length;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const activeRoutes = data.routes.filter(r => (r as any).is_active ?? (r as any).isActive).length;
   const recentEvents = data.events.length;
-  const successfulDeliveries = data.deliveries.filter(d => d.status === 'success').length;
-  const failedDeliveries = data.deliveries.filter(d => d.status === 'failed').length;
+  const successfulDeliveries = data.deliveries.filter(d => d.status === 'delivered').length;
+  const failedDeliveries = data.deliveries.filter(d => d.status === 'failed' || d.status === 'failed_over' || d.status === 'schema_failed').length;
 
   const [selectedCard, setSelectedCard] = React.useState(0);
   const cards = ['sources', 'destinations', 'routes', 'events', 'deliveries'];

@@ -151,7 +151,7 @@ export async function eventsGetCommand(
       event.deliveries.map((d: any) => [
         d.id,
         d.destination_name || d.destinationName || d.destination_id || d.destinationId || '-',
-        d.status === 'success' ? logger.green(d.status) : d.status === 'failed' ? logger.red(d.status) : logger.yellow(d.status),
+        d.status === 'delivered' ? logger.green(d.status) : (d.status === 'failed' || d.status === 'failed_over' || d.status === 'schema_failed') ? logger.red(d.status) : logger.yellow(d.status),
         (d.response_status ?? d.responseStatus) ? String(d.response_status ?? d.responseStatus) : '-',
         (d.response_time_ms ?? d.responseTimeMs) ? `${d.response_time_ms ?? d.responseTimeMs}ms` : '-',
       ])
