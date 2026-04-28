@@ -140,13 +140,20 @@ export function AnalyticsView({ onNavigate }: AnalyticsViewProps) {
   // Handle different API response structures
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const rawOverview: any = data?.overview || data || {};
+  const successfulDeliveries = rawOverview.successfulDeliveries ?? rawOverview.successful_deliveries ?? 0;
+  const failedDeliveries = rawOverview.failedDeliveries ?? rawOverview.failed_deliveries ?? 0;
+  const totalDeliveries = successfulDeliveries + failedDeliveries;
+  // The API doesn't return successRate; compute from delivery counts (matches frontend behavior)
+  const successRate = rawOverview.successRate ?? rawOverview.success_rate
+    ?? (totalDeliveries > 0 ? (successfulDeliveries / totalDeliveries) * 100 : 0);
   const overview = {
     totalEvents: rawOverview.totalEvents ?? rawOverview.total_events ?? 0,
-    totalDeliveries: rawOverview.totalDeliveries ?? rawOverview.total_deliveries ?? 0,
-    successfulDeliveries: rawOverview.successfulDeliveries ?? rawOverview.successful_deliveries ?? 0,
-    failedDeliveries: rawOverview.failedDeliveries ?? rawOverview.failed_deliveries ?? 0,
-    successRate: rawOverview.successRate ?? rawOverview.success_rate ?? 0,
-    avgResponseTime: rawOverview.avgResponseTime ?? rawOverview.avg_response_time ?? 0,
+    totalDeliveries,
+    successfulDeliveries,
+    failedDeliveries,
+    successRate,
+    avgResponseTime: rawOverview.avgResponseTime ?? rawOverview.avg_response_time
+      ?? rawOverview.avgLatency ?? rawOverview.avg_latency ?? 0,
   };
 
   return (
