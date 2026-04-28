@@ -347,6 +347,16 @@ export async function tunnelsStartCommand(
   const tunnelInfo = result.data;
   createSpinner.succeed('Tunnel created');
 
+  if (options.json) {
+    process.stdout.write(JSON.stringify({
+      event: 'tunnel.created',
+      tunnelUrl: tunnelInfo.tunnelUrl,
+      subdomain: tunnelInfo.tunnel.subdomain,
+      tunnelId: tunnelInfo.tunnel.id,
+      localPort,
+    }) + '\n');
+  }
+
   logger.log('');
   logger.box('Tunnel Info', [
     `Public URL: ${logger.cyan(tunnelInfo.tunnelUrl)}`,
@@ -363,6 +373,12 @@ export async function tunnelsStartCommand(
     localPort,
     onConnect: () => {
       connectSpinner.succeed('Connected!');
+      if (options.json) {
+        process.stdout.write(JSON.stringify({
+          event: 'tunnel.connected',
+          tunnelUrl: tunnelInfo.tunnelUrl,
+        }) + '\n');
+      }
       logger.log('');
       logger.success(`Forwarding ${tunnelInfo.tunnelUrl} → localhost:${localPort}`);
       logger.log('');
