@@ -347,15 +347,18 @@ export async function tunnelsStartCommand(
   const tunnelInfo = result.data;
   createSpinner.succeed('Tunnel created');
 
-  if (options.json) {
-    process.stdout.write(JSON.stringify({
-      event: 'tunnel.created',
-      tunnelUrl: tunnelInfo.tunnelUrl,
-      subdomain: tunnelInfo.tunnel.subdomain,
-      tunnelId: tunnelInfo.tunnel.id,
-      localPort,
-    }) + '\n');
-  }
+  // Always emit machine-readable event lines so the hookbase/setup-tunnel
+  // GitHub Action and other scripted consumers can detect tunnel state
+  // without parsing the human-formatted box. Commander treats program- and
+  // subcommand-level `--json` as the same flag, so options.json is unreliable
+  // here; emitting unconditionally is simpler and harmless.
+  process.stdout.write(JSON.stringify({
+    event: 'tunnel.created',
+    tunnelUrl: tunnelInfo.tunnelUrl,
+    subdomain: tunnelInfo.tunnel.subdomain,
+    tunnelId: tunnelInfo.tunnel.id,
+    localPort,
+  }) + '\n');
 
   logger.log('');
   logger.box('Tunnel Info', [
@@ -373,12 +376,10 @@ export async function tunnelsStartCommand(
     localPort,
     onConnect: () => {
       connectSpinner.succeed('Connected!');
-      if (options.json) {
-        process.stdout.write(JSON.stringify({
-          event: 'tunnel.connected',
-          tunnelUrl: tunnelInfo.tunnelUrl,
-        }) + '\n');
-      }
+      process.stdout.write(JSON.stringify({
+        event: 'tunnel.connected',
+        tunnelUrl: tunnelInfo.tunnelUrl,
+      }) + '\n');
       logger.log('');
       logger.success(`Forwarding ${tunnelInfo.tunnelUrl} → localhost:${localPort}`);
       logger.log('');
