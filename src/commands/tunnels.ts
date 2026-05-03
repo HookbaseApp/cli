@@ -4,7 +4,7 @@ import { ExitPromptError } from '@inquirer/core';
 import * as api from '../lib/api.js';
 import * as config from '../lib/config.js';
 import * as logger from '../lib/logger.js';
-import { TunnelClient } from '../lib/tunnel.js';
+import { TunnelClient, type TunnelFilter } from '../lib/tunnel.js';
 
 /** Helper to check if an error is a prompt cancellation (Ctrl+C) */
 function isPromptCancelled(error: unknown): boolean {
@@ -300,7 +300,15 @@ export async function tunnelsConnectCommand(
 
 export async function tunnelsStartCommand(
   port: string,
-  options: { name?: string; subdomain?: string; json?: boolean }
+  options: {
+    name?: string;
+    subdomain?: string;
+    json?: boolean;
+    filterSource?: string[];
+    filterEvent?: string[];
+    filterExpr?: string;
+    filterSkipStatus?: string;
+  }
 ): Promise<void> {
   requireAuth();
 
@@ -368,12 +376,32 @@ export async function tunnelsStartCommand(
   ].join('\n'));
   logger.log('');
 
+  // Build filter from CLI flags. None of the filter flags set => no filter.
+  const filter: TunnelFilter | undefined =
+    options.filterSource?.length || options.filterEvent?.length || options.filterExpr
+      ? {
+          sourceSlugs: options.filterSource,
+          eventPatterns: options.filterEvent,
+          payloadExpr: options.filterExpr,
+          skipStatus: options.filterSkipStatus ? parseInt(options.filterSkipStatus, 10) : undefined,
+        }
+      : undefined;
+
+  if (filter) {
+    const parts: string[] = [];
+    if (filter.sourceSlugs?.length) parts.push(`source∈[${filter.sourceSlugs.join(',')}]`);
+    if (filter.eventPatterns?.length) parts.push(`event∈[${filter.eventPatterns.join(',')}]`);
+    if (filter.payloadExpr) parts.push(`expr=${filter.payloadExpr}`);
+    logger.dim(`Filter: ${parts.join(' AND ')} (skip→${filter.skipStatus ?? 204})`);
+  }
+
   // Connect
   const connectSpinner = logger.spinner('Connecting...');
 
   const client = new TunnelClient({
     wsUrl: resolveWsUrl(tunnelInfo.wsUrl),
     localPort,
+    filter,
     onConnect: () => {
       connectSpinner.succeed('Connected!');
       process.stdout.write(JSON.stringify({
@@ -393,6 +421,9 @@ export async function tunnelsStartCommand(
     },
     onRequest: (method, path, status, duration) => {
       logger.requestLog(method, path, status, duration);
+    },
+    onSkip: (method, path, reason) => {
+      logger.dim(`${method} ${path} → skipped (${reason})`);
     },
     onError: (error) => {
       logger.error(`WebSocket error: ${error.message}`);

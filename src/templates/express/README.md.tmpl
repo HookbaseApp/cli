@@ -1,0 +1,30 @@
+# Hookbase webhook handler — Express + {{PROVIDER_LABEL}}
+
+A minimal Express server that verifies {{PROVIDER_LABEL}} webhook signatures and prints incoming events.
+
+## Setup
+
+```bash
+npm install
+cp .env.example .env
+# edit .env and set your signing secret
+npm run dev
+```
+
+The server listens on `http://localhost:3000/webhook` by default.
+
+## Pointing Hookbase at it
+
+In dev, expose your local server through a Hookbase tunnel:
+
+```bash
+hookbase listen 3000
+```
+
+Then configure your Hookbase destination URL to `<your-tunnel-url>/webhook`.
+
+{{SOURCE_URL}}
+
+## Signature verification
+
+Uses the `{{HEADER_NAME}}` header. Always set `{{ENV_VAR_NAME}}` in production — without it requests are rejected.

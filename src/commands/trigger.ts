@@ -1,4 +1,4 @@
-import { select } from '@inquirer/prompts';
+import { select, input, confirm } from '@inquirer/prompts';
 import { ExitPromptError } from '@inquirer/core';
 import * as fs from 'fs';
 import * as api from '../lib/api.js';
@@ -22,83 +22,34 @@ function requireAuth(): boolean {
   return true;
 }
 
-const SAMPLE_PAYLOADS: Record<string, { name: string; headers: Record<string, string>; body: unknown }> = {
-  github_push: {
-    name: 'GitHub Push',
-    headers: { 'content-type': 'application/json', 'x-github-event': 'push' },
-    body: {
-      ref: 'refs/heads/main',
-      repository: { full_name: 'user/my-repo', private: false },
-      pusher: { name: 'testuser', email: 'test@example.com' },
-      commits: [{ id: 'abc123', message: 'Test commit', timestamp: new Date().toISOString() }],
-    },
-  },
-  stripe_payment: {
-    name: 'Stripe Payment',
-    headers: { 'content-type': 'application/json', 'stripe-signature': 't=1234567890,v1=test' },
-    body: {
-      id: `evt_test_${Date.now()}`,
-      type: 'payment_intent.succeeded',
-      data: { object: { id: `pi_test_${Date.now()}`, amount: 2000, currency: 'usd', status: 'succeeded' } },
-      created: Math.floor(Date.now() / 1000),
-    },
-  },
-  shopify_order: {
-    name: 'Shopify Order',
-    headers: { 'content-type': 'application/json', 'x-shopify-topic': 'orders/create' },
-    body: {
-      id: 1234567890,
-      order_number: 1001,
-      total_price: '49.99',
-      currency: 'USD',
-      email: 'customer@example.com',
-      line_items: [{ title: 'Test Product', quantity: 1, price: '49.99' }],
-      created_at: new Date().toISOString(),
-    },
-  },
-  slack_message: {
-    name: 'Slack Message',
-    headers: { 'content-type': 'application/json' },
-    body: {
-      type: 'event_callback',
-      event: { type: 'message', text: 'Hello from Hookbase trigger!', user: 'U01234567', channel: 'C01234567', ts: String(Date.now() / 1000) },
-      team_id: 'T01234567',
-    },
-  },
-  generic: {
-    name: 'Generic Test',
-    headers: { 'content-type': 'application/json' },
-    body: {
-      event: 'test.trigger',
-      timestamp: new Date().toISOString(),
-      data: { message: 'Test webhook from Hookbase CLI', id: crypto.randomUUID() },
-    },
-  },
-};
-
-export async function triggerCommand(options: {
+interface TriggerOptions {
   source?: string;
+  provider?: string;
   event?: string;
   payload?: string;
   file?: string;
+  sign?: boolean;
+  print?: boolean;
   json?: boolean;
-}): Promise<void> {
+}
+
+export async function triggerCommand(options: TriggerOptions): Promise<void> {
   requireAuth();
 
   try {
     // 1. Resolve source
     let sourceId = options.source;
-    let sourceName = options.source;
+    let sourceName: string | undefined = options.source;
+    let sourceProvider: string | null = null;
+
+    const sourcesResult = await api.getSources();
+    const sources = (sourcesResult.data as any)?.sources || [];
+    if (sourcesResult.error || sources.length === 0) {
+      logger.error('No sources found. Create one first.');
+      return;
+    }
 
     if (!sourceId) {
-      // Interactive: pick a source
-      const sourcesResult = await api.getSources();
-      const sources = (sourcesResult.data as any)?.sources || [];
-      if (sourcesResult.error || sources.length === 0) {
-        logger.error('No sources found. Create one first.');
-        return;
-      }
-
       const selected = await select({
         message: 'Select a source to trigger:',
         choices: sources.map((s: any) => ({
@@ -108,79 +59,128 @@ export async function triggerCommand(options: {
         })),
       });
       sourceId = selected as string;
-      sourceName = sources.find((s: any) => s.id === selected)?.name || selected;
     }
 
-    // 2. Resolve payload
+    const sourceRecord = sources.find((s: any) => s.id === sourceId);
+    if (sourceRecord) {
+      sourceName = sourceRecord.name;
+      sourceProvider = sourceRecord.provider && sourceRecord.provider !== 'none' ? sourceRecord.provider : null;
+    }
+
+    // 2. Resolve payload — three paths
     let customPayload: unknown = undefined;
     let customHeaders: Record<string, string> | undefined = undefined;
-    let template: string | undefined = undefined;
+    let providerId: string | undefined = options.provider;
+    let eventType: string | undefined = options.event;
 
     if (options.file) {
-      // Load from file
       if (!fs.existsSync(options.file)) {
         logger.error(`File not found: ${options.file}`);
         return;
       }
-      const content = fs.readFileSync(options.file, 'utf-8');
       try {
-        customPayload = JSON.parse(content);
+        customPayload = JSON.parse(fs.readFileSync(options.file, 'utf-8'));
       } catch {
         logger.error('Invalid JSON in file');
         return;
       }
       logger.dim(`Loaded payload from ${options.file}`);
     } else if (options.payload) {
-      // Parse inline payload
       try {
         customPayload = JSON.parse(options.payload);
       } catch {
         logger.error('Invalid JSON payload. Use --payload \'{"key": "value"}\'');
         return;
       }
-    } else if (options.event) {
-      // Use a named template
-      const key = options.event.toLowerCase().replace(/[^a-z_]/g, '_');
-      if (SAMPLE_PAYLOADS[key]) {
-        template = key;
-        customHeaders = SAMPLE_PAYLOADS[key].headers;
-        logger.dim(`Using ${SAMPLE_PAYLOADS[key].name} template`);
+    } else if (!providerId && !eventType) {
+      // Interactive: pick provider (default to source's provider) → event
+      const catalogResult = await api.getProviderCatalog();
+      if (catalogResult.error || !catalogResult.data) {
+        logger.warn('Could not load provider catalog — falling back to generic payload');
       } else {
-        // Try to match by partial name
-        const match = Object.entries(SAMPLE_PAYLOADS).find(([k, v]) =>
-          k.includes(key) || v.name.toLowerCase().includes(options.event!.toLowerCase())
-        );
-        if (match) {
-          template = match[0];
-          customHeaders = match[1].headers;
-          logger.dim(`Using ${match[1].name} template`);
-        } else {
-          logger.warn(`Unknown event template "${options.event}". Using generic template.`);
-          template = 'generic';
+        const providers = catalogResult.data.providers;
+        const defaultProviderId = sourceProvider && providers.some((p) => p.hookbaseProvider === sourceProvider)
+          ? providers.find((p) => p.hookbaseProvider === sourceProvider)!.id
+          : undefined;
+
+        providerId = await select({
+          message: 'Select a provider:',
+          default: defaultProviderId,
+          choices: providers
+            .filter((p) => p.eventTypeCount > 0)
+            .slice(0, 60)
+            .map((p) => ({
+              name: `${p.icon ? p.icon + ' ' : ''}${p.name} (${p.id})`,
+              value: p.id,
+              description: p.description.slice(0, 80),
+            })),
+        });
+
+        const eventsResult = await api.getProviderEvents(providerId!);
+        if (eventsResult.data?.eventTypes?.length) {
+          const haveSamples = eventsResult.data.eventTypes.filter(
+            (e) => eventsResult.data!.samplePayloads[e.type]
+          );
+          if (haveSamples.length === 0) {
+            logger.warn(`Provider "${providerId}" has no sample payloads — using generic`);
+            providerId = undefined;
+          } else {
+            eventType = await select({
+              message: 'Select an event type:',
+              choices: haveSamples.map((e) => ({
+                name: e.type,
+                value: e.type,
+                description: e.description,
+              })),
+            });
+          }
         }
       }
-    } else {
-      // Interactive: pick a template or send generic
-      const selected = await select({
-        message: 'Select a webhook template:',
-        choices: [
-          ...Object.entries(SAMPLE_PAYLOADS).map(([key, val]) => ({
-            name: val.name,
-            value: key,
-          })),
-        ],
+    } else if (providerId && !eventType) {
+      const eventsResult = await api.getProviderEvents(providerId);
+      if (eventsResult.error || !eventsResult.data) {
+        logger.error(`Unknown provider: ${providerId}`);
+        return;
+      }
+      const haveSamples = eventsResult.data.eventTypes.filter(
+        (e) => eventsResult.data!.samplePayloads[e.type]
+      );
+      if (haveSamples.length === 0) {
+        logger.error(`Provider "${providerId}" has no sample payloads`);
+        return;
+      }
+      eventType = await select({
+        message: 'Select an event type:',
+        choices: haveSamples.map((e) => ({ name: e.type, value: e.type, description: e.description })),
       });
-      template = selected;
-      customHeaders = SAMPLE_PAYLOADS[selected]?.headers;
     }
 
-    // 3. Send
+    // 3. --print mode: don't send
+    if (options.print) {
+      if (!providerId || !eventType) {
+        logger.error('--print requires --provider and --event');
+        return;
+      }
+      const eventsResult = await api.getProviderEvents(providerId);
+      const payload = eventsResult.data?.samplePayloads?.[eventType];
+      if (!payload) {
+        logger.error(`No sample for ${providerId} → ${eventType}`);
+        return;
+      }
+      console.log(JSON.stringify(payload, null, 2));
+      return;
+    }
+
+    // 4. Send
     logger.info(`Triggering webhook to ${sourceName}...`);
 
+    const sign = options.sign !== false; // default true; users opt out via --no-sign
     const result = await api.triggerSource(sourceId!, {
-      template,
+      providerId,
+      eventType,
       customPayload,
       customHeaders,
+      sign,
     });
 
     if (result.error) {
@@ -188,7 +188,7 @@ export async function triggerCommand(options: {
       return;
     }
 
-    const data = result.data as any;
+    const data = result.data!;
 
     if (options.json) {
       console.log(JSON.stringify(data, null, 2));
@@ -196,20 +196,25 @@ export async function triggerCommand(options: {
     }
 
     if (data.success) {
-      logger.success(`Webhook delivered successfully (${data.statusCode})`);
+      logger.success(`Webhook delivered (${data.statusCode})`);
     } else {
       logger.error(`Webhook delivery failed (${data.statusCode})`);
     }
 
-    if (data.result?.eventId) {
-      logger.info(`Event ID: ${data.result.eventId}`);
+    if (data.signed && data.signatureHeader) {
+      logger.dim(`Signed with ${data.signatureHeader} header`);
+    } else if (sign && sourceProvider) {
+      logger.warn('Source has provider but signing was skipped — check signing_secret');
     }
 
+    const result2 = data.result as any;
+    if (result2?.eventId) {
+      logger.info(`Event ID: ${result2.eventId}`);
+    }
     if (data.request?.url) {
       logger.dim(`URL: ${data.request.url}`);
     }
-
-    const deliveryCount = data.result?.deliveries?.length ?? data.result?.routesMatched ?? data.result?.deliveriesQueued;
+    const deliveryCount = result2?.deliveries?.length ?? result2?.routesMatched ?? result2?.deliveriesQueued;
     if (deliveryCount !== undefined && deliveryCount !== null) {
       logger.info(`${deliveryCount} delivery(ies) queued`);
     }

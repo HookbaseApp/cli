@@ -1,0 +1,11 @@
+# Hookbase webhook handler — Next.js + {{PROVIDER_LABEL}}
+
+```bash
+npm install
+cp .env.example .env.local
+npm run dev
+```
+
+POSTs land at `http://localhost:3000/webhook`. The route handler is at `app/webhook/route.ts`.
+
+Use `hookbase listen 3000` to expose your local dev server through a Hookbase tunnel, then point your destination at `<tunnel-url>/webhook`.

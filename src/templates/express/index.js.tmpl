@@ -1,0 +1,39 @@
+const express = require('express');
+const crypto = require('crypto');
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+const SIGNING_SECRET = process.env.{{ENV_VAR_NAME}};
+
+if (!SIGNING_SECRET) {
+  console.warn('Warning: {{ENV_VAR_NAME}} not set — signature verification will fail.');
+}
+
+{{VERIFY_SNIPPET}}
+
+// IMPORTANT: signature verification needs the *raw* body bytes, not a parsed
+// object. express.raw gives us the buffer; we parse JSON ourselves after.
+app.post('/webhook', express.raw({ type: '*/*' }), (req, res) => {
+  const rawBody = req.body.toString('utf8');
+  const signature = req.headers['{{HEADER_NAME}}'];
+  const timestamp = req.headers['x-slack-request-timestamp']; // only used by Slack
+
+  if (!signature) {
+    return res.status(401).json({ error: 'missing signature header' });
+  }
+
+  const ok = verifySignature(rawBody, signature, SIGNING_SECRET, timestamp);
+  if (!ok) {
+    return res.status(401).json({ error: 'invalid signature' });
+  }
+
+  let payload;
+  try { payload = JSON.parse(rawBody); } catch { payload = {}; }
+
+  console.log('Received event:', payload.type || payload.event || 'unknown');
+  res.status(200).json({ received: true });
+});
+
+app.listen(PORT, () => {
+  console.log(`{{PROVIDER_LABEL}} webhook handler listening on http://localhost:${PORT}/webhook`);
+});

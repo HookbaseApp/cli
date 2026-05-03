@@ -10,6 +10,8 @@ import { logsCommand } from './commands/logs.js';
 import { forwardCommand } from './commands/forward.js';
 import { dashboardCommand } from './commands/dashboard.js';
 import { triggerCommand } from './commands/trigger.js';
+import { tunnelsStartCommand } from './commands/tunnels.js';
+import { initCommand } from './commands/init.js';
 import { registerInboundGroup, registerSourcesCommands, registerDestinationsCommands, registerRoutesCommands, registerEventsCommands, registerDeliveriesCommands } from './commands/groups/inbound.js';
 import { registerOutboundGroup, registerWebhooksCommands, registerEndpointsCommands, registerSendCommand, registerMessagesCommands, registerDlqCommands } from './commands/groups/outbound.js';
 import { registerToolsGroup, registerCronCommands, registerTunnelsCommands, registerApiKeysCommands } from './commands/groups/tools.js';
@@ -126,12 +128,37 @@ program
   .action(forwardCommand);
 
 program
+  .command('listen <port>')
+  .description('Listen for webhook events forwarded to localhost (alias for tunnels start)')
+  .option('-n, --name <name>', 'Tunnel name')
+  .option('-s, --subdomain <subdomain>', 'Custom subdomain (Pro plan)')
+  .option('--filter-source <slug>', 'Only forward events from this source slug (repeatable)', (v: string, prev: string[] = []) => prev.concat(v), [])
+  .option('--filter-event <pattern>', 'Only forward events matching this glob (repeatable)', (v: string, prev: string[] = []) => prev.concat(v), [])
+  .option('--filter-expr <jsonata>', 'Only forward events where this JSONata expression is truthy')
+  .option('--filter-skip-status <code>', 'HTTP status returned to relay for filtered-out requests', '204')
+  .option('--json', 'Output as JSON')
+  .action(tunnelsStartCommand);
+
+program
+  .command('init')
+  .description('Scaffold a webhook handler project (express, fastify, hono, nextjs, cloudflare-worker)')
+  .option('--framework <name>', 'Framework: express, fastify, hono, nextjs, cloudflare-worker')
+  .option('--provider <id>', 'Signature provider: stripe, github, shopify, slack, custom')
+  .option('--dir <path>', 'Output directory', './hookbase-handler')
+  .option('--source <id>', 'Source ID (used to inject ingest URL into README)')
+  .option('--force', 'Overwrite existing directory contents')
+  .action(initCommand);
+
+program
   .command('trigger')
-  .description('Send a test webhook event to a source')
+  .description('Send a test webhook event to a source (signs payload by default)')
   .option('-s, --source <id>', 'Source ID or slug')
-  .option('-e, --event <template>', 'Event template (github_push, stripe_payment, shopify_order, slack_message, generic)')
-  .option('-p, --payload <json>', 'Custom JSON payload')
+  .option('--provider <id>', 'Provider catalog ID (e.g., stripe, github, shopify)')
+  .option('-e, --event <type>', 'Event type (e.g., payment_intent.succeeded)')
+  .option('-p, --payload <json>', 'Custom JSON payload (overrides provider sample)')
   .option('-f, --file <path>', 'Load payload from a JSON file')
+  .option('--no-sign', 'Skip signing the payload')
+  .option('--print', 'Print the would-be payload and exit (no request sent)')
   .option('--json', 'Output as JSON')
   .action(triggerCommand);
 

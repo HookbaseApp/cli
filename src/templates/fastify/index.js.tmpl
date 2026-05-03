@@ -1,0 +1,43 @@
+const Fastify = require('fastify');
+const crypto = require('crypto');
+
+const app = Fastify({ logger: true });
+const PORT = process.env.PORT || 3000;
+const SIGNING_SECRET = process.env.{{ENV_VAR_NAME}};
+
+if (!SIGNING_SECRET) {
+  app.log.warn('{{ENV_VAR_NAME}} not set — signature verification will fail.');
+}
+
+{{VERIFY_SNIPPET}}
+
+// Capture the raw body — Fastify parses JSON by default, which destroys the
+// exact bytes the signature was computed over.
+app.addContentTypeParser('*', { parseAs: 'string' }, (_req, body, done) => {
+  done(null, body);
+});
+
+app.post('/webhook', async (req, reply) => {
+  const rawBody = typeof req.body === 'string' ? req.body : '';
+  const signature = req.headers['{{HEADER_NAME}}'];
+  const timestamp = req.headers['x-slack-request-timestamp'];
+
+  if (!signature) {
+    return reply.code(401).send({ error: 'missing signature header' });
+  }
+
+  const ok = verifySignature(rawBody, signature, SIGNING_SECRET, timestamp);
+  if (!ok) {
+    return reply.code(401).send({ error: 'invalid signature' });
+  }
+
+  let payload;
+  try { payload = JSON.parse(rawBody); } catch { payload = {}; }
+
+  app.log.info({ event: payload.type || payload.event || 'unknown' }, 'received');
+  return { received: true };
+});
+
+app.listen({ port: PORT, host: '0.0.0.0' }).then(() => {
+  app.log.info(`{{PROVIDER_LABEL}} webhook handler listening on http://localhost:${PORT}/webhook`);
+});

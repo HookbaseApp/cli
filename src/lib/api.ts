@@ -262,11 +262,17 @@ export async function rotateSourceSecret(sourceId: string): Promise<ApiResponse<
 
 export async function triggerSource(sourceId: string, data: {
   template?: string;
+  providerId?: string;
+  eventType?: string;
   customPayload?: unknown;
   customHeaders?: Record<string, string>;
+  sign?: boolean;
 }): Promise<ApiResponse<{
   success: boolean;
   statusCode: number;
+  signed?: boolean;
+  signatureHeader?: string | null;
+  payloadSource?: 'catalog' | 'template' | 'generic';
   result: unknown;
   request: { url: string; method: string; headers: Record<string, string>; payload: unknown };
 }>> {
@@ -281,6 +287,44 @@ export async function getTestTemplates(): Promise<ApiResponse<{
   const org = getCurrentOrg();
   if (!org) return { error: 'No organization selected', status: 0 };
   return request('GET', `/api/organizations/${org.id}/testing/templates`);
+}
+
+// ============================================================================
+// Provider Catalog (for `hookbase trigger`)
+// ============================================================================
+
+export interface ProviderCatalogSummary {
+  id: string;
+  name: string;
+  category: string;
+  description: string;
+  icon: string;
+  eventTypeCount: number;
+  hookbaseProvider: string;
+  hasSignatureVerification: boolean;
+  hasIpRanges: boolean;
+}
+
+export interface ProviderEventType {
+  type: string;
+  description: string;
+}
+
+export async function getProviderCatalog(): Promise<ApiResponse<{
+  providers: ProviderCatalogSummary[];
+  categories: string[];
+  total: number;
+}>> {
+  return request('GET', `/api/catalog/providers`);
+}
+
+export async function getProviderEvents(providerId: string): Promise<ApiResponse<{
+  providerId: string;
+  providerName: string;
+  eventTypes: ProviderEventType[];
+  samplePayloads: Record<string, object>;
+}>> {
+  return request('GET', `/api/catalog/providers/${providerId}/events`);
 }
 
 // ============================================================================

@@ -1,0 +1,11 @@
+# Hookbase webhook handler — Hono + {{PROVIDER_LABEL}}
+
+```bash
+npm install
+cp .env.example .env
+npm run dev
+```
+
+POST to `http://localhost:3000/webhook`. Verifies the `{{HEADER_NAME}}` header against `{{ENV_VAR_NAME}}`.
+
+Hono runs on Node, Bun, Deno, and Cloudflare Workers — this scaffold uses `@hono/node-server`.

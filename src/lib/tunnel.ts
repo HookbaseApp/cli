@@ -33,14 +33,64 @@ export interface OutboundError {
   message: string;
 }
 
+export interface TunnelFilter {
+  // Match against `x-hookbase-source` header (set by the relay) or path prefix
+  // `/<slug>/...`. Repeatable.
+  sourceSlugs?: string[];
+  // Glob patterns matched against the detected event type (case-insensitive,
+  // supports `*` and `?`). Repeatable.
+  eventPatterns?: string[];
+  // JSONata expression evaluated against the parsed JSON body. Truthy = pass.
+  payloadExpr?: string;
+  // HTTP status to send back to the relay for filtered-out requests. Default 204.
+  skipStatus?: number;
+}
+
 export interface TunnelOptions {
   wsUrl: string;
   localPort: number;
   localHost?: string;
+  filter?: TunnelFilter;
   onConnect?: () => void;
   onDisconnect?: () => void;
   onRequest?: (method: string, path: string, status: number, duration: number) => void;
+  onSkip?: (method: string, path: string, reason: string) => void;
   onError?: (error: Error) => void;
+}
+
+// Detect a webhook event type from request headers and parsed body. Order
+// matters: provider-specific headers win over generic body fields.
+function detectEventType(headers: Record<string, string>, body: unknown): string | null {
+  const lower = (k: string) => headers[k] || headers[k.toLowerCase()];
+  // Explicit per-provider header
+  const direct =
+    lower('x-github-event') ||
+    lower('x-shopify-topic') ||
+    lower('x-event-name') ||
+    lower('x-event-key') ||
+    lower('x-mailgun-event');
+  if (direct) return String(direct);
+  // Stripe encodes type in body; presence of stripe-signature is the cue
+  if (lower('stripe-signature') && body && typeof body === 'object') {
+    const t = (body as { type?: unknown }).type;
+    if (typeof t === 'string') return t;
+  }
+  // Generic body fields
+  if (body && typeof body === 'object') {
+    const obj = body as Record<string, unknown>;
+    for (const key of ['type', 'event', 'event_type', 'eventType']) {
+      const v = obj[key];
+      if (typeof v === 'string') return v;
+    }
+  }
+  return null;
+}
+
+// Tiny glob matcher — supports `*` (any sequence) and `?` (single char). No
+// regex injection risk because we escape everything else.
+function globMatch(pattern: string, input: string): boolean {
+  const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\?/g, '.');
+  return new RegExp(`^${escaped}$`, 'i').test(input);
 }
 
 export class TunnelClient {
@@ -179,6 +229,33 @@ export class TunnelClient {
   private async forwardRequest(request: TunnelRequest): Promise<void> {
     const startTime = Date.now();
     const localUrl = `http://${this.options.localHost}:${this.options.localPort}${request.url}`;
+
+    // Apply filter (if any) before doing any local I/O. Rejected requests get
+    // a configurable status (default 204) so the upstream still sees a sane
+    // response and the local app stays unaware.
+    const filter = this.options.filter;
+    if (filter) {
+      const skipReason = await this.evaluateFilter(request, filter);
+      if (skipReason) {
+        const skipStatus = filter.skipStatus ?? 204;
+        // 1xx/204/205/304 cannot legally carry a body. Omit body for those
+        // statuses so the relay can construct a valid Response.
+        const isNullBodyStatus = skipStatus === 204 || skipStatus === 205 || skipStatus === 304 || (skipStatus >= 100 && skipStatus < 200);
+        const skipResponse: TunnelResponse = {
+          id: request.id,
+          status: skipStatus,
+          headers: isNullBodyStatus
+            ? { 'x-hookbase-filtered': 'true', 'x-hookbase-skip-reason': skipReason.slice(0, 200) }
+            : { 'content-type': 'application/json', 'x-hookbase-filtered': 'true' },
+          body: isNullBodyStatus ? null : JSON.stringify({ filtered: true, reason: skipReason }),
+        };
+        if (this.ws?.readyState === WebSocket.OPEN) {
+          this.ws.send(JSON.stringify(skipResponse));
+        }
+        this.options.onSkip?.(request.method, request.url, skipReason);
+        return;
+      }
+    }
 
     try {
       const url = new URL(localUrl);
@@ -320,6 +397,61 @@ export class TunnelClient {
       }));
     });
   }
+
+  // Returns a non-empty reason string when the request should be skipped, or
+  // null when it passes all filter checks.
+  private async evaluateFilter(request: TunnelRequest, filter: TunnelFilter): Promise<string | null> {
+    let parsedBody: unknown = undefined;
+    if (request.body) {
+      try {
+        parsedBody = JSON.parse(request.body);
+      } catch {
+        // Non-JSON body — body-dependent filters cannot match.
+      }
+    }
+
+    if (filter.sourceSlugs && filter.sourceSlugs.length > 0) {
+      const slugFromHeader = request.headers['x-hookbase-source'] || request.headers['X-Hookbase-Source'];
+      const slugFromPath = request.url.split('?')[0].split('/').filter(Boolean)[0];
+      const detected = slugFromHeader || slugFromPath || '';
+      if (!filter.sourceSlugs.some((s) => s === detected)) {
+        return `source "${detected}" not in [${filter.sourceSlugs.join(', ')}]`;
+      }
+    }
+
+    if (filter.eventPatterns && filter.eventPatterns.length > 0) {
+      const eventType = detectEventType(request.headers, parsedBody);
+      if (!eventType) {
+        return 'no detectable event type';
+      }
+      if (!filter.eventPatterns.some((p) => globMatch(p, eventType))) {
+        return `event "${eventType}" did not match [${filter.eventPatterns.join(', ')}]`;
+      }
+    }
+
+    if (filter.payloadExpr) {
+      try {
+        const jsonataMod = await import('jsonata');
+        const jsonata = jsonataMod.default;
+        const expr = jsonata(filter.payloadExpr);
+        const result = await expr.evaluate(parsedBody ?? {});
+        if (!result) {
+          return `payload expr returned ${JSON.stringify(result)}`;
+        }
+      } catch (err) {
+        // Broken expression: warn once then pass-through so we don't black-hole
+        // every request because of a typo. Silent on subsequent runs.
+        if (!this.payloadExprWarned) {
+          this.payloadExprWarned = true;
+          logger.warn(`payload-expr failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+    }
+
+    return null;
+  }
+
+  private payloadExprWarned = false;
 
   close(): void {
     this.isClosing = true;

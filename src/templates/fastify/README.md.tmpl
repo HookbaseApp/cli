@@ -1,0 +1,11 @@
+# Hookbase webhook handler — Fastify + {{PROVIDER_LABEL}}
+
+```bash
+npm install
+cp .env.example .env
+npm run dev
+```
+
+POST to `http://localhost:3000/webhook`. Verifies the `{{HEADER_NAME}}` header against `{{ENV_VAR_NAME}}`.
+
+Use `hookbase listen 3000` to expose it through a Hookbase tunnel.

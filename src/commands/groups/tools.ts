@@ -232,6 +232,10 @@ export function registerTunnelsCommands(parent: Command): Command {
     .description('Create and connect a tunnel in one step')
     .option('-n, --name <name>', 'Tunnel name')
     .option('-s, --subdomain <subdomain>', 'Custom subdomain (Pro plan)')
+    .option('--filter-source <slug>', 'Only forward events from this source slug (repeatable)', (v: string, prev: string[] = []) => prev.concat(v), [])
+    .option('--filter-event <pattern>', 'Only forward events matching this glob (repeatable)', (v: string, prev: string[] = []) => prev.concat(v), [])
+    .option('--filter-expr <jsonata>', 'Only forward events where this JSONata expression is truthy')
+    .option('--filter-skip-status <code>', 'HTTP status returned to relay for filtered-out requests', '204')
     .option('--json', 'Output as JSON')
     .action(tunnelsStartCommand);
 

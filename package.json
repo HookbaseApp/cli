@@ -1,6 +1,6 @@
 {
   "name": "@hookbase/cli",
-  "version": "2.3.3",
+  "version": "2.4.0",
   "description": "CLI tool for Hookbase - manage webhooks and localhost tunnels",
   "type": "module",
   "main": "dist/index.js",
@@ -12,7 +12,7 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node scripts/copy-templates.mjs",
     "dev": "tsc --watch",
     "start": "node dist/index.js",
     "lint": "eslint src/**/*.ts",
@@ -46,6 +46,7 @@
     "ink-select-input": "^6.2.0",
     "ink-spinner": "^5.0.0",
     "ink-text-input": "^6.0.0",
+    "jsonata": "^2.1.0",
     "ora": "^8.0.1",
     "react": "^19.2.3",
     "ws": "^8.17.0"

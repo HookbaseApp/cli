@@ -1,0 +1,17 @@
+# Hookbase webhook handler — Cloudflare Worker + {{PROVIDER_LABEL}}
+
+```bash
+npm install
+cp .dev.vars.example .dev.vars
+# edit .dev.vars with your signing secret
+npx wrangler dev
+```
+
+POSTs land at `/webhook`. Signature verification uses Web Crypto — no Node modules required.
+
+## Deploying
+
+```bash
+npx wrangler secret put {{ENV_VAR_NAME}}
+npx wrangler deploy
+```
