@@ -54,6 +54,7 @@ export function registerSourcesCommands(parent: Command): Command {
     .option('-p, --provider <provider>', 'Provider (github, stripe, etc.)')
     .option('-y, --yes', 'Skip confirmation')
     .option('--transient', 'Enable transient mode (payloads not stored)')
+    .option('--methods <list>', 'Comma-separated HTTP verbs the ingest endpoint accepts (e.g. GET,POST). Omit for any method')
     .option('--json', 'Output as JSON')
     .action(sourcesCreateCommand);
 
@@ -74,6 +75,7 @@ export function registerSourcesCommands(parent: Command): Command {
     .option('--inactive', 'Set source as inactive')
     .option('--transient', 'Enable transient mode (payloads not stored)')
     .option('--no-transient', 'Disable transient mode')
+    .option('--methods <list>', 'Comma-separated HTTP verbs to accept (e.g. GET,POST). Pass "any" or "" to accept any method')
     .option('--json', 'Output as JSON')
     .action(sourcesUpdateCommand);
 
