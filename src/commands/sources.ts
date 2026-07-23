@@ -10,6 +10,26 @@ function isPromptCancelled(error: unknown): boolean {
     (error instanceof Error && error.name === 'ExitPromptError');
 }
 
+/** HTTP verbs the ingest endpoint can be restricted to. Mirrors VALID_INGEST_METHODS in the API.
+ * OPTIONS is excluded: CORS preflight is answered before ingest runs, so it is never gateable. */
+const INGEST_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'] as const;
+
+/** Parse a --methods flag value into a verb array for the API.
+ * "" / "any" / "all" -> [] (accept any method). Unknown verbs are dropped with a warning. */
+function parseMethods(raw: string): string[] {
+  const trimmed = raw.trim();
+  if (trimmed === '' || /^(any|all)$/i.test(trimmed)) return [];
+  const valid: string[] = [];
+  for (const token of trimmed.split(',').map((t) => t.trim().toUpperCase()).filter(Boolean)) {
+    if ((INGEST_METHODS as readonly string[]).includes(token)) {
+      if (!valid.includes(token)) valid.push(token);
+    } else {
+      logger.warn(`Ignoring unknown HTTP method "${token}" (valid: ${INGEST_METHODS.join(', ')})`);
+    }
+  }
+  return valid;
+}
+
 const PROVIDERS = [
   { name: 'Generic (no signature verification)', value: '' },
   { name: 'GitHub', value: 'github' },
@@ -88,6 +108,7 @@ export async function sourcesCreateCommand(options: {
   slug?: string;
   provider?: string;
   transient?: boolean;
+  methods?: string;
   yes?: boolean;
   json?: boolean;
 }): Promise<void> {
@@ -157,6 +178,7 @@ export async function sourcesCreateCommand(options: {
   const spinner = logger.spinner('Creating source...');
   const result = await api.createSource(name!, slug!, provider, {
     transientMode: options.transient,
+    allowedMethods: options.methods !== undefined ? parseMethods(options.methods) : undefined,
   });
 
   if (result.error) {
@@ -183,6 +205,7 @@ export async function sourcesCreateCommand(options: {
       `Name:     ${source.name}`,
       `Slug:     ${source.slug}`,
       `Provider: ${source.provider || 'generic'}`,
+      `Methods:  ${(source.allowedMethods ?? source.allowed_methods ?? []).length > 0 ? (source.allowedMethods ?? source.allowed_methods ?? []).join(', ') : 'Any'}`,
       ``,
       `Ingest URL:`,
       `${apiUrl}/ingest/${org?.slug}/${source.slug}`,
@@ -230,6 +253,8 @@ export async function sourcesGetCommand(
   logger.log(`Slug:        ${source.slug}`);
   logger.log(`Provider:    ${source.provider || 'generic'}`);
   logger.log(`Status:      ${(source.isActive || source.is_active) ? logger.green('active') : logger.red('inactive')}`);
+  const detailMethods = source.allowedMethods ?? source.allowed_methods ?? [];
+  logger.log(`Methods:     ${detailMethods.length > 0 ? detailMethods.join(', ') : 'Any'}`);
   logger.log(`Events:      ${source.eventCount ?? source.event_count ?? 0}`);
   logger.log(`Routes:      ${source.routeCount ?? source.route_count ?? 0}`);
   if (source.description) {
@@ -249,6 +274,7 @@ export async function sourcesUpdateCommand(
     active?: boolean;
     inactive?: boolean;
     transient?: boolean;
+    methods?: string;
     json?: boolean;
   }
 ): Promise<void> {
@@ -262,9 +288,10 @@ export async function sourcesUpdateCommand(
   if (options.active) updateData.isActive = true;
   if (options.inactive) updateData.isActive = false;
   if (options.transient !== undefined) updateData.transientMode = options.transient;
+  if (options.methods !== undefined) updateData.allowedMethods = parseMethods(options.methods);
 
   if (Object.keys(updateData).length === 0) {
-    logger.error('No updates specified. Use --name, --provider, --description, --active, --inactive, or --transient');
+    logger.error('No updates specified. Use --name, --provider, --description, --active, --inactive, --transient, or --methods');
     return;
   }
 

@@ -188,6 +188,7 @@ function SourceDetail({ sourceId, sources, onBack, onRefresh, onEdit }: {
   const org = config.getCurrentOrg();
   const apiUrl = config.getApiUrl();
   const isTransient = source.transient_mode || source.transientMode;
+  const allowedMethods = source.allowedMethods ?? source.allowed_methods ?? [];
 
   return (
     <Box flexDirection="column">
@@ -235,6 +236,14 @@ function SourceDetail({ sourceId, sources, onBack, onRefresh, onEdit }: {
             <Text dimColor>Disabled</Text>
           )}
         </Box>
+        <Box>
+          <Box width={16}><Text dimColor>Methods:</Text></Box>
+          {allowedMethods.length > 0 ? (
+            <Text color="yellow">{allowedMethods.join(', ')}</Text>
+          ) : (
+            <Text dimColor>Any method</Text>
+          )}
+        </Box>
         <Box marginTop={1}>
           <Box width={16}><Text dimColor>Ingest URL:</Text></Box>
           <Text color="cyan">{apiUrl}/ingest/{org?.slug}/{source.slug}</Text>
@@ -280,12 +289,14 @@ function EditSource({ sourceId, sources, onBack, onSaved }: {
   // Editable fields
   const isTransient = source?.transient_mode || source?.transientMode;
   const isActive = source?.is_active || source?.isActive;
+  const allowedMethods = source?.allowedMethods ?? source?.allowed_methods ?? [];
   const fields = [
     { key: 'name', label: 'Name', value: source?.name || '', type: 'text' as const },
     { key: 'provider', label: 'Provider', value: source?.provider || 'custom', type: 'text' as const },
     { key: 'description', label: 'Description', value: source?.description || '', type: 'text' as const },
     { key: 'isActive', label: 'Status', value: isActive ? 'Active' : 'Inactive', type: 'toggle' as const },
     { key: 'transientMode', label: 'Transient Mode', value: isTransient ? 'Enabled' : 'Disabled', type: 'toggle' as const },
+    { key: 'methods', label: 'Methods', value: allowedMethods.join(', '), type: 'text' as const },
   ];
 
   useInput(async (input, key) => {
@@ -345,7 +356,11 @@ function EditSource({ sourceId, sources, onBack, onSaved }: {
     if (!editingField) return;
     busy.current = true;
     setSaving(true);
-    const updateData: Record<string, unknown> = { [editingField]: editValue };
+    // `methods` is a comma-separated verb list in the UI but an array on the API; parse it.
+    // Everything else is a plain string field. Empty methods -> [] -> any method.
+    const updateData: Record<string, unknown> = editingField === 'methods'
+      ? { allowedMethods: editValue.split(',').map((v) => v.trim().toUpperCase()).filter(Boolean) }
+      : { [editingField]: editValue };
     try {
       const result = await api.updateSource(sourceId, updateData as any);
       if (result.error) {

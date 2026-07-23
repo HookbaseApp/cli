@@ -185,8 +185,14 @@ export interface Source {
   route_count?: number;
   transientMode?: boolean;
   transient_mode?: number;
+  allowedMethods?: string[];
+  allowed_methods?: string[];
   created_at?: string;
 }
+
+/** HTTP verbs an ingest endpoint can be restricted to. OPTIONS is excluded: CORS preflight is
+ * answered before ingest runs, so it is never gateable. */
+export type IngestMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD';
 
 export async function getSources(): Promise<ApiResponse<{ sources: Source[] }>> {
 
@@ -207,6 +213,7 @@ export async function createSource(
     rejectInvalidSignatures?: boolean;
     rateLimitPerMinute?: number;
     transientMode?: boolean;
+    allowedMethods?: string[];
   }
 ): Promise<ApiResponse<{ source: Source }>> {
 
@@ -217,6 +224,7 @@ export async function createSource(
     rejectInvalidSignatures: options?.rejectInvalidSignatures,
     rateLimitPerMinute: options?.rateLimitPerMinute,
     transientMode: options?.transientMode,
+    allowedMethods: options?.allowedMethods,
   };
 
   // Only include provider if it's a valid value (not empty)
@@ -237,6 +245,7 @@ export async function updateSource(
     rejectInvalidSignatures?: boolean;
     rateLimitPerMinute?: number;
     transientMode?: boolean;
+    allowedMethods?: string[];
   }
 ): Promise<ApiResponse<{ source: Source }>> {
 
@@ -248,6 +257,7 @@ export async function updateSource(
     rejectInvalidSignatures: data.rejectInvalidSignatures,
     rateLimitPerMinute: data.rateLimitPerMinute,
     transientMode: data.transientMode,
+    allowedMethods: data.allowedMethods,
   });
 }
 
