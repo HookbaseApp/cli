@@ -133,7 +133,7 @@ export async function destinationsCreateCommand(options: {
     name: name!,
     url: url!,
     method: method || 'POST',
-    useStaticIp: options.noStaticIp ? false : options.staticIp ? true : undefined,
+    useStaticIp: options.staticIp,
   });
 
   if (result.error) {
@@ -234,8 +234,7 @@ export async function destinationsUpdateCommand(
   if (options.method) updateData.method = options.method;
   if (options.active) updateData.isActive = true;
   if (options.inactive) updateData.isActive = false;
-  if (options.staticIp) updateData.useStaticIp = true;
-  if (options.noStaticIp) updateData.useStaticIp = false;
+  if (options.staticIp !== undefined) updateData.useStaticIp = options.staticIp;
 
   if (Object.keys(updateData).length === 0) {
     logger.error('No updates specified. Use --name, --url, --method, --active, --inactive, --static-ip, or --no-static-ip');

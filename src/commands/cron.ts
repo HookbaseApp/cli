@@ -198,6 +198,7 @@ export async function cronCreateCommand(options: {
   headers?: string;
   timeout?: number;
   group?: string;
+  staticIp?: boolean;
   yes?: boolean;
   json?: boolean;
 }): Promise<void> {
@@ -381,6 +382,7 @@ export async function cronCreateCommand(options: {
     headers,
     timeoutMs: options.timeout,
     groupId,
+    useStaticIp: options.staticIp,
   });
 
   if (result.error) {
@@ -470,6 +472,8 @@ export async function cronGetCommand(
   logger.log(`URL:          ${job.url}`);
   logger.log(`Method:       ${job.method}`);
   logger.log(`Timeout:      ${timeoutMs}ms`);
+  const staticIp = job.use_static_ip ?? job.useStaticIp;
+  logger.log(`Static IP:    ${staticIp === 1 || staticIp === true ? logger.green('enabled') : logger.dimText('disabled')}`);
   if (job.headers) {
     logger.log(`Headers:      ${job.headers}`);
   }
@@ -511,6 +515,7 @@ export async function cronUpdateCommand(
     timeout?: number;
     active?: boolean;
     inactive?: boolean;
+    staticIp?: boolean;
     json?: boolean;
   }
 ): Promise<void> {
@@ -541,9 +546,10 @@ export async function cronUpdateCommand(
   if (options.timeout) updateData.timeoutMs = options.timeout;
   if (options.active) updateData.isActive = true;
   if (options.inactive) updateData.isActive = false;
+  if (options.staticIp !== undefined) updateData.useStaticIp = options.staticIp;
 
   if (Object.keys(updateData).length === 0) {
-    logger.error('No updates specified. Use --name, --schedule, --url, --method, --timezone, --active, or --inactive');
+    logger.error('No updates specified. Use --name, --schedule, --url, --method, --timezone, --active, --inactive, --static-ip, or --no-static-ip');
     return;
   }
 

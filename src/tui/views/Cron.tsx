@@ -203,9 +203,11 @@ function CronDetail({ jobId, jobs, onBack, onRefresh }: {
   const [executions, setExecutions] = useState<api.CronExecution[]>([]);
   const [loadingExecs, setLoadingExecs] = useState(true);
   const [localIsActive, setLocalIsActive] = useState<boolean | null>(null);
+  const [localUseStaticIp, setLocalUseStaticIp] = useState<boolean | null>(null);
   const busy = useRef(false);
 
   const isActive = localIsActive !== null ? localIsActive : job?.isActive;
+  const useStaticIp = localUseStaticIp !== null ? localUseStaticIp : !!job?.useStaticIp;
 
   useEffect(() => {
     const fetchExecutions = async () => {
@@ -272,6 +274,25 @@ function CronDetail({ jobId, jobs, onBack, onRefresh }: {
       setToggling(false);
       setTimeout(() => { busy.current = false; }, 300);
     }
+    if (input === 's' && !confirmDelete && job) {
+      busy.current = true;
+      setToggling(true);
+      const newStaticIpState = !useStaticIp;
+      try {
+        const result = await api.updateCronJob(jobId, { useStaticIp: newStaticIpState });
+        if (result.error) {
+          setMessage(`Error: ${result.error}`);
+        } else {
+          setLocalUseStaticIp(newStaticIpState);
+          setMessage(newStaticIpState ? 'Static IP enabled' : 'Static IP disabled');
+          onRefresh();
+        }
+      } catch (err) {
+        setMessage('Failed to update job');
+      }
+      setToggling(false);
+      setTimeout(() => { busy.current = false; }, 300);
+    }
     if (input === 'y' && confirmDelete) {
       busy.current = true;
       setDeleting(true);
@@ -310,7 +331,7 @@ function CronDetail({ jobId, jobs, onBack, onRefresh }: {
     <Box flexDirection="column">
       <Box marginBottom={1}>
         <Text bold>Cron Job Details</Text>
-        <Text dimColor> - Esc: back | t: trigger | e: enable/disable | d: delete</Text>
+        <Text dimColor> - Esc: back | t: trigger | e: enable/disable | s: static IP | d: delete</Text>
       </Box>
 
       <Box flexDirection="column" borderStyle="round" borderColor="cyan" paddingX={2} paddingY={1}>
@@ -351,6 +372,12 @@ function CronDetail({ jobId, jobs, onBack, onRefresh }: {
         <Box>
           <Box width={16}><Text dimColor>Timeout:</Text></Box>
           <Text>{job.timeoutMs}ms</Text>
+        </Box>
+        <Box>
+          <Box width={16}><Text dimColor>Static IP:</Text></Box>
+          <Text color={useStaticIp ? 'green' : undefined} dimColor={!useStaticIp}>
+            {useStaticIp ? 'Enabled' : 'Disabled'}
+          </Text>
         </Box>
         {job.headers && (
           <Box>
@@ -427,11 +454,12 @@ function CreateCron({ onBack, onCreated }: {
   onBack: () => void;
   onCreated: () => void;
 }) {
-  const [step, setStep] = useState<'name' | 'schedule' | 'url' | 'method' | 'creating' | 'done'>('name');
+  const [step, setStep] = useState<'name' | 'schedule' | 'url' | 'method' | 'staticIp' | 'creating' | 'done'>('name');
   const [name, setName] = useState('');
   const [schedule, setSchedule] = useState('');
   const [url, setUrl] = useState('');
   const [method, setMethod] = useState('POST');
+  const [useStaticIp, setUseStaticIp] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [createdJob, setCreatedJob] = useState<api.CronJob | null>(null);
 
@@ -463,8 +491,15 @@ function CreateCron({ onBack, onCreated }: {
     }
   };
 
-  const handleMethodSelect = async (item: { value: string }) => {
+  const handleMethodSelect = (item: { value: string }) => {
     setMethod(item.value);
+    setError(null);
+    setStep('staticIp');
+  };
+
+  const handleStaticIpSelect = async (item: { value: string }) => {
+    const wantStaticIp = item.value === 'yes';
+    setUseStaticIp(wantStaticIp);
     setStep('creating');
 
     try {
@@ -472,12 +507,13 @@ function CreateCron({ onBack, onCreated }: {
         name,
         cronExpression: schedule,
         url,
-        method: item.value,
+        method,
+        useStaticIp: wantStaticIp,
       });
 
       if (result.error) {
         setError(result.error);
-        setStep('method');
+        setStep('staticIp');
       } else {
         setCreatedJob(result.data?.cronJob || null);
         setStep('done');
@@ -488,7 +524,7 @@ function CreateCron({ onBack, onCreated }: {
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create cron job');
-      setStep('method');
+      setStep('staticIp');
     }
   };
 
@@ -565,6 +601,26 @@ function CreateCron({ onBack, onCreated }: {
             <SelectInput
               items={HTTP_METHODS}
               onSelect={handleMethodSelect}
+            />
+          </Box>
+        )}
+
+        {step === 'staticIp' && (
+          <Box flexDirection="column">
+            <Box marginBottom={1}>
+              <Text dimColor>Name: {name}</Text>
+            </Box>
+            <Box marginBottom={1}>
+              <Text dimColor>Schedule: {schedule}</Text>
+            </Box>
+            <Box marginBottom={1}>
+              <Text dimColor>URL: {method} {url}</Text>
+            </Box>
+            <Text>Deliver from a static IP?</Text>
+            <Text dimColor>Pro/Business plans — runs the job from a dedicated, allowlistable IP</Text>
+            <SelectInput
+              items={[{ label: 'No', value: 'no' }, { label: 'Yes', value: 'yes' }]}
+              onSelect={handleStaticIpSelect}
             />
           </Box>
         )}

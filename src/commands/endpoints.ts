@@ -170,7 +170,7 @@ export async function endpointsCreateCommand(options: {
     eventTypes,
     timeoutMs: options.timeout ? parseInt(options.timeout, 10) : undefined,
     rateLimitPerMinute: options.rateLimit ? parseInt(options.rateLimit, 10) : undefined,
-    useStaticIp: options.noStaticIp ? false : options.staticIp ? true : undefined,
+    useStaticIp: options.staticIp,
   });
 
   if (result.error) {
@@ -285,8 +285,7 @@ export async function endpointsUpdateCommand(
   if (options.rateLimit) updateData.rateLimitPerMinute = parseInt(options.rateLimit, 10);
   if (options.active) updateData.isActive = true;
   if (options.inactive) updateData.isActive = false;
-  if (options.staticIp) updateData.useStaticIp = true;
-  if (options.noStaticIp) updateData.useStaticIp = false;
+  if (options.staticIp !== undefined) updateData.useStaticIp = options.staticIp;
 
   if (Object.keys(updateData).length === 0) {
     logger.error('No updates specified. Use --url, --description, --event-types, --timeout, --rate-limit, --active, --inactive, --static-ip, or --no-static-ip');

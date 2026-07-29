@@ -64,6 +64,8 @@ export function registerCronCommands(parent: Command): Command {
     .option('-H, --headers <json>', 'Request headers (JSON object)')
     .option('-t, --timeout <ms>', 'Timeout in milliseconds')
     .option('-g, --group <groupId>', 'Group ID to add job to')
+    .option('--static-ip', 'Enable static IP delivery (Pro/Business)')
+    .option('--no-static-ip', 'Disable static IP delivery')
     .option('-y, --yes', 'Skip confirmation')
     .option('--json', 'Output as JSON')
     .action(cronCreateCommand);
@@ -88,6 +90,8 @@ export function registerCronCommands(parent: Command): Command {
     .option('-t, --timeout <ms>', 'New timeout')
     .option('--active', 'Enable job')
     .option('--inactive', 'Disable job')
+    .option('--static-ip', 'Enable static IP delivery (Pro/Business)')
+    .option('--no-static-ip', 'Disable static IP delivery')
     .option('--json', 'Output as JSON')
     .action(cronUpdateCommand);
 

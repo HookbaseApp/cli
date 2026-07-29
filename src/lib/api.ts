@@ -1039,6 +1039,7 @@ export interface CronJob {
   headers?: string | null;
   payload?: string | null;
   timeoutMs: number;
+  useStaticIp?: boolean;
   isActive: number;
   lastRunAt?: string | null;
   nextRunAt?: string | null;
@@ -1109,6 +1110,7 @@ export async function createCronJob(data: {
   notifyOnSuccess?: boolean;
   notifyOnFailure?: boolean;
   notifyEmails?: string;
+  useStaticIp?: boolean;
 }): Promise<ApiResponse<{ cronJob: CronJob }>> {
 
   return request<{ cronJob: CronJob }>('POST', `/api/cron`, {
@@ -1125,6 +1127,7 @@ export async function createCronJob(data: {
     notifyOnSuccess: data.notifyOnSuccess,
     notifyOnFailure: data.notifyOnFailure,
     notifyEmails: data.notifyEmails,
+    useStaticIp: data.useStaticIp,
   });
 }
 
@@ -1145,6 +1148,7 @@ export async function updateCronJob(
     notifyOnSuccess?: boolean;
     notifyOnFailure?: boolean;
     notifyEmails?: string;
+    useStaticIp?: boolean;
   }
 ): Promise<ApiResponse<{ success: boolean }>> {
 
