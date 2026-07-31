@@ -352,6 +352,8 @@ function CreateApiKey({ onBack, onCreated }: {
       } else {
         setCreatedKey(result.data?.apiKey?.key || null);
         setStep('done');
+        // Refresh the parent list so the new key appears once the user backs out.
+        onCreated();
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create API key');

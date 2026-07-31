@@ -376,6 +376,19 @@ export async function tunnelsStartCommand(
   ].join('\n'));
   logger.log('');
 
+  // Validate --filter-skip-status up front: an invalid value would otherwise
+  // become NaN and make the relay return 504 for every filtered webhook.
+  let skipStatus: number | undefined;
+  if (options.filterSkipStatus) {
+    const parsed = parseInt(options.filterSkipStatus, 10);
+    if (!Number.isInteger(parsed) || parsed < 100 || parsed > 599) {
+      logger.warn(`Invalid --filter-skip-status "${options.filterSkipStatus}" (expected 100-599); using 204.`);
+      skipStatus = 204;
+    } else {
+      skipStatus = parsed;
+    }
+  }
+
   // Build filter from CLI flags. None of the filter flags set => no filter.
   const filter: TunnelFilter | undefined =
     options.filterSource?.length || options.filterEvent?.length || options.filterExpr
@@ -383,7 +396,7 @@ export async function tunnelsStartCommand(
           sourceSlugs: options.filterSource,
           eventPatterns: options.filterEvent,
           payloadExpr: options.filterExpr,
-          skipStatus: options.filterSkipStatus ? parseInt(options.filterSkipStatus, 10) : undefined,
+          skipStatus,
         }
       : undefined;
 
@@ -435,6 +448,9 @@ export async function tunnelsStartCommand(
   } catch (error) {
     connectSpinner.fail('Failed to connect');
     logger.error(error instanceof Error ? error.message : 'Connection failed');
+    // Clean up the tunnel we just created so it isn't orphaned toward the plan limit.
+    client.close();
+    await api.deleteTunnel(tunnelInfo.tunnel.id).catch(() => {});
     process.exit(1);
   }
 
@@ -718,6 +734,9 @@ export async function tunnelsProxyCommand(
   } catch (error) {
     connectSpinner.fail('Failed to connect');
     logger.error(error instanceof Error ? error.message : 'Connection failed');
+    // Clean up the tunnel we just created so it isn't orphaned toward the plan limit.
+    client.close();
+    await api.deleteTunnel(tunnelInfo.tunnel.id).catch(() => {});
     process.exit(1);
   }
 

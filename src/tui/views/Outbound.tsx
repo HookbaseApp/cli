@@ -536,7 +536,7 @@ function EndpointDetail({ endpointId, endpoints, onBack, onRefresh }: {
           })()}
         </Box>
         <Box><Box width={16}><Text dimColor>Event Types:</Text></Box><Text>{eventTypes}</Text></Box>
-        <Box><Box width={16}><Text dimColor>Timeout:</Text></Box><Text>{ep.timeout_ms || ep.timeoutMs || 30000}ms</Text></Box>
+        <Box><Box width={16}><Text dimColor>Timeout:</Text></Box><Text>{(ep as any).timeoutSeconds ?? (ep.timeout_ms ? Math.round(ep.timeout_ms / 1000) : 30)}s</Text></Box>
         <Box>
           <Box width={16}><Text dimColor>Static IP:</Text></Box>
           {(() => {
@@ -593,6 +593,16 @@ function EndpointDetail({ endpointId, endpoints, onBack, onRefresh }: {
       </Box>
     </Box>
   );
+}
+
+// Return a <=15-row window that always contains `selected`, tagged with each
+// item's absolute index, so the cursor can't scroll onto an off-screen row.
+function windowAround<T>(items: T[], selected: number, size = 15): { item: T; index: number }[] {
+  if (items.length <= size) {
+    return items.map((item, index) => ({ item, index }));
+  }
+  const start = Math.max(0, Math.min(selected - (size - 1), items.length - size));
+  return items.slice(start, start + size).map((item, i) => ({ item, index: start + i }));
 }
 
 export function OutboundView({ subView, onNavigate, onRefresh }: OutboundViewProps) {
@@ -718,7 +728,7 @@ export function OutboundView({ subView, onNavigate, onRefresh }: OutboundViewPro
     // Refresh
     if (input === 'r') {
       const now = Date.now();
-      if (now - lastRefreshRef.current < 30000) return;
+      if (now - lastRefreshRef.current < 2000) return;
       lastRefreshRef.current = now;
       fetchData();
     }
@@ -729,11 +739,13 @@ export function OutboundView({ subView, onNavigate, onRefresh }: OutboundViewPro
       if (endpoint) testEndpoint(endpoint.id);
     }
 
-    // Retry message/DLQ
+    // Retry message/DLQ. Guard on the item existing: selectedIndex can be stale
+    // (past the end) after a refresh shrinks the list, which would otherwise
+    // crash the TUI on `undefined.id`.
     if (input === 'y') {
-      if (activeSubTab === 'messages' && messages.length > 0) {
+      if (activeSubTab === 'messages' && messages[selectedIndex]) {
         retryMessage(messages[selectedIndex].id);
-      } else if (activeSubTab === 'dlq' && dlqMessages.length > 0) {
+      } else if (activeSubTab === 'dlq' && dlqMessages[selectedIndex]) {
         retryDlqMessage(dlqMessages[selectedIndex].id);
       }
     }
@@ -779,11 +791,14 @@ export function OutboundView({ subView, onNavigate, onRefresh }: OutboundViewPro
 
   const formatStatus = (status: string) => {
     switch (status) {
+      case 'success': return <Text color="green">{status}</Text>;
       case 'delivered': return <Text color="green">{status}</Text>;
       case 'pending': return <Text color="yellow">{status}</Text>;
+      case 'awaiting_retry': return <Text color="yellow">{status}</Text>;
       case 'processing': return <Text color="cyan">{status}</Text>;
       case 'failed': return <Text color="red">{status}</Text>;
       case 'exhausted': return <Text color="red">{status}</Text>;
+      case 'dlq': return <Text color="red">{status}</Text>;
       default: return <Text dimColor>{status}</Text>;
     }
   };
@@ -1063,9 +1078,12 @@ export function OutboundView({ subView, onNavigate, onRefresh }: OutboundViewPro
                     {formatCircuitState((ep as any).circuitState || ep.circuit_state)}
                   </Box>
                   <Box width={8}>
-                    <Text color={ep.is_active ? 'green' : 'red'}>
-                      {ep.is_active ? 'Active' : 'Off'}
-                    </Text>
+                    {(() => {
+                      // API sends `isDisabled`, not `is_active` — fall through so
+                      // active endpoints don't all render red "Off".
+                      const active = ep.is_active ?? (ep as any).isActive ?? !(ep as any).isDisabled;
+                      return <Text color={active ? 'green' : 'red'}>{active ? 'Active' : 'Off'}</Text>;
+                    })()}
                   </Box>
                 </Box>
               );
@@ -1093,15 +1111,15 @@ export function OutboundView({ subView, onNavigate, onRefresh }: OutboundViewPro
                 <Box width={12}><Text bold dimColor>Attempts</Text></Box>
                 <Box width={14}><Text bold dimColor>ID</Text></Box>
               </Box>
-              {messages.slice(0, 15).map((msg, idx) => {
+              {windowAround(messages, selectedIndex).map(({ item: msg, index: idx }) => {
                 const m = msg as any;
                 const isSelected = idx === selectedIndex;
                 const createdAt = m.created_at || m.createdAt || '';
                 const d = createdAt ? new Date(createdAt) : null;
                 const time = d ? `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}:${d.getSeconds().toString().padStart(2, '0')}` : '-';
                 const eventType = m.event_type || m.eventType || '-';
-                const respStatus = m.response_status || m.responseStatus;
-                const attempts = `${m.attempt_count ?? m.attemptCount ?? 0}/${m.max_attempts ?? m.maxAttempts ?? 5}`;
+                const respStatus = m.lastResponseStatus ?? m.last_response_status ?? m.response_status ?? m.responseStatus;
+                const attempts = `${m.attempts ?? m.attempt_count ?? m.attemptCount ?? 0}/${m.max_attempts ?? m.maxAttempts ?? 5}`;
                 return (
                   <Box key={msg.id}>
                     <Box width={2}>
@@ -1148,16 +1166,16 @@ export function OutboundView({ subView, onNavigate, onRefresh }: OutboundViewPro
                 <Box width={10}><Text bold dimColor>Attempts</Text></Box>
                 <Box width={14}><Text bold dimColor>ID</Text></Box>
               </Box>
-              {dlqMessages.slice(0, 15).map((msg, idx) => {
+              {windowAround(dlqMessages, selectedIndex).map(({ item: msg, index: idx }) => {
                 const m = msg as any;
                 const isSelected = idx === selectedIndex;
                 const createdAt = m.created_at || m.createdAt || '';
                 const d = createdAt ? new Date(createdAt) : null;
                 const time = d ? `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}:${d.getSeconds().toString().padStart(2, '0')}` : '-';
                 const eventType = m.event_type || m.eventType || '-';
-                const reason = m.reason || '-';
-                const lastResp = m.last_response_status || m.lastResponseStatus;
-                const attempts = m.attempt_count ?? m.attemptCount ?? 0;
+                const reason = m.dlqReason || m.dlq_reason || m.lastErrorType || m.reason || '-';
+                const lastResp = m.lastResponseStatus ?? m.last_response_status;
+                const attempts = m.attempts ?? m.attempt_count ?? m.attemptCount ?? 0;
                 return (
                   <Box key={msg.id}>
                     <Box width={2}>

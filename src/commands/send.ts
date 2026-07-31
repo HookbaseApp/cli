@@ -136,16 +136,26 @@ export async function sendCommand(options: {
     return;
   }
 
-  const message: any = (result.data as any)?.data || result.data?.message;
-  if (message) {
+  // POST /send-event returns { data: { eventId, messagesQueued, endpoints:[{id,url}] } }
+  const sent: any = (result.data as any)?.data || result.data;
+  if (sent) {
+    const endpointsHit: Array<{ id: string; url?: string }> = Array.isArray(sent.endpoints) ? sent.endpoints : [];
+    const lines = [
+      `Event ID:        ${sent.eventId || '-'}`,
+      `Event Type:      ${eventType}`,
+      `Messages Queued: ${sent.messagesQueued ?? endpointsHit.length}`,
+    ];
+    if (endpointsHit.length > 0) {
+      lines.push('', 'Endpoints:');
+      for (const ep of endpointsHit) {
+        lines.push(`  • ${ep.url || ep.id}`);
+      }
+    }
     logger.log('');
-    logger.box('Webhook Event Sent', [
-      `Message ID:  ${message.id}`,
-      `Event Type:  ${message.event_type || message.eventType}`,
-      `Status:      ${message.status}`,
-      `Created:     ${message.created_at || message.createdAt}`,
-    ].join('\n'));
+    logger.box('Webhook Event Sent', lines.join('\n'));
     logger.log('');
-    logger.dim('Track delivery with "hookbase outbound messages get ' + message.id + '"');
+    if (sent.eventId) {
+      logger.dim(`Track messages with "hookbase outbound messages list --event-type ${eventType}"`);
+    }
   }
 }

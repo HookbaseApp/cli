@@ -1,4 +1,4 @@
-import { input, confirm, select, checkbox } from '@inquirer/prompts';
+import { input, confirm, select } from '@inquirer/prompts';
 import { ExitPromptError } from '@inquirer/core';
 import * as api from '../lib/api.js';
 import * as config from '../lib/config.js';
@@ -91,7 +91,12 @@ export async function endpointsCreateCommand(options: {
   let applicationId = options.app;
   let url = options.url;
   let description = options.description;
-  let eventTypes: string[] = options.eventTypes ? options.eventTypes.split(',') : ['*'];
+
+  // Endpoints don't carry event types in the API — event routing is managed via
+  // subscriptions. Warn instead of silently dropping the flag.
+  if (options.eventTypes) {
+    logger.warn('--event-types is not applied at the endpoint level (manage event routing via subscriptions); ignoring.');
+  }
 
   try {
     if (!applicationId) {
@@ -128,19 +133,6 @@ export async function endpointsCreateCommand(options: {
       description = await input({
         message: 'Description (optional):',
       });
-
-      const allEvents = await confirm({
-        message: 'Subscribe to all event types?',
-        default: true,
-      });
-
-      if (!allEvents) {
-        const eventTypesInput = await input({
-          message: 'Event types (comma-separated):',
-          validate: (value) => value.length > 0 || 'At least one event type is required',
-        });
-        eventTypes = eventTypesInput.split(',').map(e => e.trim());
-      }
     }
 
     if (!options.yes && !options.url) {
@@ -167,9 +159,8 @@ export async function endpointsCreateCommand(options: {
     applicationId: applicationId!,
     url: url!,
     description: description || undefined,
-    eventTypes,
-    timeoutMs: options.timeout ? parseInt(options.timeout, 10) : undefined,
-    rateLimitPerMinute: options.rateLimit ? parseInt(options.rateLimit, 10) : undefined,
+    timeoutSeconds: options.timeout ? parseInt(options.timeout, 10) : undefined,
+    rateLimitPerSecond: options.rateLimit ? parseInt(options.rateLimit, 10) : undefined,
     useStaticIp: options.staticIp,
   });
 
@@ -191,12 +182,10 @@ export async function endpointsCreateCommand(options: {
   const secret = resData?.secret || result.data?.secret;
 
   if (endpoint?.id) {
-    const eventTypes = endpoint.event_types || endpoint.eventTypes || ['*'];
     logger.log('');
     logger.box('Endpoint Created', [
       `ID:          ${endpoint.id}`,
       `URL:         ${endpoint.url}`,
-      `Event Types: ${Array.isArray(eventTypes) ? eventTypes.join(', ') : eventTypes}`,
       ``,
       logger.yellow('Signing Secret (save this - shown only once):'),
       `${secret}`,
@@ -235,8 +224,9 @@ export async function endpointsGetCommand(
     return;
   }
 
-  const isActive = endpoint.is_active ?? !endpoint.isDisabled;
-  const eventTypes = endpoint.event_types || endpoint.eventTypes || ['*'];
+  const isActive = endpoint.is_active ?? endpoint.isActive ?? !endpoint.isDisabled;
+  const timeoutSeconds = endpoint.timeoutSeconds ?? (endpoint.timeout_ms ? Math.round(endpoint.timeout_ms / 1000) : 30);
+  const rateLimitPerSecond = endpoint.rateLimitPerSecond ?? endpoint.rate_limit_per_second;
 
   logger.log('');
   logger.log(logger.bold('Endpoint Details'));
@@ -247,11 +237,10 @@ export async function endpointsGetCommand(
   if (endpoint.description) logger.log(`Description:   ${endpoint.description}`);
   logger.log(`Status:        ${isActive ? logger.green('active') : logger.red('inactive')}`);
   logger.log(`Circuit:       ${formatCircuitState(endpoint.circuit_state || endpoint.circuitState)}`);
-  logger.log(`Event Types:   ${Array.isArray(eventTypes) ? eventTypes.join(', ') : eventTypes}`);
-  logger.log(`Timeout:       ${endpoint.timeout_ms || endpoint.timeoutMs || 30000}ms`);
+  logger.log(`Timeout:       ${timeoutSeconds}s`);
   const staticIp = endpoint.use_static_ip ?? (endpoint as any).useStaticIp;
   logger.log(`Static IP:     ${staticIp === 1 || staticIp === true ? logger.green('enabled') : logger.dimText('disabled')}`);
-  if (endpoint.rate_limit_per_minute || endpoint.rateLimitPerMinute) logger.log(`Rate Limit:    ${endpoint.rate_limit_per_minute || endpoint.rateLimitPerMinute}/min`);
+  if (rateLimitPerSecond) logger.log(`Rate Limit:    ${rateLimitPerSecond}/sec`);
   logger.log(`Messages:      ${endpoint.message_count ?? endpoint.messageCount ?? 0}`);
   const sr = endpoint.success_rate ?? endpoint.successRate;
   logger.log(`Success Rate:  ${sr !== undefined ? `${(sr * 100).toFixed(1)}%` : 'N/A'}`);
@@ -278,17 +267,20 @@ export async function endpointsUpdateCommand(
 
   const updateData: Parameters<typeof api.updateWebhookEndpoint>[1] = {};
 
+  if (options.eventTypes) {
+    logger.warn('--event-types is not applied at the endpoint level (manage event routing via subscriptions); ignoring.');
+  }
+
   if (options.url) updateData.url = options.url;
   if (options.description) updateData.description = options.description;
-  if (options.eventTypes) updateData.eventTypes = options.eventTypes.split(',').map(e => e.trim());
-  if (options.timeout) updateData.timeoutMs = parseInt(options.timeout, 10);
-  if (options.rateLimit) updateData.rateLimitPerMinute = parseInt(options.rateLimit, 10);
+  if (options.timeout) updateData.timeoutSeconds = parseInt(options.timeout, 10);
+  if (options.rateLimit) updateData.rateLimitPerSecond = parseInt(options.rateLimit, 10);
   if (options.active) updateData.isActive = true;
   if (options.inactive) updateData.isActive = false;
   if (options.staticIp !== undefined) updateData.useStaticIp = options.staticIp;
 
   if (Object.keys(updateData).length === 0) {
-    logger.error('No updates specified. Use --url, --description, --event-types, --timeout, --rate-limit, --active, --inactive, --static-ip, or --no-static-ip');
+    logger.error('No updates specified. Use --url, --description, --timeout, --rate-limit, --active, --inactive, --static-ip, or --no-static-ip');
     return;
   }
 

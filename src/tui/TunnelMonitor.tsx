@@ -158,11 +158,17 @@ function TunnelMonitorApp({ tunnelId, port }: TunnelMonitorProps) {
 
   useEffect(() => {
     let client: TunnelClient | null = null;
+    // `client` is assigned only after two awaits. If the component unmounts
+    // (user quits) during that window, cleanup would run with client === null
+    // and the socket + ping + reconnect timers would leak and hang the CLI.
+    // Track cancellation and bail/close after each await.
+    let cancelled = false;
 
     const connect = async () => {
       try {
         // Get tunnel info
         const tunnelRes = await api.getTunnel(tunnelId);
+        if (cancelled) return;
         if (tunnelRes.error || !tunnelRes.data?.tunnel) {
           setError(tunnelRes.error || 'Tunnel not found');
           return;
@@ -172,6 +178,7 @@ function TunnelMonitorApp({ tunnelId, port }: TunnelMonitorProps) {
 
         // Regenerate token
         const tokenRes = await api.regenerateTunnelToken(tunnelId);
+        if (cancelled) return;
         if (tokenRes.error || !tokenRes.data?.authToken) {
           setError(tokenRes.error || 'Failed to get auth token');
           return;
@@ -195,9 +202,17 @@ function TunnelMonitorApp({ tunnelId, port }: TunnelMonitorProps) {
           onError: (err) => setError(err.message),
         });
 
+        // Unmounted between creating the client and connecting: close and stop.
+        if (cancelled) {
+          client.close();
+          return;
+        }
+
         await client.connect();
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Connection failed');
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : 'Connection failed');
+        }
       }
     };
 
@@ -208,6 +223,7 @@ function TunnelMonitorApp({ tunnelId, port }: TunnelMonitorProps) {
     }
 
     return () => {
+      cancelled = true;
       if (client) {
         client.close();
       }

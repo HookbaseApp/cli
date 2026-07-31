@@ -209,7 +209,7 @@ function Dashboard() {
     }
     if (input === 'r') {
       const now = Date.now();
-      if (now - lastRefreshRef.current < 30000) return;
+      if (now - lastRefreshRef.current < 2000) return;
       lastRefreshRef.current = now;
       fetchData();
     }

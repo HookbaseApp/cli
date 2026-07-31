@@ -380,7 +380,8 @@ export async function cronCreateCommand(options: {
     timezone,
     payload,
     headers,
-    timeoutMs: options.timeout,
+    // commander delivers --timeout as a string; parse so we send a real number.
+    timeoutMs: options.timeout !== undefined ? parseInt(String(options.timeout), 10) : undefined,
     groupId,
     useStaticIp: options.staticIp,
   });
@@ -543,7 +544,7 @@ export async function cronUpdateCommand(
       return;
     }
   }
-  if (options.timeout) updateData.timeoutMs = options.timeout;
+  if (options.timeout !== undefined) updateData.timeoutMs = parseInt(String(options.timeout), 10);
   if (options.active) updateData.isActive = true;
   if (options.inactive) updateData.isActive = false;
   if (options.staticIp !== undefined) updateData.useStaticIp = options.staticIp;
@@ -1075,9 +1076,10 @@ export async function cronStatusCommand(options: { json?: boolean }): Promise<vo
   const now = new Date();
   const oneHourLater = new Date(now.getTime() + 60 * 60 * 1000);
   const upcomingJobs = activeJobs.filter((j: any) => {
-    const nextRunAt = j.next_run_at || j.nextRunAt;
-    if (!nextRunAt) return false;
-    const nextRun = new Date(nextRunAt);
+    // API timestamps are UTC without a Z suffix — parseUTCDate handles that;
+    // a raw `new Date()` would misread them as local time for non-UTC users.
+    const nextRun = parseUTCDate(j.next_run_at || j.nextRunAt);
+    if (!nextRun) return false;
     return nextRun >= now && nextRun <= oneHourLater;
   });
 
@@ -1095,9 +1097,9 @@ export async function cronStatusCommand(options: { json?: boolean }): Promise<vo
     logger.log('');
 
     upcomingJobs
-      .sort((a: any, b: any) => new Date(a.next_run_at || a.nextRunAt).getTime() - new Date(b.next_run_at || b.nextRunAt).getTime())
+      .sort((a: any, b: any) => (parseUTCDate(a.next_run_at || a.nextRunAt)?.getTime() ?? 0) - (parseUTCDate(b.next_run_at || b.nextRunAt)?.getTime() ?? 0))
       .forEach((job: any) => {
-        const nextRun = new Date(job.next_run_at || job.nextRunAt);
+        const nextRun = parseUTCDate(job.next_run_at || job.nextRunAt)!;
         const diffMinutes = Math.round((nextRun.getTime() - now.getTime()) / (1000 * 60));
         logger.log(`  ${logger.cyan(job.name.padEnd(25))} in ${diffMinutes}m (${nextRun.toLocaleTimeString()})`);
       });

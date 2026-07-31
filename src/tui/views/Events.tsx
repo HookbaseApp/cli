@@ -22,7 +22,9 @@ function EventList({ events, onSelect }: {
     if (key.downArrow || input === 'j') {
       setSelectedIndex(prev => Math.min(events.length - 1, prev + 1));
     }
-    if (key.return && events.length > 0) {
+    // Guard on the item existing: selectedIndex can be stale (past the end)
+    // after the events prop shrinks, which would crash on `undefined.id`.
+    if (key.return && events[selectedIndex]) {
       onSelect(events[selectedIndex].id);
     }
   });

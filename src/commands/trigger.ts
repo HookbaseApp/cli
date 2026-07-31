@@ -37,6 +37,23 @@ export async function triggerCommand(options: TriggerOptions): Promise<void> {
   requireAuth();
 
   try {
+    // --print only needs a provider + event sample. Short-circuit before any
+    // source resolution/prompting so it works non-interactively (e.g. in CI).
+    if (options.print) {
+      if (!options.provider || !options.event) {
+        logger.error('--print requires --provider and --event');
+        return;
+      }
+      const printEvents = await api.getProviderEvents(options.provider);
+      const printPayload = printEvents.data?.samplePayloads?.[options.event];
+      if (!printPayload) {
+        logger.error(`No sample for ${options.provider} → ${options.event}`);
+        return;
+      }
+      console.log(JSON.stringify(printPayload, null, 2));
+      return;
+    }
+
     // 1. Resolve source
     let sourceId = options.source;
     let sourceName: string | undefined = options.source;
@@ -153,22 +170,6 @@ export async function triggerCommand(options: TriggerOptions): Promise<void> {
         message: 'Select an event type:',
         choices: haveSamples.map((e) => ({ name: e.type, value: e.type, description: e.description })),
       });
-    }
-
-    // 3. --print mode: don't send
-    if (options.print) {
-      if (!providerId || !eventType) {
-        logger.error('--print requires --provider and --event');
-        return;
-      }
-      const eventsResult = await api.getProviderEvents(providerId);
-      const payload = eventsResult.data?.samplePayloads?.[eventType];
-      if (!payload) {
-        logger.error(`No sample for ${providerId} → ${eventType}`);
-        return;
-      }
-      console.log(JSON.stringify(payload, null, 2));
-      return;
     }
 
     // 4. Send

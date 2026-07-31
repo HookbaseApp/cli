@@ -237,7 +237,16 @@ export class TunnelClient {
     if (filter) {
       const skipReason = await this.evaluateFilter(request, filter);
       if (skipReason) {
-        const skipStatus = filter.skipStatus ?? 204;
+        // Guard against a non-integer/out-of-range skipStatus (?? does NOT catch
+        // NaN): an invalid status would make the relay throw and return 504 for
+        // every filtered request. Fall back to 204.
+        const rawStatus = filter.skipStatus;
+        const skipStatus = Number.isInteger(rawStatus) && (rawStatus as number) >= 100 && (rawStatus as number) <= 599
+          ? (rawStatus as number)
+          : 204;
+        // Reason becomes an HTTP header value; strip CR/LF/control chars so a
+        // webhook-controlled event type can't produce an invalid header (→ 504).
+        const safeReason = skipReason.replace(/[\r\n\t\x00-\x1f\x7f]+/g, ' ').slice(0, 200);
         // 1xx/204/205/304 cannot legally carry a body. Omit body for those
         // statuses so the relay can construct a valid Response.
         const isNullBodyStatus = skipStatus === 204 || skipStatus === 205 || skipStatus === 304 || (skipStatus >= 100 && skipStatus < 200);
@@ -245,7 +254,7 @@ export class TunnelClient {
           id: request.id,
           status: skipStatus,
           headers: isNullBodyStatus
-            ? { 'x-hookbase-filtered': 'true', 'x-hookbase-skip-reason': skipReason.slice(0, 200) }
+            ? { 'x-hookbase-filtered': 'true', 'x-hookbase-skip-reason': safeReason }
             : { 'content-type': 'application/json', 'x-hookbase-filtered': 'true' },
           body: isNullBodyStatus ? null : JSON.stringify({ filtered: true, reason: skipReason }),
         };
@@ -291,6 +300,14 @@ export class TunnelClient {
             const headers: Record<string, string> = {};
 
             Object.entries(res.headers).forEach(([key, value]) => {
+              // We've buffered + stringified the body, so the original
+              // content-encoding/content-length/transfer-encoding no longer
+              // describe it — forwarding them makes the relay mislabel the body
+              // (e.g. "gzip" over already-decoded bytes). Drop them.
+              const lk = key.toLowerCase();
+              if (lk === 'content-encoding' || lk === 'content-length' || lk === 'transfer-encoding') {
+                return;
+              }
               if (typeof value === 'string') {
                 headers[key] = value;
               } else if (Array.isArray(value)) {

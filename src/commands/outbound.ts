@@ -24,11 +24,15 @@ function requireAuth(): boolean {
 
 function formatStatus(status: string): string {
   switch (status) {
+    // Outbound messages use `success`; `delivered` kept for forward-compat.
+    case 'success': return logger.green('success');
     case 'delivered': return logger.green('delivered');
     case 'pending': return logger.yellow('pending');
+    case 'awaiting_retry': return logger.yellow('awaiting_retry');
     case 'processing': return logger.cyan('processing');
     case 'failed': return logger.red('failed');
     case 'exhausted': return logger.red('exhausted');
+    case 'dlq': return logger.red('dlq');
     default: return logger.dimText(status);
   }
 }
@@ -89,7 +93,7 @@ export async function outboundListCommand(options: {
       m.id.substring(0, 12) + '...',
       m.event_type || m.eventType,
       formatStatus(m.status),
-      `${m.attempt_count ?? m.attemptCount ?? 0}/${m.max_attempts ?? m.maxAttempts ?? 5}`,
+      `${m.attempts ?? m.attempt_count ?? m.attemptCount ?? 0}/${m.max_attempts ?? m.maxAttempts ?? 5}`,
       new Date(m.created_at || m.createdAt).toLocaleString(),
     ])
   );
@@ -135,20 +139,23 @@ export async function outboundGetCommand(
   logger.log(`ID:            ${message.id}`);
   logger.log(`Event Type:    ${message.event_type || message.eventType}`);
   logger.log(`Status:        ${formatStatus(message.status)}`);
-  logger.log(`Attempts:      ${message.attempt_count ?? message.attemptCount ?? 0}/${message.max_attempts ?? message.maxAttempts ?? 5}`);
+  logger.log(`Attempts:      ${message.attempts ?? message.attempt_count ?? message.attemptCount ?? 0}/${message.max_attempts ?? message.maxAttempts ?? 5}`);
   logger.log(`Application:   ${message.application_id || message.applicationId}`);
   logger.log(`Endpoint:      ${message.endpoint_id || message.endpointId}`);
-  if (message.response_status || message.responseStatus) {
-    logger.log(`Response:      ${message.response_status || message.responseStatus}`);
+  const respStatus = message.lastResponseStatus ?? message.last_response_status ?? message.response_status ?? message.responseStatus;
+  if (respStatus) {
+    logger.log(`Response:      ${respStatus}`);
   }
-  if (message.error_message || message.errorMessage) {
-    logger.log(`Error:         ${logger.red(message.error_message || message.errorMessage)}`);
+  const errMsg = message.lastErrorMessage || message.last_error_message || message.error_message || message.errorMessage;
+  if (errMsg) {
+    logger.log(`Error:         ${logger.red(errMsg)}`);
   }
-  if (message.next_retry_at || message.nextRetryAt) {
-    logger.log(`Next Retry:    ${new Date(message.next_retry_at || message.nextRetryAt).toLocaleString()}`);
+  if (message.next_retry_at || message.nextRetryAt || message.next_attempt_at || message.nextAttemptAt) {
+    logger.log(`Next Retry:    ${new Date(message.next_retry_at || message.nextRetryAt || message.next_attempt_at || message.nextAttemptAt).toLocaleString()}`);
   }
-  if (message.delivered_at || message.deliveredAt) {
-    logger.log(`Delivered:     ${new Date(message.delivered_at || message.deliveredAt).toLocaleString()}`);
+  const completedAt = message.completed_at || message.completedAt || message.delivered_at || message.deliveredAt;
+  if (completedAt) {
+    logger.log(`Completed:     ${new Date(completedAt).toLocaleString()}`);
   }
   logger.log(`Created:       ${new Date(message.created_at || message.createdAt).toLocaleString()}`);
   logger.log('');
@@ -254,8 +261,8 @@ export async function dlqListCommand(options: {
     messages.map((m: any) => [
       m.id.substring(0, 12) + '...',
       m.event_type || m.eventType,
-      m.reason,
-      String(m.attempt_count ?? m.attemptCount ?? 0),
+      m.dlqReason || m.dlq_reason || m.reason || m.lastErrorType || '-',
+      String(m.attempts ?? m.attempt_count ?? m.attemptCount ?? 0),
       new Date(m.created_at || m.createdAt).toLocaleString(),
     ])
   );
@@ -299,17 +306,22 @@ export async function dlqGetCommand(
   logger.log(logger.bold('DLQ Message Details'));
   logger.log('');
   logger.log(`ID:              ${message.id}`);
-  logger.log(`Original Msg ID: ${message.original_message_id || message.originalMessageId}`);
+  const originalId = message.original_message_id || message.originalMessageId;
+  if (originalId) {
+    logger.log(`Original Msg ID: ${originalId}`);
+  }
   logger.log(`Event Type:      ${message.event_type || message.eventType}`);
-  logger.log(`Reason:          ${logger.red(message.reason)}`);
-  logger.log(`Attempts:        ${message.attempt_count ?? message.attemptCount ?? 0}`);
+  logger.log(`Reason:          ${logger.red(message.dlqReason || message.dlq_reason || message.lastErrorType || message.last_error_type || message.reason || 'unknown')}`);
+  logger.log(`Attempts:        ${message.attempts ?? message.attempt_count ?? message.attemptCount ?? 0}`);
   logger.log(`Application:     ${message.application_id || message.applicationId}`);
   logger.log(`Endpoint:        ${message.endpoint_id || message.endpointId}`);
-  if (message.error_message || message.errorMessage) {
-    logger.log(`Error:           ${message.error_message || message.errorMessage}`);
+  const dlqErr = message.lastErrorMessage || message.last_error_message || message.error_message || message.errorMessage;
+  if (dlqErr) {
+    logger.log(`Error:           ${dlqErr}`);
   }
-  if (message.last_response_status || message.lastResponseStatus) {
-    logger.log(`Last Response:   ${message.last_response_status || message.lastResponseStatus}`);
+  const dlqRespStatus = message.lastResponseStatus ?? message.last_response_status ?? message.responseStatus;
+  if (dlqRespStatus) {
+    logger.log(`Last Response:   ${dlqRespStatus}`);
   }
   logger.log(`Created:         ${new Date(message.created_at || message.createdAt).toLocaleString()}`);
   logger.log('');

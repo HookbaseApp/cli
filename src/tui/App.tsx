@@ -451,13 +451,15 @@ function App() {
   }, []);
 
   const lastRefreshRef = useRef(0);
-  const REFRESH_COOLDOWN_MS = 30000; // 2 second cooldown between refreshes
+  const REFRESH_COOLDOWN_MS = 2000; // 2 second cooldown between full manual refreshes
 
   const fetchData = useCallback(async (resource?: string | boolean) => {
     const isInitial = resource === true;
 
-    // Throttle manual refreshes (not initial loads)
-    if (!isInitial) {
+    // Throttle only full manual refreshes (the 'r' key). Targeted refreshes
+    // (resource is a string) are fired programmatically after a mutation and
+    // must never be dropped, or the create/delete/toggle looks like it failed.
+    if (!isInitial && typeof resource !== 'string') {
       const now = Date.now();
       if (now - lastRefreshRef.current < REFRESH_COOLDOWN_MS) {
         return;

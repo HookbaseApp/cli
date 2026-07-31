@@ -22,10 +22,17 @@ function formatDate(dateStr: string): string {
 
 function formatStatus(status: string): string {
   switch (status) {
+    // Inbound delivery enum: pending | delivered | failed | failed_over | schema_failed | retrying
+    case 'delivered':
+      return logger.green('delivered');
     case 'success':
       return logger.green('success');
     case 'failed':
       return logger.red('failed');
+    case 'schema_failed':
+      return logger.red('schema_failed');
+    case 'failed_over':
+      return logger.yellow('failed_over');
     case 'pending':
       return logger.yellow('pending');
     case 'retrying':
