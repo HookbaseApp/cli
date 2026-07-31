@@ -2,6 +2,7 @@
 
 import { createRequire } from 'module';
 import { Command } from 'commander';
+import updateNotifier from 'update-notifier';
 const require = createRequire(import.meta.url);
 const pkg = require('../package.json');
 import { loginCommand } from './commands/login.js';
@@ -12,7 +13,7 @@ import { dashboardCommand } from './commands/dashboard.js';
 import { triggerCommand } from './commands/trigger.js';
 import { tunnelsStartCommand } from './commands/tunnels.js';
 import { initCommand } from './commands/init.js';
-import { registerInboundGroup, registerSourcesCommands, registerDestinationsCommands, registerRoutesCommands, registerEventsCommands, registerDeliveriesCommands } from './commands/groups/inbound.js';
+import { registerInboundGroup, registerSourcesCommands, registerDestinationsCommands, registerRoutesCommands, registerTransformsCommands, registerSchemasCommands, registerFiltersCommands, registerNotificationChannelsCommands, registerEventsCommands, registerDeliveriesCommands } from './commands/groups/inbound.js';
 import { registerOutboundGroup, registerWebhooksCommands, registerEndpointsCommands, registerSendCommand, registerMessagesCommands, registerDlqCommands } from './commands/groups/outbound.js';
 import { registerToolsGroup, registerCronCommands, registerTunnelsCommands, registerApiKeysCommands } from './commands/groups/tools.js';
 import {
@@ -27,8 +28,44 @@ import {
   applicationsUpdateCommand,
   applicationsDeleteCommand,
 } from './commands/applications.js';
+import { upgradeCommand } from './commands/upgrade.js';
 import * as config from './lib/config.js';
 import * as logger from './lib/logger.js';
+
+// ============================================================================
+// Update Notification
+// ============================================================================
+// Throttled, cached, non-blocking check (a detached background process does the
+// actual npm-registry lookup). Only prints when a newer version is cached, on an
+// interactive TTY. update-notifier already suppresses itself in CI, when stdout
+// is not a TTY, and when NO_UPDATE_NOTIFIER / --no-update-notifier is set. We
+// additionally skip it for machine-readable (--json) output and for the
+// `upgrade`/`update` command itself (which reports versions on its own).
+{
+  // The root program's options (--json, -y/--yes) are all boolean, so the first
+  // non-dash argv token is the invoked subcommand. Match on that rather than
+  // `includes()` so we don't suppress the notice for e.g. `applications update`.
+  const argv = process.argv.slice(2);
+  const subcommand = argv.find((a) => !a.startsWith('-'));
+  const suppress =
+    argv.includes('--json') || subcommand === 'upgrade' || subcommand === 'update';
+  if (!suppress) {
+    try {
+      const notifier = updateNotifier({ pkg, updateCheckInterval: 1000 * 60 * 60 * 24 });
+      if (notifier.update) {
+        notifier.notify({
+          defer: false,
+          isGlobal: true,
+          message:
+            `Update available ${logger.dimText(notifier.update.current)} → ${logger.green(notifier.update.latest)}\n` +
+            `Run ${logger.cyan('hookbase upgrade')} to update`,
+        });
+      }
+    } catch {
+      // Never let an update check interfere with the CLI.
+    }
+  }
+}
 
 const program = new Command();
 
@@ -163,6 +200,19 @@ program
   .action(triggerCommand);
 
 // ============================================================================
+// Self-Update
+// ============================================================================
+
+program
+  .command('upgrade')
+  .alias('update')
+  .description('Update the CLI to the latest published version')
+  .option('--check', 'Only check whether a newer version is available')
+  .option('--dry-run', 'Print the command that would run without executing it')
+  .option('--json', 'Output as JSON')
+  .action(upgradeCommand);
+
+// ============================================================================
 // Configuration Commands
 // ============================================================================
 
@@ -212,6 +262,10 @@ function hide(cmd: Command): Command {
 hide(registerSourcesCommands(program));
 hide(registerDestinationsCommands(program)).alias('dest');
 hide(registerRoutesCommands(program));
+hide(registerTransformsCommands(program));
+hide(registerSchemasCommands(program));
+hide(registerFiltersCommands(program));
+hide(registerNotificationChannelsCommands(program));
 hide(registerEventsCommands(program));
 hide(registerDeliveriesCommands(program));
 

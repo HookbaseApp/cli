@@ -33,10 +33,23 @@ async function request<T>(
       body: body ? JSON.stringify(body) : undefined,
     });
 
-    const data = await response.json() as Record<string, unknown>;
+    // Read the body as text first: a non-JSON response (Cloudflare 502/504 HTML,
+    // an empty 204) must not throw a JSON-parse error that masks the real status.
+    const rawBody = await response.text();
+    let data: Record<string, unknown> = {};
+    if (rawBody) {
+      try {
+        data = JSON.parse(rawBody) as Record<string, unknown>;
+      } catch {
+        data = {};
+      }
+    }
 
     if (!response.ok) {
-      let errorMsg = (data.error as string) || (data.message as string) || 'Request failed';
+      let errorMsg =
+        (data.error as string) ||
+        (data.message as string) ||
+        `Request failed (HTTP ${response.status})`;
       if (data.details) {
         errorMsg += ` - ${JSON.stringify(data.details)}`;
       }
@@ -85,11 +98,19 @@ export async function verifyApiKey(apiKey: string): Promise<ApiResponse<VerifyAp
       },
     });
 
-    const data = await response.json() as Record<string, unknown>;
+    const rawBody = await response.text();
+    let data: Record<string, unknown> = {};
+    if (rawBody) {
+      try {
+        data = JSON.parse(rawBody) as Record<string, unknown>;
+      } catch {
+        data = {};
+      }
+    }
 
     if (!response.ok) {
       return {
-        error: (data.error as string) || 'Invalid API key',
+        error: (data.error as string) || (data.message as string) || `Invalid API key (HTTP ${response.status})`,
         status: response.status,
       };
     }
@@ -210,8 +231,18 @@ export async function createSource(
   provider?: string,
   options?: {
     description?: string;
+    signingSecret?: string;
     rejectInvalidSignatures?: boolean;
     rateLimitPerMinute?: number;
+    ipFilterMode?: 'none' | 'allowlist' | 'denylist' | 'both';
+    ipAllowlist?: string[];
+    ipDenylist?: string[];
+    encryptFields?: string[];
+    maskFields?: string[];
+    dedupEnabled?: boolean;
+    dedupStrategy?: string;
+    dedupWindowHours?: number;
+    dedupCustomHeader?: string;
     transientMode?: boolean;
     allowedMethods?: string[];
   }
@@ -221,8 +252,18 @@ export async function createSource(
     name,
     slug,
     description: options?.description,
+    signingSecret: options?.signingSecret,
     rejectInvalidSignatures: options?.rejectInvalidSignatures,
     rateLimitPerMinute: options?.rateLimitPerMinute,
+    ipFilterMode: options?.ipFilterMode,
+    ipAllowlist: options?.ipAllowlist,
+    ipDenylist: options?.ipDenylist,
+    encryptFields: options?.encryptFields,
+    maskFields: options?.maskFields,
+    dedupEnabled: options?.dedupEnabled,
+    dedupStrategy: options?.dedupStrategy,
+    dedupWindowHours: options?.dedupWindowHours,
+    dedupCustomHeader: options?.dedupCustomHeader,
     transientMode: options?.transientMode,
     allowedMethods: options?.allowedMethods,
   };
@@ -297,6 +338,31 @@ export async function getTestTemplates(): Promise<ApiResponse<{
   const org = getCurrentOrg();
   if (!org) return { error: 'No organization selected', status: 0 };
   return request('GET', `/api/organizations/${org.id}/testing/templates`);
+}
+
+// ============================================================================
+// Plan features (authoritative gating for advanced create flows)
+// ============================================================================
+
+export interface OrgFeatures {
+  plan: string;
+  features: Record<string, boolean>;
+  limits: {
+    maxSources: number;
+    maxDestinations: number;
+    maxRoutes: number;
+    maxTunnels: number;
+    customDomains: number;
+  };
+}
+
+/** Fetch the plan-gated feature map for the current org. The CLI uses this to
+ * decide which advanced options to offer at create time. Returns a 404 against
+ * an API too old to have the endpoint — callers degrade gracefully. */
+export async function getOrgFeatures(): Promise<ApiResponse<OrgFeatures>> {
+  const org = getCurrentOrg();
+  if (!org) return { error: 'No organization selected', status: 0 };
+  return request<OrgFeatures>('GET', `/api/organizations/${org.id}/features`);
 }
 
 // ============================================================================
@@ -389,7 +455,7 @@ export async function createDestination(data: {
   rateLimitPerMinute?: number;
   mockMode?: boolean;
   useStaticIp?: boolean;
-  type?: 'http' | 's3' | 'r2' | 'gcs' | 'azure_blob';
+  type?: 'http' | 'sqs' | 'eventbridge' | 'servicebus' | 'pubsub' | 'oci_queue' | 's3' | 'r2' | 'gcs' | 'azure_blob';
   config?: Record<string, unknown>;
   fieldMapping?: Array<{ source: string; target: string; type: string; default?: string }>;
   batchSize?: number;
@@ -525,11 +591,24 @@ export async function createRoute(data: {
   sourceId: string;
   destinationId: string;
   filterId?: string;
-  filterConditions?: { logic: 'AND' | 'OR'; conditions: FilterCondition[] };
+  // Inline filter: the API expects a conditions ARRAY plus a separate logic
+  // field (routes.ts POST reads filterConditions.length + filterLogic).
+  filterConditions?: FilterCondition[];
+  filterLogic?: 'AND' | 'OR';
   transformId?: string;
   schemaId?: string;
   priority?: number;
   isActive?: boolean;
+  failoverDestinationIds?: string[];
+  failoverAfterAttempts?: number;
+  circuitCooldownSeconds?: number;
+  circuitFailureThreshold?: number;
+  circuitProbeSuccessThreshold?: number;
+  notifyOnFailure?: boolean;
+  notifyOnSuccess?: boolean;
+  notifyOnRecovery?: boolean;
+  notifyEmails?: string;
+  failureThreshold?: number;
 }): Promise<ApiResponse<{ route: Route }>> {
 
   return request<{ route: Route }>('POST', `/api/routes`, {
@@ -538,10 +617,21 @@ export async function createRoute(data: {
     destinationId: data.destinationId,
     filterId: data.filterId,
     filterConditions: data.filterConditions,
+    filterLogic: data.filterLogic,
     transformId: data.transformId,
     schemaId: data.schemaId,
     priority: data.priority ?? 0,
     isActive: data.isActive ?? true,
+    failoverDestinationIds: data.failoverDestinationIds,
+    failoverAfterAttempts: data.failoverAfterAttempts,
+    circuitCooldownSeconds: data.circuitCooldownSeconds,
+    circuitFailureThreshold: data.circuitFailureThreshold,
+    circuitProbeSuccessThreshold: data.circuitProbeSuccessThreshold,
+    notifyOnFailure: data.notifyOnFailure,
+    notifyOnSuccess: data.notifyOnSuccess,
+    notifyOnRecovery: data.notifyOnRecovery,
+    notifyEmails: data.notifyEmails,
+    failureThreshold: data.failureThreshold,
   });
 }
 
@@ -851,18 +941,22 @@ export async function getTransform(transformId: string): Promise<ApiResponse<{ t
 
 export async function createTransform(data: {
   name: string;
-  type: 'jsonata' | 'javascript' | 'liquid' | 'xslt';
-  expression: string;
+  code: string;
+  transformType?: 'jsonata' | 'javascript' | 'liquid' | 'xslt';
+  description?: string;
   inputFormat?: 'json' | 'xml' | 'text';
   outputFormat?: 'json' | 'xml' | 'text';
 }): Promise<ApiResponse<{ transform: Transform }>> {
 
+  // Field names match the API contract (transforms.ts POST): code/transformType,
+  // NOT expression/type.
   return request<{ transform: Transform }>('POST', `/api/transforms`, {
     name: data.name,
-    type: data.type,
-    expression: data.expression,
-    input_format: data.inputFormat || 'json',
-    output_format: data.outputFormat || 'json',
+    description: data.description,
+    code: data.code,
+    transformType: data.transformType || 'jsonata',
+    inputFormat: data.inputFormat || 'json',
+    outputFormat: data.outputFormat || 'json',
   });
 }
 
@@ -959,6 +1053,90 @@ export async function testFilter(data: {
 }): Promise<ApiResponse<{ matches: boolean; details?: unknown }>> {
 
   return request<{ matches: boolean; details?: unknown }>('POST', `/api/filters/test`, data);
+}
+
+// ============================================================================
+// Schemas (JSON Schema validation)
+// ============================================================================
+
+export interface Schema {
+  id: string;
+  name: string;
+  slug?: string;
+  description?: string | null;
+  jsonSchema?: unknown;
+  routeCount?: number;
+  createdAt?: string;
+}
+
+export async function getSchemas(): Promise<ApiResponse<{ schemas: Schema[] }>> {
+  return request<{ schemas: Schema[] }>('GET', `/api/schemas`);
+}
+
+export async function getSchema(schemaId: string): Promise<ApiResponse<{ schema: Schema }>> {
+  return request<{ schema: Schema }>('GET', `/api/schemas/${schemaId}`);
+}
+
+export async function createSchema(data: {
+  name: string;
+  jsonSchema: unknown;
+  description?: string;
+}): Promise<ApiResponse<{ schema: Schema }>> {
+  return request<{ schema: Schema }>('POST', `/api/schemas`, {
+    name: data.name,
+    description: data.description,
+    jsonSchema: data.jsonSchema,
+  });
+}
+
+export async function deleteSchema(schemaId: string): Promise<ApiResponse<{ success: boolean }>> {
+  return request<{ success: boolean }>('DELETE', `/api/schemas/${schemaId}`);
+}
+
+// ============================================================================
+// Notification channels
+// ============================================================================
+
+export interface NotificationChannel {
+  id: string;
+  name: string;
+  type: 'email' | 'slack' | 'webhook' | 'teams' | 'pagerduty' | 'discord';
+  config?: Record<string, unknown>;
+  isActive?: boolean;
+}
+
+export async function getNotificationChannels(): Promise<ApiResponse<{ channels: NotificationChannel[] }>> {
+  return request<{ channels: NotificationChannel[] }>('GET', `/api/notification-channels`);
+}
+
+export async function createNotificationChannel(data: {
+  name: string;
+  type: NotificationChannel['type'];
+  config: Record<string, unknown>;
+}): Promise<ApiResponse<{ channel: NotificationChannel }>> {
+  return request<{ channel: NotificationChannel }>('POST', `/api/notification-channels`, {
+    name: data.name,
+    type: data.type,
+    config: data.config,
+  });
+}
+
+/** Link a notification channel to a route (called after route creation). */
+export async function linkNotificationChannel(
+  channelId: string,
+  data: {
+    routeId: string;
+    notifyOnFailure?: boolean;
+    notifyOnSuccess?: boolean;
+    notifyOnRecovery?: boolean;
+    notifyOnCircuitOpen?: boolean;
+  },
+): Promise<ApiResponse<{ success: boolean }>> {
+  return request<{ success: boolean }>('POST', `/api/notification-channels/${channelId}/routes`, data);
+}
+
+export async function deleteNotificationChannel(channelId: string): Promise<ApiResponse<{ success: boolean }>> {
+  return request<{ success: boolean }>('DELETE', `/api/notification-channels/${channelId}`);
 }
 
 // ============================================================================
@@ -1294,11 +1472,11 @@ export interface WebhookEndpoint {
   url: string;
   description?: string;
   secret?: string;
-  event_types: string[];
+  event_types?: string[];
   headers?: Record<string, string>;
   rate_limit_per_minute?: number;
   timeout_ms?: number;
-  is_active: number;
+  is_active?: number;
   circuit_state?: 'closed' | 'open' | 'half_open';
   failure_count?: number;
   message_count?: number;
@@ -1306,6 +1484,13 @@ export interface WebhookEndpoint {
   use_static_ip?: number;
   created_at: string;
   updated_at: string;
+  // API-native (camelCase) fields actually returned by the endpoint routes.
+  isDisabled?: boolean;
+  isActive?: boolean;
+  timeoutSeconds?: number;
+  rateLimitPerSecond?: number;
+  circuitState?: 'closed' | 'open' | 'half_open';
+  useStaticIp?: boolean;
 }
 
 export async function getWebhookEndpoints(appId?: string): Promise<ApiResponse<{ endpoints: WebhookEndpoint[] }>> {
@@ -1323,10 +1508,10 @@ export async function createWebhookEndpoint(data: {
   applicationId: string;
   url: string;
   description?: string;
-  eventTypes?: string[];
   headers?: Record<string, string>;
-  rateLimitPerMinute?: number;
-  timeoutMs?: number;
+  // API-native units: requests/second (0 = unlimited) and seconds (1-120).
+  rateLimitPerSecond?: number;
+  timeoutSeconds?: number;
   useStaticIp?: boolean;
 }): Promise<ApiResponse<{ endpoint: WebhookEndpoint; secret: string }>> {
 
@@ -1334,10 +1519,10 @@ export async function createWebhookEndpoint(data: {
     applicationId: data.applicationId,
     url: data.url,
     description: data.description,
-    eventTypes: data.eventTypes || ['*'],
     headers: data.headers,
-    rateLimitPerMinute: data.rateLimitPerMinute,
-    timeoutMs: data.timeoutMs || 30000,
+    // Only send when set; the API defaults timeout to 30s / rate limit to unlimited.
+    rateLimitPerSecond: data.rateLimitPerSecond,
+    timeoutSeconds: data.timeoutSeconds,
     useStaticIp: data.useStaticIp,
   });
 }
@@ -1347,16 +1532,30 @@ export async function updateWebhookEndpoint(
   data: {
     url?: string;
     description?: string;
-    eventTypes?: string[];
     headers?: Record<string, string>;
-    rateLimitPerMinute?: number;
-    timeoutMs?: number;
+    // API-native units: requests/second (0 = unlimited) and seconds (1-120).
+    rateLimitPerSecond?: number;
+    timeoutSeconds?: number;
     isActive?: boolean;
     useStaticIp?: boolean;
   }
 ): Promise<ApiResponse<{ endpoint: WebhookEndpoint }>> {
 
-  return request<{ endpoint: WebhookEndpoint }>('PATCH', `/api/webhook-endpoints/${endpointId}`, data);
+  // The API update schema speaks `isDisabled`, not `isActive`. Translate so
+  // `--active/--inactive` actually take effect instead of being silently dropped.
+  const body: Record<string, unknown> = {
+    url: data.url,
+    description: data.description,
+    headers: data.headers,
+    rateLimitPerSecond: data.rateLimitPerSecond,
+    timeoutSeconds: data.timeoutSeconds,
+    useStaticIp: data.useStaticIp,
+  };
+  if (data.isActive !== undefined) {
+    body.isDisabled = !data.isActive;
+  }
+
+  return request<{ endpoint: WebhookEndpoint }>('PATCH', `/api/webhook-endpoints/${endpointId}`, body);
 }
 
 export async function deleteWebhookEndpoint(endpointId: string): Promise<ApiResponse<{ success: boolean }>> {
@@ -1457,7 +1656,8 @@ export async function getWebhookMessage(messageId: string): Promise<ApiResponse<
 
 export async function retryWebhookMessage(messageId: string): Promise<ApiResponse<{ message: WebhookMessage }>> {
 
-  return request<{ message: WebhookMessage }>('POST', `/api/outbound-messages/${messageId}/retry`);
+  // The API exposes `/replay` (there is no `/retry` route for a single message).
+  return request<{ message: WebhookMessage }>('POST', `/api/outbound-messages/${messageId}/replay`);
 }
 
 // ============================================================================
@@ -1488,16 +1688,17 @@ export async function getDlqMessages(options?: {
 }): Promise<ApiResponse<{ messages: DlqMessage[]; total: number; hasMore: boolean }>> {
 
   const params = new URLSearchParams();
-  params.set('status', 'dlq'); // Filter for DLQ messages
   if (options?.limit) params.set('limit', String(options.limit));
   if (options?.offset) params.set('offset', String(options.offset));
   if (options?.applicationId) params.set('applicationId', options.applicationId);
   if (options?.endpointId) params.set('endpointId', options.endpointId);
 
+  // Use the dedicated DLQ endpoint: it returns `dlqReason` / `lastError*`, which
+  // the generic `?status=dlq` list selection does not include.
   const queryString = params.toString();
   return request<{ messages: DlqMessage[]; total: number; hasMore: boolean }>(
     'GET',
-    `/api/outbound-messages?${queryString}`
+    `/api/outbound-messages/dlq/messages${queryString ? `?${queryString}` : ''}`
   );
 }
 
@@ -1529,6 +1730,6 @@ export async function bulkRetryDlqMessages(messageIds: string[]): Promise<ApiRes
 
 export async function deleteDlqMessage(messageId: string): Promise<ApiResponse<{ success: boolean }>> {
 
-  // Note: Delete may not be supported - check API
-  return request<{ success: boolean }>('DELETE', `/api/outbound-messages/${messageId}`);
+  // DLQ archive/discard lives under /dlq/:id (there is no DELETE /:id route).
+  return request<{ success: boolean }>('DELETE', `/api/outbound-messages/dlq/${messageId}`);
 }

@@ -1,8 +1,9 @@
-import { input, confirm, select } from '@inquirer/prompts';
+import { input, confirm, select, number } from '@inquirer/prompts';
 import { ExitPromptError } from '@inquirer/core';
 import * as api from '../lib/api.js';
 import * as config from '../lib/config.js';
 import * as logger from '../lib/logger.js';
+import { askAdvanced, gatedPrompt, ensureFeature, loadFeatures } from '../lib/advanced.js';
 
 /** Helper to check if an error is a prompt cancellation (Ctrl+C) */
 function isPromptCancelled(error: unknown): boolean {
@@ -29,6 +30,16 @@ function parseMethods(raw: string): string[] {
   }
   return valid;
 }
+
+/** Split a comma-separated flag value into a trimmed, non-empty string array
+ * (undefined when the input is undefined; undefined when nothing is left). */
+function parseCsv(raw?: string): string[] | undefined {
+  if (raw === undefined) return undefined;
+  const items = raw.split(',').map((s) => s.trim()).filter(Boolean);
+  return items.length > 0 ? items : undefined;
+}
+
+const IP_FILTER_MODES = ['none', 'allowlist', 'denylist', 'both'] as const;
 
 const PROVIDERS = [
   { name: 'Generic (no signature verification)', value: '' },
@@ -103,12 +114,84 @@ export async function sourcesListCommand(options: { json?: boolean }): Promise<v
   logger.dim(`  ${apiUrl}/ingest/${org?.slug}/<source-slug>`);
 }
 
+/** Interactive advanced sub-prompts for a source, each gated by plan feature. */
+async function runSourceAdvancedWizard(
+  adv: NonNullable<Parameters<typeof api.createSource>[3]>,
+  provider?: string,
+): Promise<void> {
+  // Signature verification (only meaningful when a provider is configured)
+  if (provider && provider.length > 0 && adv.rejectInvalidSignatures === undefined) {
+    adv.rejectInvalidSignatures = await confirm({
+      message: 'Reject requests whose signature fails verification?',
+      default: false,
+    });
+  }
+
+  // Rate limiting (paid plans)
+  await gatedPrompt('rate_limits', 'Rate limiting', async () => {
+    const rl = await number({
+      message: 'Rate limit (requests/min, blank = unlimited):',
+      min: 1, max: 100000, required: false,
+    });
+    if (rl) adv.rateLimitPerMinute = rl;
+  }, undefined);
+
+  // IP filtering (paid plans)
+  await gatedPrompt('ip_filtering', 'IP filtering', async () => {
+    const mode = await select({
+      message: 'IP filter mode:',
+      choices: [
+        { name: 'None', value: 'none' },
+        { name: 'Allowlist (only these IPs)', value: 'allowlist' },
+        { name: 'Denylist (block these IPs)', value: 'denylist' },
+        { name: 'Both', value: 'both' },
+      ],
+      default: 'none',
+    });
+    if (mode !== 'none') {
+      adv.ipFilterMode = mode as 'allowlist' | 'denylist' | 'both';
+      if (mode === 'allowlist' || mode === 'both') {
+        adv.ipAllowlist = parseCsv(await input({ message: 'Allowlist IPs/CIDRs (comma-separated):' }));
+      }
+      if (mode === 'denylist' || mode === 'both') {
+        adv.ipDenylist = parseCsv(await input({ message: 'Denylist IPs/CIDRs (comma-separated):' }));
+      }
+    }
+  }, undefined);
+
+  // Field encryption/masking (Pro+)
+  await gatedPrompt('field_encryption', 'Field encryption/masking', async () => {
+    adv.encryptFields = parseCsv(await input({ message: 'Fields to encrypt (dot-paths, comma-separated, blank = none):' }));
+    adv.maskFields = parseCsv(await input({ message: 'Fields to mask (dot-paths, comma-separated, blank = none):' }));
+  }, undefined);
+
+  // Deduplication (ungated)
+  if (adv.dedupEnabled === undefined) {
+    const dedup = await confirm({ message: 'Enable event deduplication?', default: false });
+    if (dedup) {
+      adv.dedupEnabled = true;
+      const hrs = await number({ message: 'Dedup window (hours, 1-168):', min: 1, max: 168, default: 24, required: false });
+      if (hrs) adv.dedupWindowHours = hrs;
+    }
+  }
+}
+
 export async function sourcesCreateCommand(options: {
   name?: string;
   slug?: string;
   provider?: string;
+  description?: string;
   transient?: boolean;
   methods?: string;
+  rateLimit?: string;
+  ipFilterMode?: string;
+  ipAllowlist?: string;
+  ipDenylist?: string;
+  encryptFields?: string;
+  maskFields?: string;
+  rejectInvalidSignatures?: boolean;
+  dedup?: boolean;
+  dedupWindow?: string;
   yes?: boolean;
   json?: boolean;
 }): Promise<void> {
@@ -117,6 +200,55 @@ export async function sourcesCreateCommand(options: {
   let name = options.name;
   let slug = options.slug;
   let provider = options.provider;
+
+  // Advanced config assembled from flags and/or the interactive wizard.
+  const adv: NonNullable<Parameters<typeof api.createSource>[3]> = {};
+  if (options.description) adv.description = options.description;
+  if (options.transient !== undefined) adv.transientMode = options.transient;
+  if (options.methods !== undefined) adv.allowedMethods = parseMethods(options.methods);
+  if (options.rejectInvalidSignatures) adv.rejectInvalidSignatures = true;
+  if (options.dedup) adv.dedupEnabled = true;
+  if (options.dedupWindow) adv.dedupWindowHours = parseInt(options.dedupWindow, 10);
+
+  // Feature-gated flags — validate against the plan before doing anything.
+  const gatedFlagUsed =
+    options.rateLimit !== undefined || options.ipFilterMode !== undefined ||
+    options.ipAllowlist !== undefined || options.ipDenylist !== undefined ||
+    options.encryptFields !== undefined || options.maskFields !== undefined;
+
+  const anyAdvancedFlag = gatedFlagUsed || options.description !== undefined ||
+    !!options.rejectInvalidSignatures || !!options.dedup || options.dedupWindow !== undefined;
+
+  if (gatedFlagUsed) {
+    await loadFeatures();
+    if (options.rateLimit !== undefined) {
+      if (!ensureFeature('rate_limits', 'Rate limits')) return;
+      adv.rateLimitPerMinute = parseInt(options.rateLimit, 10);
+    }
+    const ipAllow = parseCsv(options.ipAllowlist);
+    const ipDeny = parseCsv(options.ipDenylist);
+    if (options.ipFilterMode !== undefined || ipAllow || ipDeny) {
+      if (!ensureFeature('ip_filtering', 'IP filtering')) return;
+      if (options.ipFilterMode !== undefined) {
+        if (!(IP_FILTER_MODES as readonly string[]).includes(options.ipFilterMode)) {
+          logger.error(`Invalid --ip-filter-mode "${options.ipFilterMode}" (valid: ${IP_FILTER_MODES.join(', ')})`);
+          return;
+        }
+        adv.ipFilterMode = options.ipFilterMode as typeof IP_FILTER_MODES[number];
+      } else {
+        adv.ipFilterMode = ipAllow && ipDeny ? 'both' : ipAllow ? 'allowlist' : 'denylist';
+      }
+      if (ipAllow) adv.ipAllowlist = ipAllow;
+      if (ipDeny) adv.ipDenylist = ipDeny;
+    }
+    const enc = parseCsv(options.encryptFields);
+    const mask = parseCsv(options.maskFields);
+    if (enc || mask) {
+      if (!ensureFeature('field_encryption', 'Field encryption/masking')) return;
+      if (enc) adv.encryptFields = enc;
+      if (mask) adv.maskFields = mask;
+    }
+  }
 
   // Interactive mode - wrapped in try-catch to handle Ctrl+C gracefully
   try {
@@ -146,14 +278,21 @@ export async function sourcesCreateCommand(options: {
         choices: PROVIDERS,
       });
 
-      if (options.transient === undefined) {
-        options.transient = await confirm({
+      if (adv.transientMode === undefined) {
+        adv.transientMode = await confirm({
           message: 'Enable transient mode? (payloads are not stored)',
           default: false,
         });
       }
     } else {
       slug = slug || name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    }
+
+    // Advanced wizard — only in the fully-interactive path (skipped when -n,
+    // --yes, or any advanced flag was already supplied).
+    if (await askAdvanced('source', options.yes || anyAdvancedFlag || !!options.name)) {
+      await loadFeatures();
+      await runSourceAdvancedWizard(adv, provider);
     }
 
     if (!options.yes && !options.name) {
@@ -176,10 +315,7 @@ export async function sourcesCreateCommand(options: {
   }
 
   const spinner = logger.spinner('Creating source...');
-  const result = await api.createSource(name!, slug!, provider, {
-    transientMode: options.transient,
-    allowedMethods: options.methods !== undefined ? parseMethods(options.methods) : undefined,
-  });
+  const result = await api.createSource(name!, slug!, provider, adv);
 
   if (result.error) {
     spinner.fail('Failed to create source');

@@ -8,6 +8,24 @@ The official CLI for [Hookbase](https://hookbase.app) - manage webhooks, create 
 npm install -g @hookbase/cli
 ```
 
+## Updating
+
+The CLI checks for a newer version once a day (in the background, non-blocking) and
+prints a short notice when one is available. To update:
+
+```bash
+hookbase upgrade            # update to the latest published version
+hookbase upgrade --check    # only report whether an update is available
+hookbase upgrade --dry-run  # if an update exists, print the install command instead of running it
+```
+
+`upgrade` auto-detects how the CLI was installed (npm, pnpm, yarn, bun, or volta)
+and runs the matching global-install command.
+
+To silence the update notice, set `NO_UPDATE_NOTIFIER=1`. Notices are also
+automatically suppressed in CI, when output is piped (non-TTY), and for
+`--json` output.
+
 ## Quick Start
 
 ```bash
