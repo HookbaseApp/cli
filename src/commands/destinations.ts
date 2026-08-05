@@ -152,10 +152,38 @@ async function runDestinationAdvancedWizard(
   const timeout = await number({ message: 'Request timeout (ms, 1000-60000):', min: 1000, max: 60000, default: 30000, required: false });
   if (timeout) dest.timeoutMs = timeout;
 
-  // Rate limiting (paid)
-  await gatedPrompt('rate_limits', 'Rate limiting', async () => {
-    const rl = await number({ message: 'Rate limit (requests/min, blank = unlimited):', min: 1, max: 100000, required: false });
-    if (rl) dest.rateLimitPerMinute = rl;
+  // Throttling (paid)
+  await gatedPrompt('throttling', 'Throttling', async () => {
+    const mode = await select({
+      message: 'Throttle mode:',
+      choices: [
+        { name: 'Off (no throttling)', value: 'off' },
+        { name: 'Rate limit (requests per time unit)', value: 'rate' },
+        { name: 'Concurrency limit (max in-flight requests)', value: 'concurrency' },
+      ],
+      default: 'off',
+    });
+    if (mode === 'off') return;
+
+    if (mode === 'rate') {
+      const rateLimit = await number({ message: 'Rate limit (requests):', min: 1, max: 100000, required: true });
+      const rateUnit = await select({
+        message: 'Per:',
+        choices: [
+          { name: 'Second', value: 'second' },
+          { name: 'Minute', value: 'minute' },
+          { name: 'Hour', value: 'hour' },
+        ],
+        default: 'minute',
+      });
+      dest.throttle = { mode: 'rate', rateLimit, rateUnit: rateUnit as 'second' | 'minute' | 'hour' };
+    } else {
+      const maxConcurrency = await number({ message: 'Max concurrency (in-flight requests):', min: 1, max: 1000, required: true });
+      dest.throttle = { mode: 'concurrency', maxConcurrency };
+    }
+
+    const queueLimit = await number({ message: 'Queue depth limit (blank = no backpressure threshold):', min: 1, max: 100000, required: false });
+    if (queueLimit && dest.throttle) dest.throttle.queueLimit = queueLimit;
   }, undefined);
 
   // Static IP delivery (Pro+)
@@ -192,7 +220,11 @@ export async function destinationsCreateCommand(options: {
   authUser?: string;
   authPass?: string;
   timeout?: string;
-  rateLimit?: string;
+  throttleMode?: string;
+  throttleRate?: string;
+  throttleUnit?: string;
+  throttleConcurrency?: string;
+  throttleQueueLimit?: string;
   type?: string;
   config?: string;
   batchSize?: string;
@@ -237,20 +269,51 @@ export async function destinationsCreateCommand(options: {
 
   // Feature-gated flags — validate against the plan up front.
   const gatedFlagUsed =
-    options.rateLimit !== undefined || options.staticIp === true ||
+    options.throttleMode !== undefined || options.staticIp === true ||
     (options.type !== undefined && options.type !== 'http');
   const anyAdvancedFlag = gatedFlagUsed || options.staticIp === false ||
     !!flagHeaders || options.authType !== undefined || options.timeout !== undefined ||
     options.batchSize !== undefined || options.batchWindow !== undefined ||
-    options.fieldMapping !== undefined || options.config !== undefined;
+    options.fieldMapping !== undefined || options.config !== undefined ||
+    options.throttleRate !== undefined || options.throttleUnit !== undefined ||
+    options.throttleConcurrency !== undefined || options.throttleQueueLimit !== undefined;
 
   if (options.staticIp === false) dest.useStaticIp = false; // --no-static-ip (ungated: turning it OFF)
 
   if (gatedFlagUsed) {
     await loadFeatures();
-    if (options.rateLimit !== undefined) {
-      if (!ensureFeature('rate_limits', 'Rate limits')) return;
-      dest.rateLimitPerMinute = parseInt(options.rateLimit, 10);
+    if (options.throttleMode !== undefined) {
+      if (!ensureFeature('throttling', 'Throttling')) return;
+      const mode = options.throttleMode;
+      if (mode !== 'off' && mode !== 'rate' && mode !== 'concurrency') {
+        logger.error(`Invalid --throttle-mode "${mode}" (use off|rate|concurrency)`);
+        return;
+      }
+      if (mode === 'off') {
+        dest.throttle = { mode: 'off' };
+      } else if (mode === 'rate') {
+        const rateLimit = options.throttleRate ? parseInt(options.throttleRate, 10) : undefined;
+        if (!rateLimit) {
+          logger.error('--throttle-rate is required when --throttle-mode is "rate"');
+          return;
+        }
+        const rateUnit = options.throttleUnit || 'minute';
+        if (rateUnit !== 'second' && rateUnit !== 'minute' && rateUnit !== 'hour') {
+          logger.error(`Invalid --throttle-unit "${rateUnit}" (use second|minute|hour)`);
+          return;
+        }
+        dest.throttle = { mode: 'rate', rateLimit, rateUnit };
+      } else {
+        const maxConcurrency = options.throttleConcurrency ? parseInt(options.throttleConcurrency, 10) : undefined;
+        if (!maxConcurrency) {
+          logger.error('--throttle-concurrency is required when --throttle-mode is "concurrency"');
+          return;
+        }
+        dest.throttle = { mode: 'concurrency', maxConcurrency };
+      }
+      if (dest.throttle.mode !== 'off' && options.throttleQueueLimit) {
+        dest.throttle.queueLimit = parseInt(options.throttleQueueLimit, 10);
+      }
     }
     if (options.staticIp === true) {
       if (!ensureFeature('static_ip', 'Static IP delivery')) return;

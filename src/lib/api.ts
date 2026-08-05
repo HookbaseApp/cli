@@ -417,7 +417,13 @@ export interface Destination {
   auth_type: 'none' | 'basic' | 'bearer' | 'api_key' | 'custom_header';
   auth_config?: Record<string, string>;
   timeout_ms?: number;
-  rate_limit_per_minute?: number;
+  // GET responses (list + single) return these flat and camelCase (unlike the
+  // nested `throttle: {...}` shape used in create/update request bodies).
+  throttleMode?: 'off' | 'rate' | 'concurrency';
+  throttleRateLimit?: number | null;
+  throttleRateUnit?: 'second' | 'minute' | 'hour' | null;
+  throttleMaxConcurrency?: number | null;
+  throttleQueueLimit?: number | null;
   mock_mode?: boolean;
   is_active: number;
   delivery_count?: number;
@@ -452,7 +458,14 @@ export async function createDestination(data: {
   authType?: 'none' | 'basic' | 'bearer' | 'api_key' | 'custom_header';
   authConfig?: Record<string, string>;
   timeoutMs?: number;
-  rateLimitPerMinute?: number;
+  // Gated [throttling]
+  throttle?: {
+    mode: 'off' | 'rate' | 'concurrency';
+    rateLimit?: number | null;
+    rateUnit?: 'second' | 'minute' | 'hour' | null;
+    maxConcurrency?: number | null;
+    queueLimit?: number | null;
+  } | null;
   mockMode?: boolean;
   useStaticIp?: boolean;
   type?: 'http' | 'sqs' | 'eventbridge' | 'servicebus' | 'pubsub' | 'oci_queue' | 's3' | 'r2' | 'gcs' | 'azure_blob';
@@ -474,7 +487,7 @@ export async function createDestination(data: {
     authType: data.authType || 'none',
     authConfig: data.authConfig,
     timeoutMs: data.timeoutMs || 30000,
-    rateLimitPerMinute: data.rateLimitPerMinute,
+    throttle: data.throttle,
     useStaticIp: data.useStaticIp,
     type: data.type || 'http',
     config: data.config,
@@ -494,7 +507,14 @@ export async function updateDestination(
     authType?: string;
     authConfig?: Record<string, string>;
     timeoutMs?: number;
-    rateLimitPerMinute?: number;
+    // Gated [throttling]
+    throttle?: {
+      mode: 'off' | 'rate' | 'concurrency';
+      rateLimit?: number | null;
+      rateUnit?: 'second' | 'minute' | 'hour' | null;
+      maxConcurrency?: number | null;
+      queueLimit?: number | null;
+    } | null;
     mockMode?: boolean;
     isActive?: boolean;
     useStaticIp?: boolean;
@@ -512,7 +532,7 @@ export async function updateDestination(
     authType: data.authType,
     authConfig: data.authConfig,
     timeoutMs: data.timeoutMs,
-    rateLimitPerMinute: data.rateLimitPerMinute,
+    throttle: data.throttle,
     isActive: data.isActive,
     useStaticIp: data.useStaticIp,
     fieldMapping: data.fieldMapping,
