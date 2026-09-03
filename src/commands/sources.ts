@@ -41,6 +41,9 @@ function parseCsv(raw?: string): string[] | undefined {
 
 const IP_FILTER_MODES = ['none', 'allowlist', 'denylist', 'both'] as const;
 
+// Pinned to VALID_PROVIDERS in api/src/routes/sources.ts — picking anything else 400s with a
+// bare "Invalid input" on create. SendGrid, Mailgun, Paddle and Linear used to be offered here
+// and rejected by every one of them; add a provider to both places at once, not just this list.
 const PROVIDERS = [
   { name: 'Generic (no signature verification)', value: '' },
   { name: 'GitHub', value: 'github' },
@@ -48,10 +51,6 @@ const PROVIDERS = [
   { name: 'Shopify', value: 'shopify' },
   { name: 'Slack', value: 'slack' },
   { name: 'Twilio', value: 'twilio' },
-  { name: 'SendGrid', value: 'sendgrid' },
-  { name: 'Mailgun', value: 'mailgun' },
-  { name: 'Paddle', value: 'paddle' },
-  { name: 'Linear', value: 'linear' },
 ];
 
 function requireAuth(): boolean {
