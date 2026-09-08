@@ -73,10 +73,18 @@ async function request<T>(
 // ============================================================================
 
 export interface VerifyApiKeyResponse {
-  user: {
+  // GET /auth/me returns exactly one of these two depending on how the request authenticated.
+  // An API key (the only credential `hookbase login` accepts) has no user identity of its own —
+  // see the `if (apiKey)` branch in api/src/routes/auth.ts — so `user` is absent in that case.
+  user?: {
     id: string;
     email: string;
     displayName: string;
+  };
+  apiKey?: {
+    id: string;
+    name: string;
+    scopes: string[];
   };
   organizations: Array<{
     id: string;

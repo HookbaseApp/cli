@@ -78,10 +78,24 @@ export async function loginCommand(): Promise<void> {
       return;
     }
 
-    const { user, organizations } = result.data;
+    const { user, apiKey: verifiedKey, organizations } = result.data;
+
+    // API keys (the only credential this command accepts — see the whr_ prefix check above)
+    // have no user identity of their own; /auth/me reflects that by omitting `user` entirely
+    // for API-key auth (api/src/routes/auth.ts). Fall back to the key's own name/id so
+    // getCurrentUser() still has something non-null to store and display.
+    const identityId = user?.id ?? verifiedKey?.id;
+    const identityLabel = user?.email ?? verifiedKey?.name ?? 'API key authentication';
+    const identityDisplayName = user?.displayName ?? verifiedKey?.name ?? identityLabel;
+
+    if (!identityId) {
+      spinner.fail('Invalid API key');
+      logger.error('Could not verify API key');
+      return;
+    }
 
     // Save credentials
-    config.setAuth(apiKey.trim(), user.id, user.email, user.displayName);
+    config.setAuth(apiKey.trim(), identityId, identityLabel, identityDisplayName);
 
     // Set first organization as default
     if (organizations.length > 0) {
@@ -89,7 +103,7 @@ export async function loginCommand(): Promise<void> {
       config.setCurrentOrg(org.id, org.slug);
     }
 
-    spinner.succeed(`Logged in as ${user.email}`);
+    spinner.succeed(user ? `Logged in as ${identityLabel}` : `Logged in with API key "${identityLabel}"`);
 
     // Show organizations
     if (organizations.length > 0) {
