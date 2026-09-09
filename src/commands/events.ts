@@ -19,6 +19,21 @@ function formatDate(dateStr: string): string {
   return date.toLocaleString();
 }
 
+// event.headers comes back from the API as a JSON-encoded string (not a parsed
+// object) — iterating it directly with Object.entries() treats the string as
+// array-like and yields one entry per character. Parse it first.
+function parseHeaders(headers: unknown): Record<string, string> {
+  if (!headers) return {};
+  if (typeof headers === 'string') {
+    try {
+      return JSON.parse(headers);
+    } catch {
+      return {};
+    }
+  }
+  return headers as Record<string, string>;
+}
+
 function formatStatus(status?: string): string {
   switch (status) {
     case 'delivered':
@@ -129,10 +144,11 @@ export async function eventsGetCommand(
   logger.log(`Signature: ${sigValid === true ? logger.green('valid') : sigValid === false ? logger.red('invalid') : logger.dimText('not verified')}`);
   logger.log(`Received:  ${formatDate(event.received_at || event.receivedAt || '')}`);
 
-  if (event.headers && Object.keys(event.headers).length > 0) {
+  const headers = parseHeaders(event.headers);
+  if (Object.keys(headers).length > 0) {
     logger.log('');
     logger.log(logger.bold('Headers:'));
-    for (const [key, value] of Object.entries(event.headers)) {
+    for (const [key, value] of Object.entries(headers)) {
       logger.log(`  ${key}: ${value}`);
     }
   }
