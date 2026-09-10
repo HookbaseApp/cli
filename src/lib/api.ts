@@ -1,9 +1,41 @@
-import { getApiUrl, getAuthToken, getCurrentOrg } from './config.js';
+import {
+  getApiUrl,
+  getAuthToken,
+  getCurrentOrg,
+  getSessionAccessToken,
+  getSessionRefreshToken,
+  getSessionUser,
+  setSession,
+  clearSession,
+  isAuthenticated,
+  hasSession,
+} from './config.js';
 
 interface ApiResponse<T> {
   data?: T;
   error?: string;
   status: number;
+}
+
+// Resource routes are mounted twice server-side: org-implicit (/api/<resource>,
+// org inferred from the API key) and org-explicit (/api/organizations/:orgId/<resource>).
+// A session token isn't scoped to one org the way a key is — the org-access
+// middleware requires an explicit orgId in the URL for session/JWT auth — so a
+// session-authenticated call has to go through the org-explicit form instead.
+// This is every org-scoped prefix the CLI actually calls via request().
+const ORG_SCOPED_PATH_PREFIXES = new Set([
+  'analytics', 'api-keys', 'audit-logs', 'cron', 'cron-groups', 'deliveries',
+  'destinations', 'events', 'filters', 'notification-channels',
+  'outbound-messages', 'realtime', 'routes', 'schemas', 'send-event',
+  'sources', 'transforms', 'tunnels', 'webhook-applications', 'webhook-endpoints',
+]);
+
+function toOrgScopedPath(path: string, orgId: string): string | null {
+  const match = path.match(/^\/api\/([a-zA-Z0-9_-]+)(.*)$/);
+  if (!match) return null;
+  const [, prefix, rest] = match;
+  if (!ORG_SCOPED_PATH_PREFIXES.has(prefix)) return null;
+  return `/api/organizations/${orgId}/${prefix}${rest}`;
 }
 
 async function request<T>(
@@ -13,10 +45,25 @@ async function request<T>(
 ): Promise<ApiResponse<T>> {
   const apiUrl = getApiUrl();
   const token = getAuthToken();
+  const hasApiKey = !!token && token.startsWith('whr_');
 
-  if (!token || !token.startsWith('whr_')) {
+  if (!hasApiKey) {
+    if (hasSession()) {
+      const org = getCurrentOrg();
+      const scopedPath = org ? toOrgScopedPath(path, org.id) : null;
+      if (!scopedPath) {
+        return {
+          error: org
+            ? 'This request is not supported with a session login — run "hookbase login" with an API key instead.'
+            : 'No organization selected. Run "hookbase org switch <idOrSlug>" first.',
+          status: 0,
+        };
+      }
+      return sessionRequest<T>(method, scopedPath, body);
+    }
+
     return {
-      error: 'Not authenticated. Run "hookbase login" with a valid API key (whr_...).',
+      error: 'Not authenticated. Run "hookbase login".',
       status: 0,
     };
   }
@@ -133,22 +180,272 @@ export async function verifyApiKey(apiKey: string): Promise<ApiResponse<VerifyAp
 }
 
 // ============================================================================
-// Organizations
+// Platform status (BetterStack, proxied through the API)
 // ============================================================================
 
-export interface Organization {
-  id: string;
-  name: string;
-  slug: string;
-  plan: string;
+export interface PlatformStatus {
+  overallStatus: string;
+  components: Array<{ name: string; status: string }>;
+  updatedAt: string;
+  statusPageUrl: string;
 }
 
-export async function getOrganizations(): Promise<ApiResponse<{ organizations: Organization[] }>> {
-  return request<{ organizations: Organization[] }>('GET', '/api/organizations');
+// GET /api/status is public and unauthenticated — no bearer token, so this
+// doesn't go through request()/sessionRequest() at all. Works whether or not
+// the caller is logged in.
+export async function getStatus(): Promise<ApiResponse<PlatformStatus>> {
+  const apiUrl = getApiUrl();
+
+  try {
+    const response = await fetch(`${apiUrl}/api/status`, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    const rawBody = await response.text();
+    let data: Record<string, unknown> = {};
+    if (rawBody) {
+      try {
+        data = JSON.parse(rawBody) as Record<string, unknown>;
+      } catch {
+        data = {};
+      }
+    }
+
+    if (!response.ok) {
+      return {
+        error: (data.error as string) || (data.message as string) || `Failed to fetch status (HTTP ${response.status})`,
+        status: response.status,
+      };
+    }
+
+    return { data: data as unknown as PlatformStatus, status: response.status };
+  } catch (error) {
+    return {
+      error: error instanceof Error ? error.message : 'Network error',
+      status: 0,
+    };
+  }
 }
 
-export async function getOrganization(orgId: string): Promise<ApiResponse<{ organization: Organization }>> {
-  return request<{ organization: Organization }>('GET', `/api/organizations/${orgId}`);
+// /api/auth/me accepts either an API key or a session bearer token server-side
+// (plain authMiddleware, no requireUserAuth() gate) — so unlike most endpoints,
+// this should work with whichever credential the caller actually has.
+export async function getMe(): Promise<ApiResponse<VerifyApiKeyResponse>> {
+  if (isAuthenticated()) {
+    return request<VerifyApiKeyResponse>('GET', '/api/auth/me');
+  }
+  if (hasSession()) {
+    return sessionRequest<VerifyApiKeyResponse>('GET', '/api/auth/me');
+  }
+  return {
+    error: 'Not authenticated. Run "hookbase login".',
+    status: 0,
+  };
+}
+
+// ============================================================================
+// Session Auth (device flow) — separate credential set from API-key auth,
+// used for features that require a real user session (2FA, org members,
+// API key rotation).
+// ============================================================================
+
+export interface DeviceAuthStart {
+  deviceCode: string;
+  userCode: string;
+  verificationUri: string;
+  verificationUriComplete: string;
+  expiresIn: number;
+  interval: number;
+}
+
+export async function startDeviceAuth(): Promise<ApiResponse<DeviceAuthStart>> {
+  const apiUrl = getApiUrl();
+
+  try {
+    const response = await fetch(`${apiUrl}/api/auth/device`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+
+    const rawBody = await response.text();
+    let data: Record<string, unknown> = {};
+    if (rawBody) {
+      try {
+        data = JSON.parse(rawBody) as Record<string, unknown>;
+      } catch {
+        data = {};
+      }
+    }
+
+    if (!response.ok) {
+      return {
+        error: (data.error as string) || `Failed to start device auth (HTTP ${response.status})`,
+        status: response.status,
+      };
+    }
+
+    return { data: data as unknown as DeviceAuthStart, status: response.status };
+  } catch (error) {
+    return {
+      error: error instanceof Error ? error.message : 'Network error',
+      status: 0,
+    };
+  }
+}
+
+export interface DeviceTokenResult {
+  user: { id: string; email: string; displayName: string; avatarUrl?: string };
+  accessToken: string;
+  refreshToken: string;
+}
+
+export async function pollDeviceToken(deviceCode: string): Promise<ApiResponse<DeviceTokenResult>> {
+  const apiUrl = getApiUrl();
+
+  try {
+    const response = await fetch(`${apiUrl}/api/auth/device/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deviceCode }),
+    });
+
+    const rawBody = await response.text();
+    let data: Record<string, unknown> = {};
+    if (rawBody) {
+      try {
+        data = JSON.parse(rawBody) as Record<string, unknown>;
+      } catch {
+        data = {};
+      }
+    }
+
+    // Non-terminal "keep polling" state — the caller distinguishes this from
+    // a real failure via `status` (428 = authorization_pending).
+    if (!response.ok) {
+      return {
+        error: (data.error as string) || `Device token request failed (HTTP ${response.status})`,
+        status: response.status,
+      };
+    }
+
+    return { data: data as unknown as DeviceTokenResult, status: response.status };
+  } catch (error) {
+    return {
+      error: error instanceof Error ? error.message : 'Network error',
+      status: 0,
+    };
+  }
+}
+
+export async function refreshSession(): Promise<boolean> {
+  const refreshToken = getSessionRefreshToken();
+  if (!refreshToken) return false;
+
+  const apiUrl = getApiUrl();
+
+  try {
+    const response = await fetch(`${apiUrl}/api/auth/refresh`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refreshToken }),
+    });
+
+    if (!response.ok) return false;
+
+    const data = await response.json() as { accessToken: string; refreshToken: string };
+    if (!data.accessToken || !data.refreshToken) return false;
+
+    // Preserve the currently-stored session user identity; the refresh
+    // response doesn't repeat it.
+    const user = getSessionUser();
+    if (!user) return false;
+
+    setSession(data.accessToken, data.refreshToken, user);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export async function sessionRequest<T>(
+  method: string,
+  path: string,
+  body?: Record<string, unknown>
+): Promise<ApiResponse<T>> {
+  const apiUrl = getApiUrl();
+  let token = getSessionAccessToken();
+
+  if (!token) {
+    return {
+      error: 'Not logged in with a session. Run "hookbase login" first.',
+      status: 0,
+    };
+  }
+
+  const doFetch = async (bearerToken: string) => {
+    return fetch(`${apiUrl}${path}`, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${bearerToken}`,
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  };
+
+  try {
+    let response = await doFetch(token);
+
+    if (response.status === 401) {
+      const refreshed = await refreshSession();
+      if (refreshed) {
+        token = getSessionAccessToken()!;
+        response = await doFetch(token);
+      } else {
+        clearSession();
+        return {
+          error: 'Session expired. Run "hookbase session login" again.',
+          status: 401,
+        };
+      }
+    }
+
+    const rawBody = await response.text();
+    let data: Record<string, unknown> = {};
+    if (rawBody) {
+      try {
+        data = JSON.parse(rawBody) as Record<string, unknown>;
+      } catch {
+        data = {};
+      }
+    }
+
+    if (!response.ok) {
+      if (response.status === 401) {
+        clearSession();
+        return {
+          error: 'Session expired. Run "hookbase session login" again.',
+          status: 401,
+        };
+      }
+      let errorMsg =
+        (data.error as string) ||
+        (data.message as string) ||
+        `Request failed (HTTP ${response.status})`;
+      if (data.details) {
+        errorMsg += ` - ${JSON.stringify(data.details)}`;
+      }
+      return { error: errorMsg, status: response.status };
+    }
+
+    return { data: data as T, status: response.status };
+  } catch (error) {
+    return {
+      error: error instanceof Error ? error.message : 'Network error',
+      status: 0,
+    };
+  }
 }
 
 // ============================================================================
@@ -175,22 +472,127 @@ export async function listApiKeys(): Promise<ApiResponse<{ apiKeys: ApiKey[] }>>
   return request<{ apiKeys: ApiKey[] }>('GET', `/api/api-keys`);
 }
 
+// Creating an API key requires a real user session (api/src/routes/apiKeys.ts:
+// requireUserAuth() — key minting stays human-only, an API key can't spawn
+// another one). Org resolution for a session request needs the explicit
+// :orgId path param (JWT auth has no apiKeyInfo for orgAccessMiddleware to
+// infer the org from), so this goes through the org-scoped route.
 export async function createApiKey(
   name: string,
   scopes: string[] = ['read', 'write', 'delete'],
   expiresInDays?: number
 ): Promise<ApiResponse<CreateApiKeyResponse>> {
+  const org = getCurrentOrg();
+  if (!org) {
+    return { error: 'No organization selected. Run "hookbase org switch <idOrSlug>" first.', status: 0 };
+  }
 
-  return request<CreateApiKeyResponse>('POST', `/api/api-keys`, {
+  return sessionRequest<CreateApiKeyResponse>('POST', `/api/organizations/${org.id}/api-keys`, {
     name,
     scopes,
-    expiresInDays,
+    // Server reads `expiresIn` in seconds, not days.
+    expiresIn: expiresInDays ? expiresInDays * 24 * 60 * 60 : undefined,
   });
 }
 
 export async function revokeApiKey(keyId: string): Promise<ApiResponse<{ success: boolean }>> {
 
   return request<{ success: boolean }>('DELETE', `/api/api-keys/${keyId}`);
+}
+
+export async function rotateApiKeySecret(keyId: string): Promise<ApiResponse<CreateApiKeyResponse>> {
+  const org = getCurrentOrg();
+  if (!org) {
+    return { error: 'No organization selected. Run "hookbase org switch <idOrSlug>" first.', status: 0 };
+  }
+
+  return sessionRequest<CreateApiKeyResponse>('POST', `/api/organizations/${org.id}/api-keys/${keyId}/rotate-secret`);
+}
+
+// ============================================================================
+// Organization Members (requires a session login — org membership is a
+// human-only concept server-side, api/src/routes/organizations.ts)
+// ============================================================================
+
+function resolveOrgId(explicitOrgId?: string): string | null {
+  if (explicitOrgId) return explicitOrgId;
+  return getCurrentOrg()?.id || null;
+}
+
+export interface OrgMember {
+  id: string;
+  email: string;
+  displayName: string | null;
+  avatarUrl: string | null;
+  role: string;
+  createdAt: string;
+  membershipId: string;
+}
+
+export async function getOrgMembers(orgId?: string): Promise<ApiResponse<{ members: OrgMember[] }>> {
+  const id = resolveOrgId(orgId);
+  if (!id) {
+    return { error: 'No organization selected. Run "hookbase org switch <idOrSlug>" first.', status: 0 };
+  }
+  return sessionRequest<{ members: OrgMember[] }>('GET', `/api/organizations/${id}/members`);
+}
+
+export async function updateOrgMemberRole(
+  userId: string,
+  role: string,
+  orgId?: string
+): Promise<ApiResponse<{ success: boolean }>> {
+  const id = resolveOrgId(orgId);
+  if (!id) {
+    return { error: 'No organization selected. Run "hookbase org switch <idOrSlug>" first.', status: 0 };
+  }
+  return sessionRequest<{ success: boolean }>('PATCH', `/api/organizations/${id}/members/${userId}`, { role });
+}
+
+export async function removeOrgMember(userId: string, orgId?: string): Promise<ApiResponse<{ success: boolean }>> {
+  const id = resolveOrgId(orgId);
+  if (!id) {
+    return { error: 'No organization selected. Run "hookbase org switch <idOrSlug>" first.', status: 0 };
+  }
+  return sessionRequest<{ success: boolean }>('DELETE', `/api/organizations/${id}/members/${userId}`);
+}
+
+export interface OrgInvite {
+  id: string;
+  email: string;
+  role: string;
+  expiresAt: string;
+  createdAt?: string;
+  invitedByName?: string | null;
+  emailSent?: boolean;
+}
+
+export async function inviteOrgMember(
+  email: string,
+  role: string,
+  orgId?: string
+): Promise<ApiResponse<{ invite: OrgInvite }>> {
+  const id = resolveOrgId(orgId);
+  if (!id) {
+    return { error: 'No organization selected. Run "hookbase org switch <idOrSlug>" first.', status: 0 };
+  }
+  return sessionRequest<{ invite: OrgInvite }>('POST', `/api/organizations/${id}/invites`, { email, role });
+}
+
+export async function listOrgInvites(orgId?: string): Promise<ApiResponse<{ invites: OrgInvite[] }>> {
+  const id = resolveOrgId(orgId);
+  if (!id) {
+    return { error: 'No organization selected. Run "hookbase org switch <idOrSlug>" first.', status: 0 };
+  }
+  return sessionRequest<{ invites: OrgInvite[] }>('GET', `/api/organizations/${id}/invites`);
+}
+
+export async function deleteOrgInvite(inviteId: string, orgId?: string): Promise<ApiResponse<{ success: boolean }>> {
+  const id = resolveOrgId(orgId);
+  if (!id) {
+    return { error: 'No organization selected. Run "hookbase org switch <idOrSlug>" first.', status: 0 };
+  }
+  return sessionRequest<{ success: boolean }>('DELETE', `/api/organizations/${id}/invites/${inviteId}`);
 }
 
 // ============================================================================
@@ -437,10 +839,11 @@ export interface Destination {
   delivery_count?: number;
   success_count?: number;
   failure_count?: number;
+  route_count?: number;
   created_at?: string;
   // Warehouse destination fields
   type?: 'http' | 's3' | 'r2' | 'gcs' | 'azure_blob';
-  config?: string;
+  config?: Record<string, unknown> | string;
   batch_size?: number;
   batch_window_seconds?: number;
   field_mapping?: string;
@@ -696,6 +1099,32 @@ export async function deleteRoute(routeId: string): Promise<ApiResponse<{ succes
   return request<{ success: boolean }>('DELETE', `/api/routes/${routeId}`);
 }
 
+export interface RouteCircuitStatus {
+  circuitState: string;
+  circuitOpenedAt: string | null;
+  cooldownSeconds: number;
+  probeAttempts: number;
+  probeSuccessThreshold: number;
+  failureThreshold: number;
+  consecutiveFailures: number;
+  timeUntilProbeSeconds: number | null;
+}
+
+export async function getRouteCircuitStatus(routeId: string): Promise<ApiResponse<RouteCircuitStatus>> {
+  return request<RouteCircuitStatus>('GET', `/api/routes/${routeId}/circuit-status`);
+}
+
+export async function resetRouteCircuit(routeId: string): Promise<ApiResponse<{ success: boolean; circuitState: string; previousState: string | null }>> {
+  return request<{ success: boolean; circuitState: string; previousState: string | null }>('POST', `/api/routes/${routeId}/reset-circuit`);
+}
+
+export async function updateRouteCircuitConfig(
+  routeId: string,
+  data: { circuitCooldownSeconds?: number; circuitFailureThreshold?: number; circuitProbeSuccessThreshold?: number }
+): Promise<ApiResponse<{ success: boolean }>> {
+  return request<{ success: boolean }>('PATCH', `/api/routes/${routeId}/circuit-config`, data);
+}
+
 // ============================================================================
 // Tunnels
 // ============================================================================
@@ -827,7 +1256,7 @@ export interface Event {
   eventType?: string;
   method?: string;
   path?: string;
-  headers?: Record<string, string>;
+  headers?: string | Record<string, string>;
   payload_size?: number;
   payloadSize?: number;
   signature_valid?: boolean;
@@ -835,13 +1264,29 @@ export interface Event {
   status?: 'delivered' | 'failed' | 'pending' | 'partial' | 'no_routes';
   delivery_count?: number;
   deliveryCount?: number;
+  // What the events-list endpoint (GET /api/.../events) actually sends —
+  // delivery_count/deliveryCount above are never populated by that endpoint.
+  deliveryStats?: {
+    total: number;
+    delivered: number;
+    failed: number;
+    pending: number;
+  };
+  // Transient-mode (compliance) events never persist a payload; both key
+  // spellings are seen depending on the response route.
+  payloadKey?: string;
+  payload_key?: string;
   received_at?: string;
   receivedAt?: string;
 }
 
-export interface EventWithPayload extends Event {
-  payload?: unknown;
-  deliveries?: Delivery[];
+// GET /api/events/:eventId returns payload/deliveries/transient as siblings of
+// event, not nested inside it — api/src/routes/events.ts:527-546.
+export interface EventDetailResponse {
+  event: Event;
+  payload: unknown;
+  transient: boolean;
+  deliveries: Delivery[];
 }
 
 export async function getEvents(options?: {
@@ -872,9 +1317,9 @@ export async function getEvents(options?: {
   );
 }
 
-export async function getEvent(eventId: string): Promise<ApiResponse<{ event: EventWithPayload }>> {
+export async function getEvent(eventId: string): Promise<ApiResponse<EventDetailResponse>> {
 
-  return request<{ event: EventWithPayload }>('GET', `/api/events/${eventId}`);
+  return request<EventDetailResponse>('GET', `/api/events/${eventId}`);
 }
 
 // ============================================================================
@@ -1121,6 +1566,25 @@ export async function deleteSchema(schemaId: string): Promise<ApiResponse<{ succ
   return request<{ success: boolean }>('DELETE', `/api/schemas/${schemaId}`);
 }
 
+export async function updateSchema(
+  schemaId: string,
+  data: { name?: string; description?: string; jsonSchema?: unknown }
+): Promise<ApiResponse<{ success: boolean }>> {
+  return request<{ success: boolean }>('PUT', `/api/schemas/${schemaId}`, data);
+}
+
+export interface SchemaValidationError {
+  path: string;
+  message: string;
+}
+
+export async function validateSchema(
+  schemaId: string,
+  payload: unknown
+): Promise<ApiResponse<{ valid: boolean; errors: SchemaValidationError[]; payload: unknown }>> {
+  return request<{ valid: boolean; errors: SchemaValidationError[]; payload: unknown }>('POST', `/api/schemas/${schemaId}/validate`, { payload });
+}
+
 // ============================================================================
 // Notification channels
 // ============================================================================
@@ -1149,6 +1613,23 @@ export async function createNotificationChannel(data: {
   });
 }
 
+export async function getNotificationChannel(channelId: string): Promise<ApiResponse<{ channel: NotificationChannel }>> {
+  return request<{ channel: NotificationChannel }>('GET', `/api/notification-channels/${channelId}`);
+}
+
+export async function updateNotificationChannel(
+  channelId: string,
+  data: { name?: string; config?: Record<string, unknown>; isActive?: boolean }
+): Promise<ApiResponse<{ success: boolean }>> {
+  return request<{ success: boolean }>('PATCH', `/api/notification-channels/${channelId}`, data);
+}
+
+export async function testNotificationChannel(
+  channelId: string
+): Promise<ApiResponse<{ success: boolean; message?: string; error?: string }>> {
+  return request<{ success: boolean; message?: string; error?: string }>('POST', `/api/notification-channels/${channelId}/test`);
+}
+
 /** Link a notification channel to a route (called after route creation). */
 export async function linkNotificationChannel(
   channelId: string,
@@ -1161,6 +1642,41 @@ export async function linkNotificationChannel(
   },
 ): Promise<ApiResponse<{ success: boolean }>> {
   return request<{ success: boolean }>('POST', `/api/notification-channels/${channelId}/routes`, data);
+}
+
+export interface NotificationChannelRouteLink {
+  routeId: string;
+  routeName: string;
+  notifyOnFailure: boolean;
+  notifyOnSuccess: boolean;
+  notifyOnRecovery: boolean;
+  notifyOnCircuitOpen: boolean;
+}
+
+export async function getNotificationChannelRoutes(
+  channelId: string
+): Promise<ApiResponse<{ routes: NotificationChannelRouteLink[] }>> {
+  return request<{ routes: NotificationChannelRouteLink[] }>('GET', `/api/notification-channels/${channelId}/routes`);
+}
+
+export async function updateNotificationChannelRouteLink(
+  channelId: string,
+  routeId: string,
+  data: {
+    notifyOnFailure?: boolean;
+    notifyOnSuccess?: boolean;
+    notifyOnRecovery?: boolean;
+    notifyOnCircuitOpen?: boolean;
+  }
+): Promise<ApiResponse<{ success: boolean }>> {
+  return request<{ success: boolean }>('PATCH', `/api/notification-channels/${channelId}/routes/${routeId}`, data);
+}
+
+export async function unlinkNotificationChannelRoute(
+  channelId: string,
+  routeId: string
+): Promise<ApiResponse<{ success: boolean }>> {
+  return request<{ success: boolean }>('DELETE', `/api/notification-channels/${channelId}/routes/${routeId}`);
 }
 
 export async function deleteNotificationChannel(channelId: string): Promise<ApiResponse<{ success: boolean }>> {
@@ -1501,7 +2017,7 @@ export interface WebhookEndpoint {
   description?: string;
   secret?: string;
   event_types?: string[];
-  headers?: Record<string, string>;
+  headers?: Array<{ name: string; value: string }> | string;
   rate_limit_per_minute?: number;
   timeout_ms?: number;
   is_active?: number;
@@ -1536,7 +2052,7 @@ export async function createWebhookEndpoint(data: {
   applicationId: string;
   url: string;
   description?: string;
-  headers?: Record<string, string>;
+  headers?: Array<{ name: string; value: string }>;
   // API-native units: requests/second (0 = unlimited) and seconds (1-120).
   rateLimitPerSecond?: number;
   timeoutSeconds?: number;
@@ -1560,7 +2076,7 @@ export async function updateWebhookEndpoint(
   data: {
     url?: string;
     description?: string;
-    headers?: Record<string, string>;
+    headers?: Array<{ name: string; value: string }>;
     // API-native units: requests/second (0 = unlimited) and seconds (1-120).
     rateLimitPerSecond?: number;
     timeoutSeconds?: number;
@@ -1610,6 +2126,20 @@ export async function rotateWebhookEndpointSecret(endpointId: string): Promise<A
     'POST',
     `/api/webhook-endpoints/${endpointId}/rotate-secret`
   );
+}
+
+export async function resetWebhookEndpointCircuit(endpointId: string): Promise<ApiResponse<{ success: boolean; circuitState: string }>> {
+  return request<{ success: boolean; circuitState: string }>('POST', `/api/webhook-endpoints/${endpointId}/reset-circuit`);
+}
+
+export async function replayFailedWebhookEndpointMessages(
+  endpointId: string,
+  options?: { since?: string; includeUnattempted?: boolean }
+): Promise<ApiResponse<{ data: { replayed: number; newMessageIds: string[] } }>> {
+  return request<{ data: { replayed: number; newMessageIds: string[] } }>('POST', `/api/webhook-endpoints/${endpointId}/replay-failed`, {
+    since: options?.since,
+    includeUnattempted: options?.includeUnattempted,
+  });
 }
 
 // ============================================================================
@@ -1688,6 +2218,61 @@ export async function retryWebhookMessage(messageId: string): Promise<ApiRespons
   return request<{ message: WebhookMessage }>('POST', `/api/outbound-messages/${messageId}/replay`);
 }
 
+export interface OutboundMessageAttempt {
+  id: string;
+  messageId: string;
+  attemptNumber: number;
+  status: string;
+  responseStatus?: number;
+  responseHeaders?: unknown;
+  responseBody?: string;
+  responseTimeMs?: number;
+  totalTimeMs?: number;
+  errorType?: string;
+  errorMessage?: string;
+  errorCode?: string;
+  requestUrl?: string;
+  requestHeaders?: unknown;
+  requestBodySize?: number;
+  triggeredBy?: string;
+  triggeredByUser?: string;
+  createdAt: string;
+  completedAt?: string;
+}
+
+export async function getWebhookMessageAttempts(messageId: string): Promise<ApiResponse<{ data: OutboundMessageAttempt[] }>> {
+
+  return request<{ data: OutboundMessageAttempt[] }>('GET', `/api/outbound-messages/${messageId}/attempts`);
+}
+
+export interface OutboundStatsSummary {
+  pending: number;
+  processing: number;
+  success: number;
+  failed: number;
+  awaitingRetry: number;
+  exhausted: number;
+  dlq: number;
+  total: number;
+}
+
+export async function getOutboundStatsSummary(): Promise<ApiResponse<{ data: OutboundStatsSummary }>> {
+
+  return request<{ data: OutboundStatsSummary }>('GET', `/api/outbound-messages/stats/summary`);
+}
+
+export interface DlqStats {
+  total: number;
+  byReason: Record<string, number>;
+  byEndpoint: Array<{ endpointId: string; endpointUrl?: string; count: number }>;
+  byEventType: Array<{ eventType: string; count: number }>;
+}
+
+export async function getDlqStats(): Promise<ApiResponse<{ data: DlqStats }>> {
+
+  return request<{ data: DlqStats }>('GET', `/api/outbound-messages/dlq/stats`);
+}
+
 // ============================================================================
 // Outbound Webhooks - Dead Letter Queue (DLQ)
 // ============================================================================
@@ -1760,4 +2345,173 @@ export async function deleteDlqMessage(messageId: string): Promise<ApiResponse<{
 
   // DLQ archive/discard lives under /dlq/:id (there is no DELETE /:id route).
   return request<{ success: boolean }>('DELETE', `/api/outbound-messages/dlq/${messageId}`);
+}
+
+// ============================================================================
+// Audit Logs
+// ============================================================================
+
+export interface AuditLog {
+  id: string;
+  organizationId: string;
+  userId: string | null;
+  action: string;
+  entityType: string;
+  entityId: string;
+  details: unknown;
+  ipAddress: string | null;
+  createdAt: string;
+  userName: string | null;
+  userEmail: string | null;
+  apiKeyId: string | null;
+  apiKeyName: string | null;
+}
+
+export async function getAuditLogs(options?: {
+  action?: string;
+  entityType?: string;
+  userId?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<ApiResponse<{ logs: AuditLog[]; total: number; limit: number; offset: number }>> {
+
+  const params = new URLSearchParams();
+  if (options?.action) params.set('action', options.action);
+  if (options?.entityType) params.set('entityType', options.entityType);
+  if (options?.userId) params.set('userId', options.userId);
+  if (options?.limit) params.set('limit', String(options.limit));
+  if (options?.offset) params.set('offset', String(options.offset));
+
+  const queryString = params.toString();
+  return request<{ logs: AuditLog[]; total: number; limit: number; offset: number }>(
+    'GET',
+    `/api/audit-logs${queryString ? `?${queryString}` : ''}`
+  );
+}
+
+export async function getAuditLogActions(): Promise<ApiResponse<{ actions: string[] }>> {
+  return request<{ actions: string[] }>('GET', `/api/audit-logs/actions`);
+}
+
+export async function getAuditLogUsers(): Promise<ApiResponse<{ users: Array<{ id: string; name: string; email: string }> }>> {
+  return request<{ users: Array<{ id: string; name: string; email: string }> }>('GET', `/api/audit-logs/users`);
+}
+
+// Not routed through request()/sessionRequest() — the export endpoint returns
+// text/csv, and both of those parse the body as JSON, which would corrupt it.
+// Like request(), this needs to work with either an API key (implicit-org
+// path) or a session (org-explicit path, since a session isn't tied to one org).
+export async function exportAuditLogs(): Promise<{ csv?: string; error?: string; status: number }> {
+  const apiUrl = getApiUrl();
+  const apiKey = getAuthToken();
+  const hasApiKey = !!apiKey && apiKey.startsWith('whr_');
+
+  let url: string;
+  let bearerToken: string;
+  if (hasApiKey) {
+    url = `${apiUrl}/api/audit-logs/export`;
+    bearerToken = apiKey!;
+  } else if (hasSession()) {
+    const org = getCurrentOrg();
+    if (!org) {
+      return { error: 'No organization selected. Run "hookbase org switch <idOrSlug>" first.', status: 0 };
+    }
+    const sessionToken = getSessionAccessToken();
+    if (!sessionToken) {
+      return { error: 'Not logged in with a session. Run "hookbase login" first.', status: 0 };
+    }
+    url = `${apiUrl}/api/organizations/${org.id}/audit-logs/export`;
+    bearerToken = sessionToken;
+  } else {
+    return { error: 'Not authenticated. Run "hookbase login".', status: 0 };
+  }
+
+  const doFetch = (token: string) =>
+    fetch(url, { method: 'GET', headers: { 'Authorization': `Bearer ${token}` } });
+
+  try {
+    let response = await doFetch(bearerToken);
+
+    if (response.status === 401 && !hasApiKey) {
+      const refreshed = await refreshSession();
+      if (!refreshed) {
+        clearSession();
+        return { error: 'Session expired. Run "hookbase session login" again.', status: 401 };
+      }
+      response = await doFetch(getSessionAccessToken()!);
+    }
+
+    const rawBody = await response.text();
+
+    if (!response.ok) {
+      if (response.status === 401 && !hasApiKey) {
+        clearSession();
+        return { error: 'Session expired. Run "hookbase session login" again.', status: 401 };
+      }
+      let errorMsg = `Request failed (HTTP ${response.status})`;
+      try {
+        const data = JSON.parse(rawBody) as Record<string, unknown>;
+        errorMsg = (data.error as string) || (data.message as string) || errorMsg;
+      } catch {
+        // Non-JSON error body; keep the generic message.
+      }
+      return { error: errorMsg, status: response.status };
+    }
+
+    return { csv: rawBody, status: response.status };
+  } catch (error) {
+    return {
+      error: error instanceof Error ? error.message : 'Network error',
+      status: 0,
+    };
+  }
+}
+
+// ============================================================================
+// Two-Factor Authentication (2FA/TOTP)
+// ============================================================================
+
+export interface TwoFactorStatus {
+  enabled: boolean;
+}
+
+export async function get2FAStatus(): Promise<ApiResponse<TwoFactorStatus>> {
+  return sessionRequest<TwoFactorStatus>('GET', '/api/auth/2fa/status');
+}
+
+export interface TwoFactorSetup {
+  secret: string;
+  otpauthUrl: string;
+}
+
+export async function setup2FA(): Promise<ApiResponse<TwoFactorSetup>> {
+  return sessionRequest<TwoFactorSetup>('POST', '/api/auth/2fa/setup');
+}
+
+export interface TwoFactorVerifyResult {
+  success: boolean;
+  recoveryCodes: string[];
+  message: string;
+}
+
+export async function verify2FA(code: string): Promise<ApiResponse<TwoFactorVerifyResult>> {
+  return sessionRequest<TwoFactorVerifyResult>('POST', '/api/auth/2fa/verify', { code });
+}
+
+export interface TwoFactorDisableResult {
+  success: boolean;
+  message: string;
+}
+
+export async function disable2FA(code: string, password: string): Promise<ApiResponse<TwoFactorDisableResult>> {
+  return sessionRequest<TwoFactorDisableResult>('POST', '/api/auth/2fa/disable', { code, password });
+}
+
+export interface RecoveryCodesResult {
+  success: boolean;
+  recoveryCodes: string[];
+}
+
+export async function regenerateRecoveryCodes(code: string): Promise<ApiResponse<RecoveryCodesResult>> {
+  return sessionRequest<RecoveryCodesResult>('POST', '/api/auth/2fa/recovery-codes', { code });
 }

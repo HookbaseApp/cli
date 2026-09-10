@@ -1,9 +1,12 @@
 import { input, confirm, select, number } from '@inquirer/prompts';
 import { ExitPromptError } from '@inquirer/core';
 import * as api from '../lib/api.js';
-import * as config from '../lib/config.js';
 import * as logger from '../lib/logger.js';
 import { askAdvanced, gatedPrompt, ensureFeature, loadFeatures, featureEnabled } from '../lib/advanced.js';
+import { parseJsonField } from '../lib/parseJson.js';
+
+import { requireAuth } from '../lib/requireAuth.js';
+import { formatOutput } from '../lib/output.js';
 
 /** Helper to check if an error is a prompt cancellation (Ctrl+C) */
 function isPromptCancelled(error: unknown): boolean {
@@ -56,19 +59,7 @@ function parseJsonFlag(raw: string | undefined, label: string): Record<string, u
   return undefined;
 }
 
-function requireAuth(): boolean {
-  if (!config.isAuthenticated()) {
-    if (config.hasStaleJwtToken()) {
-      logger.error('Your session uses a JWT token which is no longer supported. Please re-login with an API key: hookbase login');
-    } else {
-      logger.error('Not logged in. Run "hookbase login" with an API key.');
-    }
-    process.exit(1);
-  }
-  return true;
-}
-
-export async function destinationsListCommand(options: { json?: boolean }): Promise<void> {
+export async function destinationsListCommand(options: { json?: boolean; xml?: boolean; yaml?: boolean }): Promise<void> {
   requireAuth();
 
   const spinner = logger.spinner('Fetching destinations...');
@@ -84,8 +75,8 @@ export async function destinationsListCommand(options: { json?: boolean }): Prom
 
   const destinations = result.data?.destinations || [];
 
-  if (options.json) {
-    console.log(JSON.stringify(destinations, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput(destinations, options.xml, options.yaml));
     return;
   }
 
@@ -233,6 +224,8 @@ export async function destinationsCreateCommand(options: {
   staticIp?: boolean;
   yes?: boolean;
   json?: boolean;
+  xml?: boolean;
+  yaml?: boolean;
 }): Promise<void> {
   requireAuth();
 
@@ -400,8 +393,8 @@ export async function destinationsCreateCommand(options: {
 
   spinner.succeed('Destination created');
 
-  if (options.json) {
-    console.log(JSON.stringify(result.data?.destination, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput(result.data?.destination, options.xml, options.yaml));
     return;
   }
 
@@ -419,7 +412,7 @@ export async function destinationsCreateCommand(options: {
 
 export async function destinationsGetCommand(
   destId: string,
-  options: { json?: boolean }
+  options: { json?: boolean; xml?: boolean; yaml?: boolean }
 ): Promise<void> {
   requireAuth();
 
@@ -436,8 +429,8 @@ export async function destinationsGetCommand(
 
   const dest = result.data?.destination;
 
-  if (options.json) {
-    console.log(JSON.stringify(dest, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput(dest, options.xml, options.yaml));
     return;
   }
 
@@ -459,12 +452,31 @@ export async function destinationsGetCommand(
   const staticIp = dest.use_static_ip ?? (dest as any).useStaticIp;
   logger.log(`Static IP:   ${staticIp === 1 || staticIp === true ? logger.green('enabled') : logger.dimText('disabled')}`);
   logger.log(`Timeout:     ${dest.timeout_ms ?? (dest as any).timeoutMs ?? 30000}ms`);
+  logger.log(`Deliveries:  ${dest.delivery_count ?? (dest as any).deliveryCount ?? 0}`);
+  logger.log(`  Delivered: ${dest.success_count ?? (dest as any).successCount ?? 0}`);
+  logger.log(`  Failed:    ${dest.failure_count ?? (dest as any).failureCount ?? 0}`);
+  logger.log(`Routes:      ${dest.route_count ?? (dest as any).routeCount ?? 0}`);
   if (dest.headers && Object.keys(dest.headers).length > 0) {
     logger.log(`Headers:`);
     for (const [key, value] of Object.entries(dest.headers)) {
       logger.log(`  ${key}: ${value}`);
     }
   }
+
+  const destType = dest.type || (dest as any).destinationType || 'http';
+  if (destType !== 'http') {
+    const cfg = parseJsonField(dest.config, {} as Record<string, unknown>) as any;
+    logger.log(`Bucket:      ${cfg.bucket || '-'}`);
+    if (cfg.region) {
+      logger.log(`Region:      ${cfg.region}`);
+    }
+    if (cfg.prefix) {
+      logger.log(`Prefix:      ${cfg.prefix}`);
+    }
+    logger.log(`File Format: ${cfg.fileFormat || 'jsonl'}`);
+    logger.log(`Partition:   ${cfg.partitionBy || 'date'}`);
+  }
+
   logger.log('');
 }
 
@@ -479,6 +491,8 @@ export async function destinationsUpdateCommand(
     staticIp?: boolean;
     noStaticIp?: boolean;
     json?: boolean;
+    xml?: boolean;
+    yaml?: boolean;
   }
 ): Promise<void> {
   requireAuth();
@@ -508,14 +522,14 @@ export async function destinationsUpdateCommand(
 
   spinner.succeed('Destination updated');
 
-  if (options.json) {
-    console.log(JSON.stringify(result.data?.destination, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput(result.data?.destination, options.xml, options.yaml));
   }
 }
 
 export async function destinationsDeleteCommand(
   destId: string,
-  options: { yes?: boolean; json?: boolean }
+  options: { yes?: boolean; json?: boolean; xml?: boolean; yaml?: boolean }
 ): Promise<void> {
   requireAuth();
 
@@ -550,14 +564,14 @@ export async function destinationsDeleteCommand(
 
   spinner.succeed('Destination deleted');
 
-  if (options.json) {
-    console.log(JSON.stringify({ success: true, destId }, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput({ success: true, destId }, options.xml, options.yaml));
   }
 }
 
 export async function destinationsTestCommand(
   destId: string,
-  options: { json?: boolean }
+  options: { json?: boolean; xml?: boolean; yaml?: boolean }
 ): Promise<void> {
   requireAuth();
 
@@ -573,8 +587,8 @@ export async function destinationsTestCommand(
   const raw = result.data as any;
   const testResult = (raw?.data && typeof raw.data === 'object' ? raw.data : raw) as any;
 
-  if (options.json) {
-    console.log(JSON.stringify(testResult, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput(testResult, options.xml, options.yaml));
     return;
   }
 

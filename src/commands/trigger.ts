@@ -1,25 +1,15 @@
-import { select, input, confirm } from '@inquirer/prompts';
+import { select } from '@inquirer/prompts';
 import { ExitPromptError } from '@inquirer/core';
 import * as fs from 'fs';
 import * as api from '../lib/api.js';
-import * as config from '../lib/config.js';
 import * as logger from '../lib/logger.js';
+
+import { requireAuth } from '../lib/requireAuth.js';
+import { formatOutput } from '../lib/output.js';
 
 function isPromptCancelled(error: unknown): boolean {
   return error instanceof ExitPromptError ||
     (error instanceof Error && error.name === 'ExitPromptError');
-}
-
-function requireAuth(): boolean {
-  if (!config.isAuthenticated()) {
-    if (config.hasStaleJwtToken()) {
-      logger.error('Your session uses a JWT token which is no longer supported. Please re-login with an API key: hookbase login');
-    } else {
-      logger.error('Not logged in. Run "hookbase login" with an API key.');
-    }
-    process.exit(1);
-  }
-  return true;
 }
 
 interface TriggerOptions {
@@ -31,6 +21,8 @@ interface TriggerOptions {
   sign?: boolean;
   print?: boolean;
   json?: boolean;
+  xml?: boolean;
+  yaml?: boolean;
 }
 
 export async function triggerCommand(options: TriggerOptions): Promise<void> {
@@ -191,8 +183,8 @@ export async function triggerCommand(options: TriggerOptions): Promise<void> {
 
     const data = result.data!;
 
-    if (options.json) {
-      console.log(JSON.stringify(data, null, 2));
+    if (options.json || options.xml || options.yaml) {
+      console.log(formatOutput(data, options.xml, options.yaml));
       return;
     }
 

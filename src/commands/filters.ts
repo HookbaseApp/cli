@@ -1,20 +1,15 @@
 import { input, confirm, select } from '@inquirer/prompts';
 import { ExitPromptError } from '@inquirer/core';
 import * as api from '../lib/api.js';
-import * as config from '../lib/config.js';
 import * as logger from '../lib/logger.js';
 import { promptFilterConditions } from './routes.js';
+
+import { requireAuth } from '../lib/requireAuth.js';
+import { formatOutput } from '../lib/output.js';
 
 function isPromptCancelled(error: unknown): boolean {
   return error instanceof ExitPromptError ||
     (error instanceof Error && error.name === 'ExitPromptError');
-}
-
-function requireAuth(): void {
-  if (!config.isAuthenticated()) {
-    logger.error('Not logged in. Run "hookbase login" with an API key.');
-    process.exit(1);
-  }
 }
 
 const FILTER_OPERATORS = [
@@ -37,14 +32,14 @@ function parseConditionFlag(raw: string): api.FilterCondition | null {
   return { field, operator: operator as api.FilterCondition['operator'], value };
 }
 
-export async function filtersListCommand(options: { json?: boolean }): Promise<void> {
+export async function filtersListCommand(options: { json?: boolean; xml?: boolean; yaml?: boolean }): Promise<void> {
   requireAuth();
   const spinner = logger.spinner('Fetching filters...');
   const result = await api.getFilters();
   if (result.error) { spinner.fail('Failed to fetch filters'); logger.error(result.error); return; }
   spinner.stop();
   const filters = (result.data?.filters || []) as any[];
-  if (options.json) { console.log(JSON.stringify(filters, null, 2)); return; }
+  if (options.json || options.xml || options.yaml) { console.log(formatOutput(filters, options.xml, options.yaml)); return; }
   if (filters.length === 0) { logger.info('No filters found'); logger.dim('Create one with "hookbase filters create"'); return; }
   logger.table(
     ['ID', 'Name', 'Logic', 'Conditions', 'Routes'],
@@ -65,6 +60,8 @@ export async function filtersCreateCommand(options: {
   description?: string;
   yes?: boolean;
   json?: boolean;
+  xml?: boolean;
+  yaml?: boolean;
 }): Promise<void> {
   requireAuth();
 
@@ -98,19 +95,19 @@ export async function filtersCreateCommand(options: {
   const result = await api.createFilter({ name: name!, logic, conditions });
   if (result.error) { spinner.fail('Failed to create filter'); logger.error(result.error); return; }
   spinner.succeed('Filter created');
-  if (options.json) { console.log(JSON.stringify(result.data?.filter, null, 2)); return; }
+  if (options.json || options.xml || options.yaml) { console.log(formatOutput(result.data?.filter, options.xml, options.yaml)); return; }
   const f = result.data?.filter;
   if (f) { logger.log(''); logger.box('Filter Created', [`ID:   ${f.id}`, `Name: ${f.name}`, `Logic: ${logic}`, `Conditions: ${conditions.length}`].join('\n')); }
 }
 
-export async function filtersGetCommand(filterId: string, options: { json?: boolean }): Promise<void> {
+export async function filtersGetCommand(filterId: string, options: { json?: boolean; xml?: boolean; yaml?: boolean }): Promise<void> {
   requireAuth();
   const spinner = logger.spinner('Fetching filter...');
   const result = await api.getFilter(filterId);
   if (result.error) { spinner.fail('Failed to fetch filter'); logger.error(result.error); return; }
   spinner.stop();
   const f = result.data?.filter as any;
-  if (options.json) { console.log(JSON.stringify(f, null, 2)); return; }
+  if (options.json || options.xml || options.yaml) { console.log(formatOutput(f, options.xml, options.yaml)); return; }
   if (!f) { logger.error('Filter not found'); return; }
   logger.log('');
   logger.log(logger.bold('Filter Details'));
@@ -126,7 +123,7 @@ export async function filtersGetCommand(filterId: string, options: { json?: bool
   logger.log('');
 }
 
-export async function filtersDeleteCommand(filterId: string, options: { yes?: boolean; json?: boolean }): Promise<void> {
+export async function filtersDeleteCommand(filterId: string, options: { yes?: boolean; json?: boolean; xml?: boolean; yaml?: boolean }): Promise<void> {
   requireAuth();
   try {
     if (!options.yes) {
@@ -141,5 +138,5 @@ export async function filtersDeleteCommand(filterId: string, options: { yes?: bo
   const result = await api.deleteFilter(filterId);
   if (result.error) { spinner.fail('Failed to delete filter'); logger.error(result.error); return; }
   spinner.succeed('Filter deleted');
-  if (options.json) console.log(JSON.stringify({ success: true, filterId }, null, 2));
+  if (options.json || options.xml || options.yaml) console.log(formatOutput({ success: true, filterId }, options.xml, options.yaml));
 }

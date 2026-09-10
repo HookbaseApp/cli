@@ -1,25 +1,15 @@
 import { input, confirm, select } from '@inquirer/prompts';
 import { ExitPromptError } from '@inquirer/core';
 import * as api from '../lib/api.js';
-import * as config from '../lib/config.js';
 import * as logger from '../lib/logger.js';
+
+import { requireAuth } from '../lib/requireAuth.js';
+import { formatOutput } from '../lib/output.js';
 
 /** Helper to check if an error is a prompt cancellation (Ctrl+C) */
 function isPromptCancelled(error: unknown): boolean {
   return error instanceof ExitPromptError ||
     (error instanceof Error && error.name === 'ExitPromptError');
-}
-
-function requireAuth(): boolean {
-  if (!config.isAuthenticated()) {
-    if (config.hasStaleJwtToken()) {
-      logger.error('Your session uses a JWT token which is no longer supported. Please re-login with an API key: hookbase login');
-    } else {
-      logger.error('Not logged in. Run "hookbase login" with an API key.');
-    }
-    process.exit(1);
-  }
-  return true;
 }
 
 function formatCircuitState(state?: string): string {
@@ -33,7 +23,9 @@ function formatCircuitState(state?: string): string {
 
 export async function endpointsListCommand(options: {
   app?: string;
-  json?: boolean
+  json?: boolean;
+  xml?: boolean;
+  yaml?: boolean;
 }): Promise<void> {
   requireAuth();
 
@@ -50,8 +42,8 @@ export async function endpointsListCommand(options: {
 
   const endpoints = (result.data as any)?.data || result.data?.endpoints || [];
 
-  if (options.json) {
-    console.log(JSON.stringify(endpoints, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput(endpoints, options.xml, options.yaml));
     return;
   }
 
@@ -85,6 +77,8 @@ export async function endpointsCreateCommand(options: {
   noStaticIp?: boolean;
   yes?: boolean;
   json?: boolean;
+  xml?: boolean;
+  yaml?: boolean;
 }): Promise<void> {
   requireAuth();
 
@@ -172,8 +166,8 @@ export async function endpointsCreateCommand(options: {
 
   spinner.succeed('Endpoint created');
 
-  if (options.json) {
-    console.log(JSON.stringify(result.data, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput(result.data, options.xml, options.yaml));
     return;
   }
 
@@ -197,7 +191,7 @@ export async function endpointsCreateCommand(options: {
 
 export async function endpointsGetCommand(
   endpointId: string,
-  options: { json?: boolean }
+  options: { json?: boolean; xml?: boolean; yaml?: boolean }
 ): Promise<void> {
   requireAuth();
 
@@ -214,8 +208,8 @@ export async function endpointsGetCommand(
 
   const endpoint: any = (result.data as any)?.data || result.data?.endpoint;
 
-  if (options.json) {
-    console.log(JSON.stringify(endpoint, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput(endpoint, options.xml, options.yaml));
     return;
   }
 
@@ -261,6 +255,8 @@ export async function endpointsUpdateCommand(
     staticIp?: boolean;
     noStaticIp?: boolean;
     json?: boolean;
+    xml?: boolean;
+    yaml?: boolean;
   }
 ): Promise<void> {
   requireAuth();
@@ -295,15 +291,15 @@ export async function endpointsUpdateCommand(
 
   spinner.succeed('Endpoint updated');
 
-  if (options.json) {
+  if (options.json || options.xml || options.yaml) {
     const updated = (result.data as any)?.data || result.data?.endpoint;
-    console.log(JSON.stringify(updated, null, 2));
+    console.log(formatOutput(updated, options.xml, options.yaml));
   }
 }
 
 export async function endpointsDeleteCommand(
   endpointId: string,
-  options: { yes?: boolean; json?: boolean }
+  options: { yes?: boolean; json?: boolean; xml?: boolean; yaml?: boolean }
 ): Promise<void> {
   requireAuth();
 
@@ -338,14 +334,14 @@ export async function endpointsDeleteCommand(
 
   spinner.succeed('Endpoint deleted');
 
-  if (options.json) {
-    console.log(JSON.stringify({ success: true, endpointId }, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput({ success: true, endpointId }, options.xml, options.yaml));
   }
 }
 
 export async function endpointsTestCommand(
   endpointId: string,
-  options: { json?: boolean }
+  options: { json?: boolean; xml?: boolean; yaml?: boolean }
 ): Promise<void> {
   requireAuth();
 
@@ -360,8 +356,8 @@ export async function endpointsTestCommand(
 
   const data: any = (result.data as any)?.data || result.data;
 
-  if (options.json) {
-    console.log(JSON.stringify(data, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput(data, options.xml, options.yaml));
     return;
   }
 
@@ -384,7 +380,7 @@ export async function endpointsTestCommand(
 
 export async function endpointsRotateSecretCommand(
   endpointId: string,
-  options: { yes?: boolean; json?: boolean }
+  options: { yes?: boolean; json?: boolean; xml?: boolean; yaml?: boolean }
 ): Promise<void> {
   requireAuth();
 
@@ -419,8 +415,8 @@ export async function endpointsRotateSecretCommand(
 
   spinner.succeed('Secret rotated');
 
-  if (options.json) {
-    console.log(JSON.stringify(result.data, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput(result.data, options.xml, options.yaml));
     return;
   }
 
@@ -435,5 +431,53 @@ export async function endpointsRotateSecretCommand(
     ].join('\n'));
     logger.log('');
     logger.warn('Update your webhook verification code with this new secret.');
+  }
+}
+
+export async function endpointsResetCircuitCommand(
+  endpointId: string,
+  options: { json?: boolean; xml?: boolean; yaml?: boolean }
+): Promise<void> {
+  requireAuth();
+
+  const spinner = logger.spinner('Resetting circuit breaker...');
+  const result = await api.resetWebhookEndpointCircuit(endpointId);
+
+  if (result.error) {
+    spinner.fail('Failed to reset circuit breaker');
+    logger.error(result.error);
+    return;
+  }
+
+  spinner.succeed(`Circuit breaker reset (state: ${result.data?.circuitState})`);
+
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput(result.data, options.xml, options.yaml));
+  }
+}
+
+export async function endpointsReplayFailedCommand(
+  endpointId: string,
+  options: { since?: string; includeUnattempted?: boolean; json?: boolean; xml?: boolean; yaml?: boolean }
+): Promise<void> {
+  requireAuth();
+
+  const spinner = logger.spinner('Replaying failed messages...');
+  const result = await api.replayFailedWebhookEndpointMessages(endpointId, {
+    since: options.since,
+    includeUnattempted: options.includeUnattempted,
+  });
+
+  if (result.error) {
+    spinner.fail('Failed to replay messages');
+    logger.error(result.error);
+    return;
+  }
+
+  const replayed = result.data?.data?.replayed ?? 0;
+  spinner.succeed(`Replayed ${replayed} message${replayed === 1 ? '' : 's'}`);
+
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput(result.data, options.xml, options.yaml));
   }
 }

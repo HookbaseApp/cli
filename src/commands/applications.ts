@@ -1,8 +1,10 @@
 import { input, confirm } from '@inquirer/prompts';
 import { ExitPromptError } from '@inquirer/core';
 import * as api from '../lib/api.js';
-import * as config from '../lib/config.js';
 import * as logger from '../lib/logger.js';
+
+import { requireAuth } from '../lib/requireAuth.js';
+import { formatOutput } from '../lib/output.js';
 
 /** Helper to check if an error is a prompt cancellation (Ctrl+C) */
 function isPromptCancelled(error: unknown): boolean {
@@ -10,19 +12,7 @@ function isPromptCancelled(error: unknown): boolean {
     (error instanceof Error && error.name === 'ExitPromptError');
 }
 
-function requireAuth(): boolean {
-  if (!config.isAuthenticated()) {
-    if (config.hasStaleJwtToken()) {
-      logger.error('Your session uses a JWT token which is no longer supported. Please re-login with an API key: hookbase login');
-    } else {
-      logger.error('Not logged in. Run "hookbase login" with an API key.');
-    }
-    process.exit(1);
-  }
-  return true;
-}
-
-export async function applicationsListCommand(options: { json?: boolean }): Promise<void> {
+export async function applicationsListCommand(options: { json?: boolean; xml?: boolean; yaml?: boolean }): Promise<void> {
   requireAuth();
 
   const spinner = logger.spinner('Fetching applications...');
@@ -38,8 +28,8 @@ export async function applicationsListCommand(options: { json?: boolean }): Prom
 
   const applications = (result.data as any)?.data || result.data?.applications || [];
 
-  if (options.json) {
-    console.log(JSON.stringify(applications, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput(applications, options.xml, options.yaml));
     return;
   }
 
@@ -72,6 +62,8 @@ export async function applicationsCreateCommand(options: {
   rateLimit?: string;
   yes?: boolean;
   json?: boolean;
+  xml?: boolean;
+  yaml?: boolean;
 }): Promise<void> {
   requireAuth();
 
@@ -132,8 +124,8 @@ export async function applicationsCreateCommand(options: {
 
   const app = (result.data as any)?.data || result.data?.application;
 
-  if (options.json) {
-    console.log(JSON.stringify(app, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput(app, options.xml, options.yaml));
     return;
   }
 
@@ -150,7 +142,7 @@ export async function applicationsCreateCommand(options: {
 
 export async function applicationsGetCommand(
   appId: string,
-  options: { json?: boolean }
+  options: { json?: boolean; xml?: boolean; yaml?: boolean }
 ): Promise<void> {
   requireAuth();
 
@@ -167,8 +159,8 @@ export async function applicationsGetCommand(
 
   const app = (result.data as any)?.data || result.data?.application;
 
-  if (options.json) {
-    console.log(JSON.stringify(app, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput(app, options.xml, options.yaml));
     return;
   }
 
@@ -203,6 +195,8 @@ export async function applicationsUpdateCommand(
     active?: boolean;
     inactive?: boolean;
     json?: boolean;
+    xml?: boolean;
+    yaml?: boolean;
   }
 ): Promise<void> {
   requireAuth();
@@ -231,15 +225,15 @@ export async function applicationsUpdateCommand(
 
   spinner.succeed('Application updated');
 
-  if (options.json) {
+  if (options.json || options.xml || options.yaml) {
     const updated = (result.data as any)?.data || result.data?.application;
-    console.log(JSON.stringify(updated, null, 2));
+    console.log(formatOutput(updated, options.xml, options.yaml));
   }
 }
 
 export async function applicationsDeleteCommand(
   appId: string,
-  options: { yes?: boolean; json?: boolean }
+  options: { yes?: boolean; json?: boolean; xml?: boolean; yaml?: boolean }
 ): Promise<void> {
   requireAuth();
 
@@ -274,7 +268,7 @@ export async function applicationsDeleteCommand(
 
   spinner.succeed('Application deleted');
 
-  if (options.json) {
-    console.log(JSON.stringify({ success: true, applicationId: appId }, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput({ success: true, applicationId: appId }, options.xml, options.yaml));
   }
 }

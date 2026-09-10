@@ -1,11 +1,8 @@
-import * as config from '../lib/config.js';
 import * as logger from '../lib/logger.js';
+import { requireAuth } from '../lib/requireAuth.js';
 
 export async function dashboardCommand(): Promise<void> {
-  if (!config.isAuthenticated()) {
-    logger.error('Not logged in. Run "hookbase login" first.');
-    process.exit(1);
-  }
+  requireAuth();
 
   // Dynamic import to avoid loading React when not needed
   const { runApp } = await import('../tui/App.js');
@@ -16,10 +13,7 @@ export async function tunnelMonitorCommand(
   tunnelId: string,
   port: string
 ): Promise<void> {
-  if (!config.isAuthenticated()) {
-    logger.error('Not logged in. Run "hookbase login" first.');
-    process.exit(1);
-  }
+  requireAuth();
 
   const localPort = parseInt(port, 10);
   if (isNaN(localPort) || localPort < 1 || localPort > 65535) {

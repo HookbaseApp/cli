@@ -1,42 +1,19 @@
 import * as http from 'http';
-import { input, confirm, select } from '@inquirer/prompts';
+import { input, confirm } from '@inquirer/prompts';
 import { ExitPromptError } from '@inquirer/core';
 import * as api from '../lib/api.js';
 import * as config from '../lib/config.js';
 import * as logger from '../lib/logger.js';
 import { TunnelClient, type TunnelFilter } from '../lib/tunnel.js';
+import { resolveWsUrl, parseSkipStatus, probeLocalhost } from '../lib/tunnelConnect.js';
+
+import { requireAuth } from '../lib/requireAuth.js';
+import { formatOutput } from '../lib/output.js';
 
 /** Helper to check if an error is a prompt cancellation (Ctrl+C) */
 function isPromptCancelled(error: unknown): boolean {
   return error instanceof ExitPromptError ||
     (error instanceof Error && error.name === 'ExitPromptError');
-}
-
-function requireAuth(): boolean {
-  if (!config.isAuthenticated()) {
-    if (config.hasStaleJwtToken()) {
-      logger.error('Your session uses a JWT token which is no longer supported. Please re-login with an API key: hookbase login');
-    } else {
-      logger.error('Not logged in. Run "hookbase login" with an API key.');
-    }
-    process.exit(1);
-  }
-  return true;
-}
-
-/** Rewrite wsUrl to match the configured API URL (for local dev) */
-function resolveWsUrl(wsUrl: string): string {
-  const apiUrl = config.getApiUrl();
-  // If using a custom API URL (e.g. http://localhost:8787), rewrite the wsUrl
-  if (apiUrl && !apiUrl.includes('hookbase.app')) {
-    const url = new URL(apiUrl);
-    const protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrlParsed = new URL(wsUrl);
-    wsUrlParsed.protocol = protocol;
-    wsUrlParsed.host = url.host;
-    return wsUrlParsed.toString();
-  }
-  return wsUrl;
 }
 
 function formatStatus(status: string): string {
@@ -52,7 +29,7 @@ function formatStatus(status: string): string {
   }
 }
 
-export async function tunnelsListCommand(options: { json?: boolean }): Promise<void> {
+export async function tunnelsListCommand(options: { json?: boolean; xml?: boolean; yaml?: boolean }): Promise<void> {
   requireAuth();
 
   const spinner = logger.spinner('Fetching tunnels...');
@@ -68,8 +45,8 @@ export async function tunnelsListCommand(options: { json?: boolean }): Promise<v
 
   const tunnels = result.data?.tunnels || [];
 
-  if (options.json) {
-    console.log(JSON.stringify(tunnels, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput(tunnels, options.xml, options.yaml));
     return;
   }
 
@@ -103,6 +80,8 @@ export async function tunnelsCreateCommand(options: {
   subdomain?: string;
   yes?: boolean;
   json?: boolean;
+  xml?: boolean;
+  yaml?: boolean;
 }): Promise<void> {
   requireAuth();
 
@@ -160,8 +139,8 @@ export async function tunnelsCreateCommand(options: {
 
   spinner.succeed('Tunnel created');
 
-  if (options.json) {
-    console.log(JSON.stringify(result.data, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput(result.data, options.xml, options.yaml));
     return;
   }
 
@@ -182,7 +161,7 @@ export async function tunnelsCreateCommand(options: {
 export async function tunnelsConnectCommand(
   tunnelId: string,
   port: string,
-  options: { json?: boolean }
+  _options: { json?: boolean; xml?: boolean; yaml?: boolean }
 ): Promise<void> {
   requireAuth();
 
@@ -190,6 +169,14 @@ export async function tunnelsConnectCommand(
   if (isNaN(localPort) || localPort < 1 || localPort > 65535) {
     logger.error('Invalid port number');
     process.exit(1);
+  }
+
+  // Check if port is accessible
+  const probeSpinner = logger.spinner(`Checking localhost:${localPort}...`);
+  if (await probeLocalhost(localPort)) {
+    probeSpinner.succeed(`localhost:${localPort} is accessible`);
+  } else {
+    probeSpinner.warn(`localhost:${localPort} not responding (tunnel will still work)`);
   }
 
   // First get the tunnel info
@@ -304,6 +291,8 @@ export async function tunnelsStartCommand(
     name?: string;
     subdomain?: string;
     json?: boolean;
+    xml?: boolean;
+    yaml?: boolean;
     filterSource?: string[];
     filterEvent?: string[];
     filterExpr?: string;
@@ -321,19 +310,10 @@ export async function tunnelsStartCommand(
   // Check if port is accessible
   const spinner = logger.spinner(`Checking localhost:${localPort}...`);
 
-  try {
-    const testResult = await fetch(`http://localhost:${localPort}`, {
-      method: 'HEAD',
-      signal: AbortSignal.timeout(2000),
-    }).catch(() => null);
-
-    if (!testResult) {
-      spinner.warn(`localhost:${localPort} not responding (tunnel will still work)`);
-    } else {
-      spinner.succeed(`localhost:${localPort} is accessible`);
-    }
-  } catch {
-    spinner.warn(`Could not verify localhost:${localPort} (tunnel will still work)`);
+  if (await probeLocalhost(localPort)) {
+    spinner.succeed(`localhost:${localPort} is accessible`);
+  } else {
+    spinner.warn(`localhost:${localPort} not responding (tunnel will still work)`);
   }
 
   // Create new tunnel
@@ -376,18 +356,7 @@ export async function tunnelsStartCommand(
   ].join('\n'));
   logger.log('');
 
-  // Validate --filter-skip-status up front: an invalid value would otherwise
-  // become NaN and make the relay return 504 for every filtered webhook.
-  let skipStatus: number | undefined;
-  if (options.filterSkipStatus) {
-    const parsed = parseInt(options.filterSkipStatus, 10);
-    if (!Number.isInteger(parsed) || parsed < 100 || parsed > 599) {
-      logger.warn(`Invalid --filter-skip-status "${options.filterSkipStatus}" (expected 100-599); using 204.`);
-      skipStatus = 204;
-    } else {
-      skipStatus = parsed;
-    }
-  }
+  const skipStatus = parseSkipStatus(options.filterSkipStatus);
 
   // Build filter from CLI flags. None of the filter flags set => no filter.
   const filter: TunnelFilter | undefined =
@@ -476,7 +445,7 @@ export async function tunnelsStartCommand(
 
 export async function tunnelsDisconnectCommand(
   tunnelId: string,
-  options: { yes?: boolean; json?: boolean }
+  options: { yes?: boolean; json?: boolean; xml?: boolean; yaml?: boolean }
 ): Promise<void> {
   requireAuth();
 
@@ -511,14 +480,14 @@ export async function tunnelsDisconnectCommand(
 
   spinner.succeed('Tunnel disconnected');
 
-  if (options.json) {
-    console.log(JSON.stringify({ success: true, tunnelId }, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput({ success: true, tunnelId }, options.xml, options.yaml));
   }
 }
 
 export async function tunnelsDeleteCommand(
   tunnelId: string,
-  options: { yes?: boolean; json?: boolean }
+  options: { yes?: boolean; json?: boolean; xml?: boolean; yaml?: boolean }
 ): Promise<void> {
   requireAuth();
 
@@ -553,14 +522,14 @@ export async function tunnelsDeleteCommand(
 
   spinner.succeed('Tunnel deleted');
 
-  if (options.json) {
-    console.log(JSON.stringify({ success: true, tunnelId }, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput({ success: true, tunnelId }, options.xml, options.yaml));
   }
 }
 
 export async function tunnelsStatusCommand(
   tunnelId: string,
-  options: { json?: boolean }
+  options: { json?: boolean; xml?: boolean; yaml?: boolean }
 ): Promise<void> {
   requireAuth();
 
@@ -577,8 +546,8 @@ export async function tunnelsStatusCommand(
 
   const { tunnel, liveStatus } = result.data || {};
 
-  if (options.json) {
-    console.log(JSON.stringify(result.data, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput(result.data, options.xml, options.yaml));
     return;
   }
 
@@ -610,7 +579,7 @@ export async function tunnelsStatusCommand(
 
 export async function tunnelsGetCommand(
   tunnelId: string,
-  options: { json?: boolean }
+  options: { json?: boolean; xml?: boolean; yaml?: boolean }
 ): Promise<void> {
   requireAuth();
 
@@ -627,8 +596,8 @@ export async function tunnelsGetCommand(
 
   const tunnel = result.data?.tunnel;
 
-  if (options.json) {
-    console.log(JSON.stringify(tunnel, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput(tunnel, options.xml, options.yaml));
     return;
   }
 
@@ -665,6 +634,8 @@ export async function tunnelsProxyCommand(
     hosts?: string;
     tunnelId?: string;
     json?: boolean;
+    xml?: boolean;
+    yaml?: boolean;
   }
 ): Promise<void> {
   requireAuth();

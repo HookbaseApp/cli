@@ -14,12 +14,16 @@ import {
   endpointsDeleteCommand,
   endpointsTestCommand,
   endpointsRotateSecretCommand,
+  endpointsResetCircuitCommand,
+  endpointsReplayFailedCommand,
 } from '../endpoints.js';
 import { sendCommand } from '../send.js';
 import {
   outboundListCommand,
   outboundGetCommand,
   outboundRetryCommand,
+  outboundAttemptsCommand,
+  outboundStatsCommand,
   dlqListCommand,
   dlqGetCommand,
   dlqRetryCommand,
@@ -38,6 +42,8 @@ export function registerWebhooksCommands(parent: Command): Command {
     .alias('ls')
     .description('List all webhook applications')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(applicationsListCommand);
 
   webhooks
@@ -49,6 +55,8 @@ export function registerWebhooksCommands(parent: Command): Command {
     .option('-r, --rate-limit <limit>', 'Rate limit per minute')
     .option('-y, --yes', 'Skip confirmation')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(applicationsCreateCommand);
 
   webhooks
@@ -56,6 +64,8 @@ export function registerWebhooksCommands(parent: Command): Command {
     .alias('show')
     .description('Get application details')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(applicationsGetCommand);
 
   webhooks
@@ -67,6 +77,8 @@ export function registerWebhooksCommands(parent: Command): Command {
     .option('--active', 'Set application as active')
     .option('--inactive', 'Set application as inactive')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(applicationsUpdateCommand);
 
   webhooks
@@ -75,6 +87,8 @@ export function registerWebhooksCommands(parent: Command): Command {
     .description('Delete an application')
     .option('-y, --yes', 'Skip confirmation')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(applicationsDeleteCommand);
 
   return webhooks;
@@ -91,6 +105,8 @@ export function registerEndpointsCommands(parent: Command): Command {
     .description('List all webhook endpoints')
     .option('-a, --app <appId>', 'Filter by application')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(endpointsListCommand);
 
   endpoints
@@ -106,6 +122,8 @@ export function registerEndpointsCommands(parent: Command): Command {
     .option('--no-static-ip', 'Disable static IP delivery')
     .option('-y, --yes', 'Skip confirmation')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(endpointsCreateCommand);
 
   endpoints
@@ -113,6 +131,8 @@ export function registerEndpointsCommands(parent: Command): Command {
     .alias('show')
     .description('Get endpoint details')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(endpointsGetCommand);
 
   endpoints
@@ -128,6 +148,8 @@ export function registerEndpointsCommands(parent: Command): Command {
     .option('--static-ip', 'Enable static IP delivery')
     .option('--no-static-ip', 'Disable static IP delivery')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(endpointsUpdateCommand);
 
   endpoints
@@ -136,12 +158,16 @@ export function registerEndpointsCommands(parent: Command): Command {
     .description('Delete an endpoint')
     .option('-y, --yes', 'Skip confirmation')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(endpointsDeleteCommand);
 
   endpoints
     .command('test <endpointId>')
     .description('Test an endpoint with a sample webhook')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(endpointsTestCommand);
 
   endpoints
@@ -149,7 +175,27 @@ export function registerEndpointsCommands(parent: Command): Command {
     .description('Rotate the signing secret for an endpoint')
     .option('-y, --yes', 'Skip confirmation')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(endpointsRotateSecretCommand);
+
+  endpoints
+    .command('reset-circuit <endpointId>')
+    .description('Reset the circuit breaker for an endpoint back to closed')
+    .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
+    .action(endpointsResetCircuitCommand);
+
+  endpoints
+    .command('replay-failed <endpointId>')
+    .description('Bulk replay failed/exhausted messages for an endpoint')
+    .option('--since <iso>', 'Only replay messages created at or after this ISO timestamp (recover mode, cap 500)')
+    .option('--include-unattempted', 'Also replay messages that were never attempted')
+    .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
+    .action(endpointsReplayFailedCommand);
 
   return endpoints;
 }
@@ -164,6 +210,8 @@ export function registerSendCommand(parent: Command): Command {
     .option('-f, --file <path>', 'Read payload from file')
     .option('--endpoints <ids>', 'Comma-separated endpoint IDs (default: all)')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(sendCommand);
 
   return send;
@@ -184,6 +232,8 @@ export function registerMessagesCommands(parent: Command): Command {
     .option('-t, --event-type <type>', 'Filter by event type')
     .option('-l, --limit <number>', 'Number of messages to show', '50')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(outboundListCommand);
 
   messages
@@ -191,6 +241,8 @@ export function registerMessagesCommands(parent: Command): Command {
     .alias('show')
     .description('Get message details')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(outboundGetCommand);
 
   messages
@@ -198,7 +250,17 @@ export function registerMessagesCommands(parent: Command): Command {
     .description('Retry a failed message')
     .option('-y, --yes', 'Skip confirmation')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(outboundRetryCommand);
+
+  messages
+    .command('attempts <messageId>')
+    .description('List delivery attempts for a message')
+    .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
+    .action(outboundAttemptsCommand);
 
   return messages;
 }
@@ -216,6 +278,8 @@ export function registerDlqCommands(parent: Command): Command {
     .option('-e, --endpoint <endpointId>', 'Filter by endpoint')
     .option('-l, --limit <number>', 'Number of messages to show', '50')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(dlqListCommand);
 
   dlq
@@ -223,6 +287,8 @@ export function registerDlqCommands(parent: Command): Command {
     .alias('show')
     .description('Get DLQ message details')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(dlqGetCommand);
 
   dlq
@@ -230,6 +296,8 @@ export function registerDlqCommands(parent: Command): Command {
     .description('Retry a DLQ message')
     .option('-y, --yes', 'Skip confirmation')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(dlqRetryCommand);
 
   dlq
@@ -240,6 +308,8 @@ export function registerDlqCommands(parent: Command): Command {
     .option('-l, --limit <number>', 'Max messages to retry', '50')
     .option('-y, --yes', 'Skip confirmation (retry all)')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(dlqBulkRetryCommand);
 
   dlq
@@ -248,6 +318,8 @@ export function registerDlqCommands(parent: Command): Command {
     .description('Delete a DLQ message')
     .option('-y, --yes', 'Skip confirmation')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(dlqDeleteCommand);
 
   return dlq;
@@ -256,13 +328,21 @@ export function registerDlqCommands(parent: Command): Command {
 export function registerOutboundGroup(parent: Command): Command {
   const outbound = parent
     .command('outbound')
-    .description('Outbound webhook management (webhooks, endpoints, send, messages, dlq)');
+    .description('Outbound webhook management (webhooks, endpoints, send, messages, dlq, stats)');
 
   registerWebhooksCommands(outbound);
   registerEndpointsCommands(outbound);
   registerSendCommand(outbound);
   registerMessagesCommands(outbound);
   registerDlqCommands(outbound);
+
+  outbound
+    .command('stats')
+    .description('Show outbound delivery stats summary and DLQ breakdown')
+    .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
+    .action(outboundStatsCommand);
 
   // Hidden backward-compat: `hookbase outbound list/get/retry` still works
   // (these were the old direct subcommands of `outbound`)
@@ -274,17 +354,23 @@ export function registerOutboundGroup(parent: Command): Command {
     .option('-t, --event-type <type>', 'Filter by event type')
     .option('-l, --limit <number>', 'Number of messages to show', '50')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(outboundListCommand);
 
   outbound
     .command('get <messageId>', { hidden: true })
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(outboundGetCommand);
 
   outbound
     .command('retry <messageId>', { hidden: true })
     .option('-y, --yes', 'Skip confirmation')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(outboundRetryCommand);
 
   return outbound;

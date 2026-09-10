@@ -1,9 +1,11 @@
 import { input, confirm, select, checkbox, number } from '@inquirer/prompts';
 import { ExitPromptError } from '@inquirer/core';
 import * as api from '../lib/api.js';
-import * as config from '../lib/config.js';
 import * as logger from '../lib/logger.js';
-import { askAdvanced, gatedPrompt, ensureFeature, featureEnabled, loadFeatures } from '../lib/advanced.js';
+import { askAdvanced, gatedPrompt, ensureFeature, loadFeatures } from '../lib/advanced.js';
+
+import { requireAuth } from '../lib/requireAuth.js';
+import { formatOutput } from '../lib/output.js';
 
 /** Helper to check if an error is a prompt cancellation (Ctrl+C) */
 function isPromptCancelled(error: unknown): boolean {
@@ -252,19 +254,7 @@ async function runRouteAdvancedWizard(
   }, undefined);
 }
 
-function requireAuth(): boolean {
-  if (!config.isAuthenticated()) {
-    if (config.hasStaleJwtToken()) {
-      logger.error('Your session uses a JWT token which is no longer supported. Please re-login with an API key: hookbase login');
-    } else {
-      logger.error('Not logged in. Run "hookbase login" with an API key.');
-    }
-    process.exit(1);
-  }
-  return true;
-}
-
-export async function routesListCommand(options: { json?: boolean }): Promise<void> {
+export async function routesListCommand(options: { json?: boolean; xml?: boolean; yaml?: boolean }): Promise<void> {
   requireAuth();
 
   const spinner = logger.spinner('Fetching routes...');
@@ -280,8 +270,8 @@ export async function routesListCommand(options: { json?: boolean }): Promise<vo
 
   const routes = result.data?.routes || [];
 
-  if (options.json) {
-    console.log(JSON.stringify(routes, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput(routes, options.xml, options.yaml));
     return;
   }
 
@@ -393,6 +383,8 @@ export async function routesCreateCommand(options: {
   notifyChannel?: string[];
   yes?: boolean;
   json?: boolean;
+  xml?: boolean;
+  yaml?: boolean;
 }): Promise<void> {
   requireAuth();
 
@@ -500,8 +492,8 @@ export async function routesCreateCommand(options: {
     }
   }
 
-  if (options.json) {
-    console.log(JSON.stringify(route, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput(route, options.xml, options.yaml));
     return;
   }
 
@@ -519,7 +511,7 @@ export async function routesCreateCommand(options: {
 
 export async function routesGetCommand(
   routeId: string,
-  options: { json?: boolean }
+  options: { json?: boolean; xml?: boolean; yaml?: boolean }
 ): Promise<void> {
   requireAuth();
 
@@ -536,8 +528,8 @@ export async function routesGetCommand(
 
   const route: any = result.data?.route;
 
-  if (options.json) {
-    console.log(JSON.stringify(route, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput(route, options.xml, options.yaml));
     return;
   }
 
@@ -571,6 +563,8 @@ export async function routesUpdateCommand(
     active?: boolean;
     inactive?: boolean;
     json?: boolean;
+    xml?: boolean;
+    yaml?: boolean;
   }
 ): Promise<void> {
   requireAuth();
@@ -600,14 +594,14 @@ export async function routesUpdateCommand(
 
   spinner.succeed('Route updated');
 
-  if (options.json) {
-    console.log(JSON.stringify(result.data?.route, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput(result.data?.route, options.xml, options.yaml));
   }
 }
 
 export async function routesDeleteCommand(
   routeId: string,
-  options: { yes?: boolean; json?: boolean }
+  options: { yes?: boolean; json?: boolean; xml?: boolean; yaml?: boolean }
 ): Promise<void> {
   requireAuth();
 
@@ -642,7 +636,111 @@ export async function routesDeleteCommand(
 
   spinner.succeed('Route deleted');
 
-  if (options.json) {
-    console.log(JSON.stringify({ success: true, routeId }, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput({ success: true, routeId }, options.xml, options.yaml));
+  }
+}
+
+export async function routesCircuitStatusCommand(
+  routeId: string,
+  options: { json?: boolean; xml?: boolean; yaml?: boolean }
+): Promise<void> {
+  requireAuth();
+  await loadFeatures();
+  if (!ensureFeature('circuit_breaker', 'Circuit breaker')) return;
+
+  const spinner = logger.spinner('Fetching circuit breaker status...');
+  const result = await api.getRouteCircuitStatus(routeId);
+
+  if (result.error) {
+    spinner.fail('Failed to fetch circuit breaker status');
+    logger.error(result.error);
+    return;
+  }
+
+  spinner.stop();
+
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput(result.data, options.xml, options.yaml));
+    return;
+  }
+
+  const s = result.data;
+  if (!s) { logger.error('Route not found'); return; }
+
+  const stateColor = s.circuitState === 'open' ? logger.red : s.circuitState === 'half_open' ? logger.yellow : logger.green;
+  logger.log('');
+  logger.log(logger.bold('Circuit Breaker Status'));
+  logger.log('');
+  logger.log(`State:                 ${stateColor(s.circuitState)}`);
+  logger.log(`Consecutive Failures:  ${s.consecutiveFailures}`);
+  logger.log(`Failure Threshold:     ${s.failureThreshold}`);
+  logger.log(`Cooldown:              ${s.cooldownSeconds}s`);
+  logger.log(`Probe Success Needed:  ${s.probeSuccessThreshold}`);
+  logger.log(`Probe Attempts:        ${s.probeAttempts}`);
+  if (s.circuitOpenedAt) {
+    logger.log(`Opened At:             ${s.circuitOpenedAt}`);
+  }
+  if (s.timeUntilProbeSeconds !== null) {
+    logger.log(`Time Until Probe:      ${s.timeUntilProbeSeconds}s`);
+  }
+  logger.log('');
+}
+
+export async function routesResetCircuitCommand(
+  routeId: string,
+  options: { json?: boolean; xml?: boolean; yaml?: boolean }
+): Promise<void> {
+  requireAuth();
+  await loadFeatures();
+  if (!ensureFeature('circuit_breaker', 'Circuit breaker')) return;
+
+  const spinner = logger.spinner('Resetting circuit breaker...');
+  const result = await api.resetRouteCircuit(routeId);
+
+  if (result.error) {
+    spinner.fail('Failed to reset circuit breaker');
+    logger.error(result.error);
+    return;
+  }
+
+  spinner.succeed(`Circuit breaker reset (was: ${result.data?.previousState ?? 'closed'})`);
+
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput(result.data, options.xml, options.yaml));
+  }
+}
+
+export async function routesCircuitConfigCommand(
+  routeId: string,
+  options: { cooldown?: string; failureThreshold?: string; probeSuccessThreshold?: string; json?: boolean; xml?: boolean; yaml?: boolean }
+): Promise<void> {
+  requireAuth();
+  await loadFeatures();
+  if (!ensureFeature('circuit_breaker', 'Circuit breaker')) return;
+
+  const updateData: { circuitCooldownSeconds?: number; circuitFailureThreshold?: number; circuitProbeSuccessThreshold?: number } = {};
+  if (options.cooldown !== undefined) updateData.circuitCooldownSeconds = parseInt(options.cooldown, 10);
+  if (options.failureThreshold !== undefined) updateData.circuitFailureThreshold = parseInt(options.failureThreshold, 10);
+  if (options.probeSuccessThreshold !== undefined) updateData.circuitProbeSuccessThreshold = parseInt(options.probeSuccessThreshold, 10);
+
+  if (Object.keys(updateData).length === 0) {
+    logger.error('No updates specified. Use --cooldown, --failure-threshold, or --probe-success-threshold');
+    return;
+  }
+
+  const spinner = logger.spinner('Updating circuit breaker config...');
+  const result = await api.updateRouteCircuitConfig(routeId, updateData);
+
+  if (result.error) {
+    spinner.fail('Failed to update circuit breaker config');
+    logger.error(result.error);
+    return;
+  }
+
+  spinner.succeed('Circuit breaker config updated');
+
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput(result.data, options.xml, options.yaml));
   }
 }

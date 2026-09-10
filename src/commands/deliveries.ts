@@ -1,19 +1,9 @@
 import { confirm, checkbox } from '@inquirer/prompts';
 import * as api from '../lib/api.js';
-import * as config from '../lib/config.js';
 import * as logger from '../lib/logger.js';
 
-function requireAuth(): boolean {
-  if (!config.isAuthenticated()) {
-    if (config.hasStaleJwtToken()) {
-      logger.error('Your session uses a JWT token which is no longer supported. Please re-login with an API key: hookbase login');
-    } else {
-      logger.error('Not logged in. Run "hookbase login" with an API key.');
-    }
-    process.exit(1);
-  }
-  return true;
-}
+import { requireAuth } from '../lib/requireAuth.js';
+import { formatOutput } from '../lib/output.js';
 
 function formatDate(dateStr: string): string {
   const date = new Date(dateStr);
@@ -49,6 +39,8 @@ export async function deliveriesListCommand(options: {
   destination?: string;
   status?: string;
   json?: boolean;
+  xml?: boolean;
+  yaml?: boolean;
 }): Promise<void> {
   requireAuth();
 
@@ -71,8 +63,8 @@ export async function deliveriesListCommand(options: {
 
   const deliveries = result.data?.deliveries || [];
 
-  if (options.json) {
-    console.log(JSON.stringify(deliveries, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput(deliveries, options.xml, options.yaml));
     return;
   }
 
@@ -100,7 +92,7 @@ export async function deliveriesListCommand(options: {
 
 export async function deliveriesGetCommand(
   deliveryId: string,
-  options: { json?: boolean }
+  options: { json?: boolean; xml?: boolean; yaml?: boolean }
 ): Promise<void> {
   requireAuth();
 
@@ -117,8 +109,8 @@ export async function deliveriesGetCommand(
 
   const delivery: any = result.data?.delivery;
 
-  if (options.json) {
-    console.log(JSON.stringify(delivery, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput(delivery, options.xml, options.yaml));
     return;
   }
 
@@ -186,7 +178,7 @@ export async function deliveriesGetCommand(
 
 export async function deliveriesReplayCommand(
   deliveryId: string,
-  options: { yes?: boolean; json?: boolean }
+  options: { yes?: boolean; json?: boolean; xml?: boolean; yaml?: boolean }
 ): Promise<void> {
   requireAuth();
 
@@ -212,8 +204,8 @@ export async function deliveriesReplayCommand(
 
   spinner.succeed('Delivery replayed');
 
-  if (options.json) {
-    console.log(JSON.stringify(result.data?.delivery, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput(result.data?.delivery, options.xml, options.yaml));
     return;
   }
 
@@ -230,6 +222,8 @@ export async function deliveriesBulkReplayCommand(options: {
   limit?: string;
   yes?: boolean;
   json?: boolean;
+  xml?: boolean;
+  yaml?: boolean;
 }): Promise<void> {
   requireAuth();
 
@@ -296,8 +290,8 @@ export async function deliveriesBulkReplayCommand(options: {
 
   replaySpinner.succeed('Bulk replay completed');
 
-  if (options.json) {
-    console.log(JSON.stringify(result.data, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput(result.data, options.xml, options.yaml));
     return;
   }
 

@@ -249,7 +249,7 @@ function CronDetail({ jobId, jobs, onBack, onRefresh }: {
             setExecutions(execResult.data.executions);
           }
         }
-      } catch (err) {
+      } catch {
         setMessage('Failed to trigger job');
       }
       setTriggering(false);
@@ -268,7 +268,7 @@ function CronDetail({ jobId, jobs, onBack, onRefresh }: {
           setMessage(newActiveState ? 'Cron job enabled' : 'Cron job disabled');
           onRefresh();
         }
-      } catch (err) {
+      } catch {
         setMessage('Failed to update job');
       }
       setToggling(false);
@@ -287,7 +287,7 @@ function CronDetail({ jobId, jobs, onBack, onRefresh }: {
           setMessage(newStaticIpState ? 'Static IP enabled' : 'Static IP disabled');
           onRefresh();
         }
-      } catch (err) {
+      } catch {
         setMessage('Failed to update job');
       }
       setToggling(false);
@@ -306,7 +306,7 @@ function CronDetail({ jobId, jobs, onBack, onRefresh }: {
           setMessage('Cron job deleted successfully');
           setTimeout(() => { onRefresh(); onBack(); }, 1500);
         }
-      } catch (err) {
+      } catch {
         setMessage('Failed to delete');
         setConfirmDelete(false);
         setTimeout(() => { busy.current = false; }, 300);
@@ -459,7 +459,7 @@ function CreateCron({ onBack, onCreated }: {
   const [schedule, setSchedule] = useState('');
   const [url, setUrl] = useState('');
   const [method, setMethod] = useState('POST');
-  const [useStaticIp, setUseStaticIp] = useState(false);
+  const [_useStaticIp, setUseStaticIp] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [createdJob, setCreatedJob] = useState<api.CronJob | null>(null);
 

@@ -69,11 +69,6 @@ function ApiKeyList({ apiKeys, onSelect, onCreate }: {
     }
   });
 
-  const formatDate = (dateStr: string | null) => {
-    if (!dateStr) return 'Never';
-    return new Date(dateStr).toLocaleDateString();
-  };
-
   return (
     <Box flexDirection="column">
       <Box marginBottom={1}>
@@ -193,7 +188,7 @@ function ApiKeyDetail({ keyId, apiKeys, onBack, onRefresh }: {
           setMessage('API key revoked successfully');
           setTimeout(() => { onRefresh(); onBack(); }, 1500);
         }
-      } catch (err) {
+      } catch {
         setMessage('Failed to revoke');
         setAction('none');
         setTimeout(() => { busy.current = false; }, 300);
@@ -300,7 +295,7 @@ function CreateApiKey({ onBack, onCreated }: {
 }) {
   const [step, setStep] = useState<'name' | 'scopes' | 'creating' | 'done' | 'error'>('name');
   const [name, setName] = useState('');
-  const [selectedScopes, setSelectedScopes] = useState<string[]>(['read', 'write']);
+  const [_selectedScopes, setSelectedScopes] = useState<string[]>(['read', 'write']);
   const [scopeIndex, setScopeIndex] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [createdKey, setCreatedKey] = useState<string | null>(null);

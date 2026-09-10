@@ -12,6 +12,9 @@ interface OverviewProps {
     cronJobs: api.CronJob[];
     apiKeys: api.ApiKey[];
     deliveries: api.Delivery[];
+    // True aggregate counts (last 24h), not capped by the `events`/`deliveries`
+    // list fetch limits. Null if the analytics call hasn't loaded/failed.
+    overview: { totalEvents: number; successfulDeliveries: number; failedDeliveries: number } | null;
   };
   onNavigate: (tab: string) => void;
 }
@@ -22,9 +25,14 @@ export function OverviewView({ data, onNavigate }: OverviewProps) {
   const activeDests = data.destinations.filter(d => (d as any).is_active ?? (d as any).isActive).length;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const activeRoutes = data.routes.filter(r => (r as any).is_active ?? (r as any).isActive).length;
-  const recentEvents = data.events.length;
-  const successfulDeliveries = data.deliveries.filter(d => d.status === 'delivered').length;
-  const failedDeliveries = data.deliveries.filter(d => d.status === 'failed' || d.status === 'failed_over' || d.status === 'schema_failed').length;
+  // Prefer real 24h totals from the analytics endpoint; the `events`/`deliveries`
+  // lists are fetched with a hard limit (20/50) for the "Recent Activity" table
+  // and undercount once real traffic exceeds that cap.
+  const recentEvents = data.overview?.totalEvents ?? data.events.length;
+  const successfulDeliveries = data.overview?.successfulDeliveries
+    ?? data.deliveries.filter(d => d.status === 'delivered').length;
+  const failedDeliveries = data.overview?.failedDeliveries
+    ?? data.deliveries.filter(d => d.status === 'failed' || d.status === 'failed_over' || d.status === 'schema_failed').length;
 
   const [selectedCard, setSelectedCard] = React.useState(0);
   const cards = ['sources', 'destinations', 'routes', 'events', 'deliveries'];
@@ -135,9 +143,9 @@ export function OverviewView({ data, onNavigate }: OverviewProps) {
           >
             <Box flexDirection="column" alignItems="center">
               <Text bold>
-                <Text color="green">{successfulDeliveries}</Text>
-                <Text dimColor>/</Text>
-                <Text color="red">{failedDeliveries}</Text>
+                <Text color="green">✓{successfulDeliveries}</Text>
+                <Text>  </Text>
+                <Text color={failedDeliveries > 0 ? 'red' : 'gray'}>✗{failedDeliveries}</Text>
               </Text>
               <Text dimColor>Deliveries</Text>
             </Box>

@@ -1,6 +1,22 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Box, Text, useInput } from 'ink';
+import Spinner from 'ink-spinner';
 import * as api from '../../lib/api.js';
+import { parseJsonField } from '../../lib/parseJson.js';
+
+const MAX_PAYLOAD_CHARS = 4000;
+
+function formatPayloadPreview(payload: unknown, eventId: string): string {
+  if (payload === null || payload === undefined) {
+    return '(empty payload)';
+  }
+  const text = typeof payload === 'string' ? payload : JSON.stringify(payload, null, 2);
+  if (text.length > MAX_PAYLOAD_CHARS) {
+    return `${text.slice(0, MAX_PAYLOAD_CHARS)}\n… truncated (${text.length} bytes total). ` +
+      `Use "hookbase events get ${eventId}" for the full payload.`;
+  }
+  return text;
+}
 
 interface EventsViewProps {
   events: api.Event[];
@@ -101,6 +117,47 @@ function EventDetail({ eventId, events, onBack }: {
 }) {
   const event = events.find(e => e.id === eventId);
   const [showPayload, setShowPayload] = useState(false);
+  const [fetchedPayload, setFetchedPayload] = useState<unknown>(undefined);
+  const [payloadFetched, setPayloadFetched] = useState(false);
+  const [payloadLoading, setPayloadLoading] = useState(false);
+  const [payloadError, setPayloadError] = useState<string | null>(null);
+
+  const payloadKey = event?.payloadKey || event?.payload_key || '';
+  const isTransient = payloadKey === 'transient:inline' || payloadKey.startsWith('transient/');
+
+  // Lazy-load the payload only once the user asks to see it — the events list
+  // this view is seeded from doesn't include it, and GET /api/events/:id returns
+  // payload as a sibling of event, not nested inside it. Cached via payloadFetched
+  // so toggling 'p' off/on again doesn't refetch (payload itself may legitimately
+  // be null). Relies on the EventsView call site keying this component by eventId,
+  // so a fresh event gets fresh state.
+  useEffect(() => {
+    if (!showPayload || !event || isTransient || payloadFetched || payloadLoading) return;
+    let cancelled = false;
+    setPayloadLoading(true);
+    setPayloadError(null);
+    api.getEvent(event.id)
+      .then((res) => {
+        if (cancelled) return;
+        if (res.error) {
+          setPayloadError(res.error);
+        } else {
+          setFetchedPayload(res.data?.payload);
+          setPayloadFetched(true);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setPayloadError(err instanceof Error ? err.message : 'Failed to load payload');
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setPayloadLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [showPayload, event, isTransient, payloadFetched, payloadLoading]);
 
   useInput((input, key) => {
     if (key.escape || input === 'b') {
@@ -154,7 +211,7 @@ function EventDetail({ eventId, events, onBack }: {
             if (method) return method;
             // Try headers (stored as :method in new events)
             if (event.headers) {
-              const headers = typeof event.headers === 'string' ? JSON.parse(event.headers) : event.headers;
+              const headers = parseJsonField(event.headers, {} as Record<string, string>);
               if (headers[':method']) return headers[':method'];
             }
             return '-';
@@ -176,14 +233,19 @@ function EventDetail({ eventId, events, onBack }: {
         </Box>
         <Box>
           <Box width={16}><Text dimColor>Deliveries:</Text></Box>
-          <Text>{event.deliveryCount ?? event.delivery_count ?? 0}</Text>
+          <Text>
+            {event.deliveryStats?.total ?? event.deliveryCount ?? event.delivery_count ?? 0}
+            {event.deliveryStats && event.deliveryStats.failed > 0 && (
+              <Text color="red"> ({event.deliveryStats.failed} failed)</Text>
+            )}
+          </Text>
         </Box>
 
         {event.headers && (
           <Box marginTop={1} flexDirection="column">
             <Text bold dimColor>Headers:</Text>
             <Box marginLeft={2} flexDirection="column">
-              {Object.entries(typeof event.headers === 'string' ? JSON.parse(event.headers) : event.headers)
+              {Object.entries(parseJsonField(event.headers, {} as Record<string, string>))
                 .slice(0, 5)
                 .map(([key, value]) => (
                   <Box key={key}>
@@ -196,8 +258,7 @@ function EventDetail({ eventId, events, onBack }: {
         )}
 
         {/* Transient mode indicator */}
-        {((event as any).payloadKey === 'transient:inline' || (event as any).payload_key === 'transient:inline' ||
-          ((event as any).payloadKey || (event as any).payload_key || '').startsWith('transient/')) && (
+        {isTransient && (
           <Box marginTop={1}>
             <Text color="magenta">Transient event - payload was not stored (compliance mode)</Text>
           </Box>
@@ -207,13 +268,16 @@ function EventDetail({ eventId, events, onBack }: {
           <Box marginTop={1} flexDirection="column">
             <Text bold dimColor>Payload:</Text>
             <Box marginLeft={2} borderStyle="single" borderColor="gray" paddingX={1}>
-              {((event as any).payloadKey === 'transient:inline' || (event as any).payload_key === 'transient:inline') ? (
+              {isTransient ? (
                 <Text color="magenta">Payload not available - transient mode (not stored)</Text>
+              ) : payloadLoading ? (
+                <Text color="yellow"><Spinner type="dots" /> Loading payload...</Text>
+              ) : payloadError ? (
+                <Text color="red">Failed to load payload: {payloadError}</Text>
+              ) : payloadFetched ? (
+                <Text dimColor>{formatPayloadPreview(fetchedPayload, event.id)}</Text>
               ) : (
-                <Text dimColor>
-                  Payload size: {event.payload_size ?? 'unknown'} bytes
-                  {'\n'}Use CLI command: hookbase events get {event.id}
-                </Text>
+                <Text dimColor>Loading payload...</Text>
               )}
             </Box>
           </Box>
@@ -234,6 +298,7 @@ export function EventsView({ events, subView, onNavigate }: EventsViewProps) {
     const eventId = subView.replace('detail:', '');
     return (
       <EventDetail
+        key={eventId}
         eventId={eventId}
         events={events}
         onBack={() => onNavigate(null)}

@@ -2,25 +2,15 @@ import { input, select, editor } from '@inquirer/prompts';
 import { ExitPromptError } from '@inquirer/core';
 import * as fs from 'fs';
 import * as api from '../lib/api.js';
-import * as config from '../lib/config.js';
 import * as logger from '../lib/logger.js';
+
+import { requireAuth } from '../lib/requireAuth.js';
+import { formatOutput } from '../lib/output.js';
 
 /** Helper to check if an error is a prompt cancellation (Ctrl+C) */
 function isPromptCancelled(error: unknown): boolean {
   return error instanceof ExitPromptError ||
     (error instanceof Error && error.name === 'ExitPromptError');
-}
-
-function requireAuth(): boolean {
-  if (!config.isAuthenticated()) {
-    if (config.hasStaleJwtToken()) {
-      logger.error('Your session uses a JWT token which is no longer supported. Please re-login with an API key: hookbase login');
-    } else {
-      logger.error('Not logged in. Run "hookbase login" with an API key.');
-    }
-    process.exit(1);
-  }
-  return true;
 }
 
 export async function sendCommand(options: {
@@ -30,6 +20,8 @@ export async function sendCommand(options: {
   file?: string;
   endpoints?: string;
   json?: boolean;
+  xml?: boolean;
+  yaml?: boolean;
 }): Promise<void> {
   requireAuth();
 
@@ -131,8 +123,8 @@ export async function sendCommand(options: {
 
   spinner.succeed('Webhook event sent');
 
-  if (options.json) {
-    console.log(JSON.stringify(result.data, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput(result.data, options.xml, options.yaml));
     return;
   }
 

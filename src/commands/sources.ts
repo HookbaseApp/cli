@@ -5,6 +5,9 @@ import * as config from '../lib/config.js';
 import * as logger from '../lib/logger.js';
 import { askAdvanced, gatedPrompt, ensureFeature, loadFeatures } from '../lib/advanced.js';
 
+import { requireAuth } from '../lib/requireAuth.js';
+import { formatOutput } from '../lib/output.js';
+
 /** Helper to check if an error is a prompt cancellation (Ctrl+C) */
 function isPromptCancelled(error: unknown): boolean {
   return error instanceof ExitPromptError ||
@@ -53,19 +56,7 @@ const PROVIDERS = [
   { name: 'Twilio', value: 'twilio' },
 ];
 
-function requireAuth(): boolean {
-  if (!config.isAuthenticated()) {
-    if (config.hasStaleJwtToken()) {
-      logger.error('Your session uses a JWT token which is no longer supported. Please re-login with an API key: hookbase login');
-    } else {
-      logger.error('Not logged in. Run "hookbase login" with an API key.');
-    }
-    process.exit(1);
-  }
-  return true;
-}
-
-export async function sourcesListCommand(options: { json?: boolean }): Promise<void> {
+export async function sourcesListCommand(options: { json?: boolean; xml?: boolean; yaml?: boolean }): Promise<void> {
   requireAuth();
 
   const spinner = logger.spinner('Fetching sources...');
@@ -81,8 +72,8 @@ export async function sourcesListCommand(options: { json?: boolean }): Promise<v
 
   const sources = result.data?.sources || [];
 
-  if (options.json) {
-    console.log(JSON.stringify(sources, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput(sources, options.xml, options.yaml));
     return;
   }
 
@@ -193,6 +184,8 @@ export async function sourcesCreateCommand(options: {
   dedupWindow?: string;
   yes?: boolean;
   json?: boolean;
+  xml?: boolean;
+  yaml?: boolean;
 }): Promise<void> {
   requireAuth();
 
@@ -324,8 +317,8 @@ export async function sourcesCreateCommand(options: {
 
   spinner.succeed('Source created');
 
-  if (options.json) {
-    console.log(JSON.stringify(result.data?.source, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput(result.data?.source, options.xml, options.yaml));
     return;
   }
 
@@ -350,7 +343,7 @@ export async function sourcesCreateCommand(options: {
 
 export async function sourcesGetCommand(
   sourceId: string,
-  options: { json?: boolean }
+  options: { json?: boolean; xml?: boolean; yaml?: boolean }
 ): Promise<void> {
   requireAuth();
 
@@ -367,8 +360,8 @@ export async function sourcesGetCommand(
 
   const source = result.data?.source;
 
-  if (options.json) {
-    console.log(JSON.stringify(source, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput(source, options.xml, options.yaml));
     return;
   }
 
@@ -411,6 +404,8 @@ export async function sourcesUpdateCommand(
     transient?: boolean;
     methods?: string;
     json?: boolean;
+    xml?: boolean;
+    yaml?: boolean;
   }
 ): Promise<void> {
   requireAuth();
@@ -441,14 +436,14 @@ export async function sourcesUpdateCommand(
 
   spinner.succeed('Source updated');
 
-  if (options.json) {
-    console.log(JSON.stringify(result.data?.source, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput(result.data?.source, options.xml, options.yaml));
   }
 }
 
 export async function sourcesDeleteCommand(
   sourceId: string,
-  options: { yes?: boolean; json?: boolean }
+  options: { yes?: boolean; json?: boolean; xml?: boolean; yaml?: boolean }
 ): Promise<void> {
   requireAuth();
 
@@ -483,14 +478,14 @@ export async function sourcesDeleteCommand(
 
   spinner.succeed('Source deleted');
 
-  if (options.json) {
-    console.log(JSON.stringify({ success: true, sourceId }, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput({ success: true, sourceId }, options.xml, options.yaml));
   }
 }
 
 export async function sourcesRotateSecretCommand(
   sourceId: string,
-  options: { yes?: boolean; json?: boolean }
+  options: { yes?: boolean; json?: boolean; xml?: boolean; yaml?: boolean }
 ): Promise<void> {
   requireAuth();
 
@@ -525,8 +520,8 @@ export async function sourcesRotateSecretCommand(
 
   spinner.succeed('Secret rotated');
 
-  if (options.json) {
-    console.log(JSON.stringify(result.data, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput(result.data, options.xml, options.yaml));
     return;
   }
 

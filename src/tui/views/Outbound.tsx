@@ -124,7 +124,7 @@ function CreateEndpoint({ applications, onBack, onCreated }: {
   const [step, setStep] = useState<'app' | 'url' | 'staticIp' | 'creating' | 'done'>('app');
   const [selectedAppId, setSelectedAppId] = useState('');
   const [url, setUrl] = useState('');
-  const [useStaticIp, setUseStaticIp] = useState(true);
+  const [_useStaticIp, setUseStaticIp] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [createdEndpoint, setCreatedEndpoint] = useState<api.WebhookEndpoint | null>(null);
   const [secret, setSecret] = useState<string | null>(null);
@@ -315,7 +315,7 @@ function AppDetail({ appId, applications, onBack, onRefresh }: {
           setMessage(!newDisabled ? 'Application enabled' : 'Application disabled');
           onRefresh();
         }
-      } catch (err) {
+      } catch {
         setMessage('Failed to toggle');
       }
       setToggling(false);
@@ -337,7 +337,7 @@ function AppDetail({ appId, applications, onBack, onRefresh }: {
           setMessage('Application deleted');
           setTimeout(() => { onRefresh(); onBack(); }, 1500);
         }
-      } catch (err) {
+      } catch {
         setMessage('Failed to delete');
         setConfirmDelete(false);
         setTimeout(() => { busy.current = false; }, 300);
@@ -458,7 +458,7 @@ function EndpointDetail({ endpointId, endpoints, onBack, onRefresh }: {
             error: d?.error,
           });
         }
-      } catch (err) {
+      } catch {
         setTestResult({ success: false, status: 0, time: 0, error: 'Test failed' });
       }
       setTesting(false);
@@ -480,7 +480,7 @@ function EndpointDetail({ endpointId, endpoints, onBack, onRefresh }: {
           setMessage('Endpoint deleted');
           setTimeout(() => { onRefresh(); onBack(); }, 1500);
         }
-      } catch (err) {
+      } catch {
         setMessage('Failed to delete');
         setConfirmDelete(false);
       }
@@ -605,7 +605,7 @@ function windowAround<T>(items: T[], selected: number, size = 15): { item: T; in
   return items.slice(start, start + size).map((item, i) => ({ item, index: start + i }));
 }
 
-export function OutboundView({ subView, onNavigate, onRefresh }: OutboundViewProps) {
+export function OutboundView({ subView, onNavigate, onRefresh: _onRefresh }: OutboundViewProps) {
   const [activeSubTab, setActiveSubTab] = useState<SubTab>('apps');
   const lastRefreshRef = useRef(0);
   const [selectedIndex, setSelectedIndex] = useState(0);

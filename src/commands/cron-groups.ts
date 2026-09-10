@@ -1,25 +1,15 @@
 import { input, confirm, select } from '@inquirer/prompts';
 import { ExitPromptError } from '@inquirer/core';
 import * as api from '../lib/api.js';
-import * as config from '../lib/config.js';
 import * as logger from '../lib/logger.js';
+
+import { requireAuth } from '../lib/requireAuth.js';
+import { formatOutput } from '../lib/output.js';
 
 /** Helper to check if an error is a prompt cancellation (Ctrl+C) */
 function isPromptCancelled(error: unknown): boolean {
   return error instanceof ExitPromptError ||
     (error instanceof Error && error.name === 'ExitPromptError');
-}
-
-function requireAuth(): boolean {
-  if (!config.isAuthenticated()) {
-    if (config.hasStaleJwtToken()) {
-      logger.error('Your session uses a JWT token which is no longer supported. Please re-login with an API key: hookbase login');
-    } else {
-      logger.error('Not logged in. Run "hookbase login" with an API key.');
-    }
-    process.exit(1);
-  }
-  return true;
 }
 
 function formatDate(dateStr: string | null | undefined): string {
@@ -28,7 +18,7 @@ function formatDate(dateStr: string | null | undefined): string {
   return date.toLocaleString();
 }
 
-export async function cronGroupsListCommand(options: { json?: boolean }): Promise<void> {
+export async function cronGroupsListCommand(options: { json?: boolean; xml?: boolean; yaml?: boolean }): Promise<void> {
   requireAuth();
 
   const spinner = logger.spinner('Fetching cron groups...');
@@ -44,8 +34,8 @@ export async function cronGroupsListCommand(options: { json?: boolean }): Promis
 
   const groups = result.data?.groups || [];
 
-  if (options.json) {
-    console.log(JSON.stringify(groups, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput(groups, options.xml, options.yaml));
     return;
   }
 
@@ -76,6 +66,8 @@ export async function cronGroupsCreateCommand(options: {
   description?: string;
   yes?: boolean;
   json?: boolean;
+  xml?: boolean;
+  yaml?: boolean;
 }): Promise<void> {
   requireAuth();
 
@@ -128,8 +120,8 @@ export async function cronGroupsCreateCommand(options: {
 
   spinner.succeed('Cron group created');
 
-  if (options.json) {
-    console.log(JSON.stringify(result.data?.group, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput(result.data?.group, options.xml, options.yaml));
     return;
   }
 
@@ -147,7 +139,7 @@ export async function cronGroupsCreateCommand(options: {
 
 export async function cronGroupsGetCommand(
   groupId: string,
-  options: { json?: boolean }
+  options: { json?: boolean; xml?: boolean; yaml?: boolean }
 ): Promise<void> {
   requireAuth();
 
@@ -164,8 +156,8 @@ export async function cronGroupsGetCommand(
 
   const group = result.data?.group;
 
-  if (options.json) {
-    console.log(JSON.stringify(group, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput(group, options.xml, options.yaml));
     return;
   }
 
@@ -196,6 +188,8 @@ export async function cronGroupsUpdateCommand(
     description?: string;
     order?: number;
     json?: boolean;
+    xml?: boolean;
+    yaml?: boolean;
   }
 ): Promise<void> {
   requireAuth();
@@ -222,14 +216,14 @@ export async function cronGroupsUpdateCommand(
 
   spinner.succeed('Cron group updated');
 
-  if (options.json) {
-    console.log(JSON.stringify(result.data?.group, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput(result.data?.group, options.xml, options.yaml));
   }
 }
 
 export async function cronGroupsDeleteCommand(
   groupId: string,
-  options: { yes?: boolean; json?: boolean }
+  options: { yes?: boolean; json?: boolean; xml?: boolean; yaml?: boolean }
 ): Promise<void> {
   requireAuth();
 
@@ -264,12 +258,12 @@ export async function cronGroupsDeleteCommand(
 
   spinner.succeed('Cron group deleted');
 
-  if (options.json) {
-    console.log(JSON.stringify({ success: true, groupId }, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput({ success: true, groupId }, options.xml, options.yaml));
   }
 }
 
-export async function cronGroupsReorderCommand(options: { json?: boolean }): Promise<void> {
+export async function cronGroupsReorderCommand(options: { json?: boolean; xml?: boolean; yaml?: boolean }): Promise<void> {
   requireAuth();
 
   // First fetch all groups
@@ -355,7 +349,7 @@ export async function cronGroupsReorderCommand(options: { json?: boolean }): Pro
 
   reorderSpinner.succeed('Groups reordered');
 
-  if (options.json) {
-    console.log(JSON.stringify({ success: true, order: newOrder }, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput({ success: true, order: newOrder }, options.xml, options.yaml));
   }
 }

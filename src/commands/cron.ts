@@ -1,8 +1,10 @@
-import { input, confirm, select, checkbox } from '@inquirer/prompts';
+import { input, confirm, select } from '@inquirer/prompts';
 import { ExitPromptError } from '@inquirer/core';
 import * as api from '../lib/api.js';
-import * as config from '../lib/config.js';
 import * as logger from '../lib/logger.js';
+
+import { requireAuth } from '../lib/requireAuth.js';
+import { formatOutput } from '../lib/output.js';
 
 /** Helper to check if an error is a prompt cancellation (Ctrl+C) */
 function isPromptCancelled(error: unknown): boolean {
@@ -47,18 +49,6 @@ const COMMON_CRON_PRESETS = [
   { name: 'Monthly (1st at midnight)', value: '0 0 1 * *' },
   { name: 'Custom...', value: 'custom' },
 ];
-
-function requireAuth(): boolean {
-  if (!config.isAuthenticated()) {
-    if (config.hasStaleJwtToken()) {
-      logger.error('Your session uses a JWT token which is no longer supported. Please re-login with an API key: hookbase login');
-    } else {
-      logger.error('Not logged in. Run "hookbase login" with an API key.');
-    }
-    process.exit(1);
-  }
-  return true;
-}
 
 // Parse date string from API (stored as UTC without Z suffix) to Date object
 function parseUTCDate(dateStr: string | null | undefined): Date | null {
@@ -105,7 +95,7 @@ function formatRelativeTime(dateStr: string | null | undefined): string {
 function describeCronExpression(expr: string): string {
   const parts = expr.split(' ');
   if (parts.length !== 5) return expr;
-  const [minute, hour, dayOfMonth, month, dayOfWeek] = parts;
+  const [minute, hour] = parts;
 
   // Simple descriptions for common patterns
   if (expr === '* * * * *') return 'Every minute';
@@ -135,7 +125,7 @@ function validateCronExpression(expr: string): boolean {
   return parts.every((part, i) => patterns[i].test(part));
 }
 
-export async function cronListCommand(options: { json?: boolean; all?: boolean }): Promise<void> {
+export async function cronListCommand(options: { json?: boolean; xml?: boolean; yaml?: boolean; all?: boolean }): Promise<void> {
   requireAuth();
 
   const spinner = logger.spinner('Fetching cron jobs...');
@@ -157,8 +147,8 @@ export async function cronListCommand(options: { json?: boolean; all?: boolean }
     jobs = jobs.filter((j: any) => j.is_active ?? j.isActive);
   }
 
-  if (options.json) {
-    console.log(JSON.stringify(jobs, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput(jobs, options.xml, options.yaml));
     return;
   }
 
@@ -201,6 +191,8 @@ export async function cronCreateCommand(options: {
   staticIp?: boolean;
   yes?: boolean;
   json?: boolean;
+  xml?: boolean;
+  yaml?: boolean;
 }): Promise<void> {
   requireAuth();
 
@@ -397,8 +389,8 @@ export async function cronCreateCommand(options: {
   const createRaw = result.data as any;
   const job = createRaw?.cronJob || createRaw?.cron_job || createRaw?.data;
 
-  if (options.json) {
-    console.log(JSON.stringify(job, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput(job, options.xml, options.yaml));
     return;
   }
 
@@ -418,7 +410,7 @@ export async function cronCreateCommand(options: {
 
 export async function cronGetCommand(
   jobId: string,
-  options: { json?: boolean }
+  options: { json?: boolean; xml?: boolean; yaml?: boolean }
 ): Promise<void> {
   requireAuth();
 
@@ -436,8 +428,8 @@ export async function cronGetCommand(
   const getRaw = result.data as any;
   const job: any = getRaw?.cronJob || getRaw?.cron_job || getRaw?.data;
 
-  if (options.json) {
-    console.log(JSON.stringify(job, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput(job, options.xml, options.yaml));
     return;
   }
 
@@ -518,6 +510,8 @@ export async function cronUpdateCommand(
     inactive?: boolean;
     staticIp?: boolean;
     json?: boolean;
+    xml?: boolean;
+    yaml?: boolean;
   }
 ): Promise<void> {
   requireAuth();
@@ -565,14 +559,14 @@ export async function cronUpdateCommand(
 
   spinner.succeed('Cron job updated');
 
-  if (options.json) {
-    console.log(JSON.stringify({ success: true, jobId }, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput({ success: true, jobId }, options.xml, options.yaml));
   }
 }
 
 export async function cronDeleteCommand(
   jobId: string,
-  options: { yes?: boolean; json?: boolean }
+  options: { yes?: boolean; json?: boolean; xml?: boolean; yaml?: boolean }
 ): Promise<void> {
   requireAuth();
 
@@ -598,14 +592,14 @@ export async function cronDeleteCommand(
 
   spinner.succeed('Cron job deleted');
 
-  if (options.json) {
-    console.log(JSON.stringify({ success: true, jobId }, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput({ success: true, jobId }, options.xml, options.yaml));
   }
 }
 
 export async function cronTriggerCommand(
   jobId: string,
-  options: { json?: boolean; wait?: boolean }
+  options: { json?: boolean; xml?: boolean; yaml?: boolean; wait?: boolean }
 ): Promise<void> {
   requireAuth();
 
@@ -623,8 +617,8 @@ export async function cronTriggerCommand(
   const trigRaw = result.data as any;
   const execution: any = trigRaw?.execution || trigRaw?.data;
 
-  if (options.json) {
-    console.log(JSON.stringify(execution, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput(execution, options.xml, options.yaml));
     return;
   }
 
@@ -663,7 +657,7 @@ function getStatusDisplay(status: string): string {
 
 export async function cronHistoryCommand(
   jobId: string,
-  options: { limit?: number; json?: boolean }
+  options: { limit?: number; json?: boolean; xml?: boolean; yaml?: boolean }
 ): Promise<void> {
   requireAuth();
 
@@ -683,8 +677,8 @@ export async function cronHistoryCommand(
   const histRaw = result.data as any;
   const executions: any[] = histRaw?.executions || histRaw?.data || [];
 
-  if (options.json) {
-    console.log(JSON.stringify(executions, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput(executions, options.xml, options.yaml));
     return;
   }
 
@@ -725,7 +719,7 @@ export async function cronHistoryCommand(
 
 export async function cronEnableCommand(
   jobId: string,
-  options: { json?: boolean }
+  options: { json?: boolean; xml?: boolean; yaml?: boolean }
 ): Promise<void> {
   requireAuth();
 
@@ -740,14 +734,14 @@ export async function cronEnableCommand(
 
   spinner.succeed('Cron job enabled');
 
-  if (options.json) {
-    console.log(JSON.stringify({ success: true, jobId }, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput({ success: true, jobId }, options.xml, options.yaml));
   }
 }
 
 export async function cronDisableCommand(
   jobId: string,
-  options: { json?: boolean }
+  options: { json?: boolean; xml?: boolean; yaml?: boolean }
 ): Promise<void> {
   requireAuth();
 
@@ -762,8 +756,8 @@ export async function cronDisableCommand(
 
   spinner.succeed('Cron job disabled');
 
-  if (options.json) {
-    console.log(JSON.stringify({ success: true, jobId }, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput({ success: true, jobId }, options.xml, options.yaml));
   }
 }
 
@@ -984,7 +978,7 @@ export async function cronFollowCommand(options: {
       }
 
       isFirstPoll = false;
-    } catch (error) {
+    } catch {
       // Silently continue on errors
     }
   };
@@ -1041,7 +1035,7 @@ function printExecution(exec: any, jobName?: string): void {
 }
 
 // Quick status overview of all cron jobs
-export async function cronStatusCommand(options: { json?: boolean }): Promise<void> {
+export async function cronStatusCommand(options: { json?: boolean; xml?: boolean; yaml?: boolean }): Promise<void> {
   requireAuth();
 
   const spinner = logger.spinner('Fetching cron status...');
@@ -1064,8 +1058,8 @@ export async function cronStatusCommand(options: { json?: boolean }): Promise<vo
   const statusGroupsRaw = groupsResult.data as any;
   const groups: any[] = statusGroupsRaw?.groups || statusGroupsRaw?.data || [];
 
-  if (options.json) {
-    console.log(JSON.stringify({ jobs, groups }, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput({ jobs, groups }, options.xml, options.yaml));
     return;
   }
 

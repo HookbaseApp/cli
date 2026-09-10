@@ -1,8 +1,16 @@
+import { select } from '@inquirer/prompts';
+import { ExitPromptError } from '@inquirer/core';
 import * as api from '../lib/api.js';
 import * as config from '../lib/config.js';
 import * as logger from '../lib/logger.js';
+import { sessionLoginCommand } from './session.js';
 
-function readHiddenInput(prompt: string): Promise<string> {
+function isPromptCancelled(error: unknown): boolean {
+  return error instanceof ExitPromptError ||
+    (error instanceof Error && error.name === 'ExitPromptError');
+}
+
+export function readHiddenInput(prompt: string): Promise<string> {
   return new Promise((resolve) => {
     process.stdout.write(prompt);
     let input = '';
@@ -38,7 +46,37 @@ function readHiddenInput(prompt: string): Promise<string> {
   });
 }
 
-export async function loginCommand(): Promise<void> {
+export async function loginCommand(options?: { web?: boolean; withToken?: boolean }): Promise<void> {
+  let method: 'browser' | 'api-key';
+
+  if (options?.web) {
+    method = 'browser';
+  } else if (options?.withToken) {
+    method = 'api-key';
+  } else {
+    try {
+      method = await select({
+        message: 'What would you like to log in with?',
+        choices: [
+          { name: 'A web browser', value: 'browser' as const },
+          { name: 'An API key', value: 'api-key' as const },
+        ],
+      });
+    } catch (error) {
+      if (isPromptCancelled(error)) {
+        logger.log('');
+        logger.info('Cancelled');
+        return;
+      }
+      throw error;
+    }
+  }
+
+  if (method === 'browser') {
+    await sessionLoginCommand();
+    return;
+  }
+
   // Check if already logged in
   if (config.isAuthenticated()) {
     const user = config.getCurrentUser();

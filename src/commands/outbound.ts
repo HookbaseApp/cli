@@ -1,25 +1,15 @@
 import { confirm, checkbox } from '@inquirer/prompts';
 import { ExitPromptError } from '@inquirer/core';
 import * as api from '../lib/api.js';
-import * as config from '../lib/config.js';
 import * as logger from '../lib/logger.js';
+
+import { requireAuth } from '../lib/requireAuth.js';
+import { formatOutput } from '../lib/output.js';
 
 /** Helper to check if an error is a prompt cancellation (Ctrl+C) */
 function isPromptCancelled(error: unknown): boolean {
   return error instanceof ExitPromptError ||
     (error instanceof Error && error.name === 'ExitPromptError');
-}
-
-function requireAuth(): boolean {
-  if (!config.isAuthenticated()) {
-    if (config.hasStaleJwtToken()) {
-      logger.error('Your session uses a JWT token which is no longer supported. Please re-login with an API key: hookbase login');
-    } else {
-      logger.error('Not logged in. Run "hookbase login" with an API key.');
-    }
-    process.exit(1);
-  }
-  return true;
 }
 
 function formatStatus(status: string): string {
@@ -48,6 +38,8 @@ export async function outboundListCommand(options: {
   eventType?: string;
   limit?: string;
   json?: boolean;
+  xml?: boolean;
+  yaml?: boolean;
 }): Promise<void> {
   requireAuth();
 
@@ -72,12 +64,12 @@ export async function outboundListCommand(options: {
   const messages = raw?.data || raw?.messages || [];
   const pagination = raw?.pagination || {};
 
-  if (options.json) {
-    console.log(JSON.stringify({
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput({
       messages,
       total: pagination.total ?? raw?.total,
       hasMore: pagination.hasMore ?? raw?.hasMore,
-    }, null, 2));
+    }, options.xml, options.yaml));
     return;
   }
 
@@ -106,7 +98,7 @@ export async function outboundListCommand(options: {
 
 export async function outboundGetCommand(
   messageId: string,
-  options: { json?: boolean }
+  options: { json?: boolean; xml?: boolean; yaml?: boolean }
 ): Promise<void> {
   requireAuth();
 
@@ -123,8 +115,8 @@ export async function outboundGetCommand(
 
   const message: any = (result.data as any)?.data || result.data?.message;
 
-  if (options.json) {
-    console.log(JSON.stringify(message, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput(message, options.xml, options.yaml));
     return;
   }
 
@@ -169,7 +161,7 @@ export async function outboundGetCommand(
 
 export async function outboundRetryCommand(
   messageId: string,
-  options: { yes?: boolean; json?: boolean }
+  options: { yes?: boolean; json?: boolean; xml?: boolean; yaml?: boolean }
 ): Promise<void> {
   requireAuth();
 
@@ -204,9 +196,125 @@ export async function outboundRetryCommand(
 
   spinner.succeed('Message queued for retry');
 
-  if (options.json) {
+  if (options.json || options.xml || options.yaml) {
     const retried = (result.data as any)?.data || result.data?.message;
-    console.log(JSON.stringify(retried, null, 2));
+    console.log(formatOutput(retried, options.xml, options.yaml));
+  }
+}
+
+export async function outboundAttemptsCommand(
+  messageId: string,
+  options: { json?: boolean; xml?: boolean; yaml?: boolean }
+): Promise<void> {
+  requireAuth();
+
+  const spinner = logger.spinner('Fetching delivery attempts...');
+  const result = await api.getWebhookMessageAttempts(messageId);
+
+  if (result.error) {
+    spinner.fail('Failed to fetch delivery attempts');
+    logger.error(result.error);
+    return;
+  }
+
+  spinner.stop();
+
+  const attempts = result.data?.data || [];
+
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput(attempts, options.xml, options.yaml));
+    return;
+  }
+
+  if (attempts.length === 0) {
+    logger.info('No delivery attempts found for this message');
+    return;
+  }
+
+  logger.table(
+    ['#', 'Status', 'Response', 'Time', 'Error', 'Created'],
+    attempts.map((a) => [
+      String(a.attemptNumber),
+      formatStatus(a.status),
+      a.responseStatus ? String(a.responseStatus) : '-',
+      a.totalTimeMs ? `${a.totalTimeMs}ms` : '-',
+      a.errorMessage || '-',
+      new Date(a.createdAt).toLocaleString(),
+    ])
+  );
+}
+
+// ============================================================================
+// Stats Commands
+// ============================================================================
+
+export async function outboundStatsCommand(options: { json?: boolean; xml?: boolean; yaml?: boolean }): Promise<void> {
+  requireAuth();
+
+  const spinner = logger.spinner('Fetching outbound stats...');
+  const [statsResult, dlqStatsResult] = await Promise.all([
+    api.getOutboundStatsSummary(),
+    api.getDlqStats(),
+  ]);
+
+  if (statsResult.error) {
+    spinner.fail('Failed to fetch outbound stats');
+    logger.error(statsResult.error);
+    return;
+  }
+
+  spinner.stop();
+
+  const stats = statsResult.data?.data;
+  const dlqStats = dlqStatsResult.data?.data;
+
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput({ summary: stats, dlq: dlqStats }, options.xml, options.yaml));
+    return;
+  }
+
+  if (!stats) {
+    logger.error('No stats available');
+    return;
+  }
+
+  logger.log('');
+  logger.log(logger.bold('Outbound Message Stats'));
+  logger.log('');
+  logger.log(`Pending:         ${stats.pending}`);
+  logger.log(`Processing:      ${stats.processing}`);
+  logger.log(`Success:         ${logger.green(String(stats.success))}`);
+  logger.log(`Failed:          ${logger.red(String(stats.failed))}`);
+  logger.log(`Awaiting Retry:  ${logger.yellow(String(stats.awaitingRetry))}`);
+  logger.log(`Exhausted:       ${logger.red(String(stats.exhausted))}`);
+  logger.log(`DLQ:             ${logger.red(String(stats.dlq))}`);
+  logger.log(`Total:           ${stats.total}`);
+  logger.log('');
+
+  if (dlqStats && dlqStats.total > 0) {
+    logger.log(logger.bold('DLQ Breakdown'));
+    logger.log('');
+    if (Object.keys(dlqStats.byReason).length > 0) {
+      logger.log('By Reason:');
+      for (const [reason, count] of Object.entries(dlqStats.byReason)) {
+        logger.log(`  ${reason}: ${count}`);
+      }
+      logger.log('');
+    }
+    if (dlqStats.byEndpoint.length > 0) {
+      logger.log('By Endpoint:');
+      for (const e of dlqStats.byEndpoint) {
+        logger.log(`  ${e.endpointUrl || e.endpointId}: ${e.count}`);
+      }
+      logger.log('');
+    }
+    if (dlqStats.byEventType.length > 0) {
+      logger.log('By Event Type:');
+      for (const e of dlqStats.byEventType) {
+        logger.log(`  ${e.eventType}: ${e.count}`);
+      }
+      logger.log('');
+    }
   }
 }
 
@@ -219,6 +327,8 @@ export async function dlqListCommand(options: {
   endpoint?: string;
   limit?: string;
   json?: boolean;
+  xml?: boolean;
+  yaml?: boolean;
 }): Promise<void> {
   requireAuth();
 
@@ -241,12 +351,12 @@ export async function dlqListCommand(options: {
   const messages = dlqRaw?.data || dlqRaw?.messages || [];
   const dlqPagination = dlqRaw?.pagination || {};
 
-  if (options.json) {
-    console.log(JSON.stringify({
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput({
       messages,
       total: dlqPagination.total ?? dlqRaw?.total,
       hasMore: dlqPagination.hasMore ?? dlqRaw?.hasMore,
-    }, null, 2));
+    }, options.xml, options.yaml));
     return;
   }
 
@@ -275,7 +385,7 @@ export async function dlqListCommand(options: {
 
 export async function dlqGetCommand(
   messageId: string,
-  options: { json?: boolean }
+  options: { json?: boolean; xml?: boolean; yaml?: boolean }
 ): Promise<void> {
   requireAuth();
 
@@ -292,8 +402,8 @@ export async function dlqGetCommand(
 
   const message: any = (result.data as any)?.data || result.data?.message;
 
-  if (options.json) {
-    console.log(JSON.stringify(message, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput(message, options.xml, options.yaml));
     return;
   }
 
@@ -335,7 +445,7 @@ export async function dlqGetCommand(
 
 export async function dlqRetryCommand(
   messageId: string,
-  options: { yes?: boolean; json?: boolean }
+  options: { yes?: boolean; json?: boolean; xml?: boolean; yaml?: boolean }
 ): Promise<void> {
   requireAuth();
 
@@ -370,9 +480,9 @@ export async function dlqRetryCommand(
 
   spinner.succeed('DLQ message queued for retry');
 
-  if (options.json) {
+  if (options.json || options.xml || options.yaml) {
     const retried = (result.data as any)?.data || result.data?.message;
-    console.log(JSON.stringify(retried, null, 2));
+    console.log(formatOutput(retried, options.xml, options.yaml));
   }
 }
 
@@ -382,6 +492,8 @@ export async function dlqBulkRetryCommand(options: {
   limit?: string;
   yes?: boolean;
   json?: boolean;
+  xml?: boolean;
+  yaml?: boolean;
 }): Promise<void> {
   requireAuth();
 
@@ -458,8 +570,8 @@ export async function dlqBulkRetryCommand(options: {
 
   retrySpinner.succeed(`Retried ${retryResult.data?.retried || 0} messages`);
 
-  if (options.json) {
-    console.log(JSON.stringify(retryResult.data, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput(retryResult.data, options.xml, options.yaml));
     return;
   }
 
@@ -470,7 +582,7 @@ export async function dlqBulkRetryCommand(options: {
 
 export async function dlqDeleteCommand(
   messageId: string,
-  options: { yes?: boolean; json?: boolean }
+  options: { yes?: boolean; json?: boolean; xml?: boolean; yaml?: boolean }
 ): Promise<void> {
   requireAuth();
 
@@ -505,7 +617,7 @@ export async function dlqDeleteCommand(
 
   spinner.succeed('DLQ message deleted');
 
-  if (options.json) {
-    console.log(JSON.stringify({ success: true, messageId }, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput({ success: true, messageId }, options.xml, options.yaml));
   }
 }

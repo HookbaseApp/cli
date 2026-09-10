@@ -21,6 +21,58 @@ const PROVIDERS = [
   { label: 'Twilio', value: 'twilio' },
 ];
 
+/** HTTP verbs the ingest endpoint can be restricted to. Mirrors VALID_INGEST_METHODS in
+ * the API and INGEST_METHODS in commands/sources.ts. No selection = any method allowed. */
+const INGEST_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD'] as const;
+
+function MethodsSelector({ initial, onSave }: {
+  initial: string[];
+  onSave: (methods: string[]) => void;
+}) {
+  const [selected, setSelected] = useState<string[]>(initial);
+  const [cursor, setCursor] = useState(0);
+
+  useInput((input, key) => {
+    if (key.upArrow || input === 'k') {
+      setCursor((prev) => Math.max(0, prev - 1));
+    }
+    if (key.downArrow || input === 'j') {
+      setCursor((prev) => Math.min(INGEST_METHODS.length - 1, prev + 1));
+    }
+    if (input === ' ') {
+      const verb = INGEST_METHODS[cursor];
+      setSelected((prev) => (prev.includes(verb) ? prev.filter((v) => v !== verb) : [...prev, verb]));
+    }
+    if (key.return) {
+      onSave(selected);
+    }
+  });
+
+  return (
+    <Box flexDirection="column">
+      {INGEST_METHODS.map((verb, index) => {
+        const checked = selected.includes(verb);
+        const isCursor = index === cursor;
+        return (
+          <Box key={verb}>
+            <Text color={isCursor ? 'yellow' : undefined} bold={isCursor}>
+              {isCursor ? '▶ ' : '  '}
+            </Text>
+            <Text color={checked ? 'green' : undefined}>
+              [{checked ? 'x' : ' '}] {verb}
+            </Text>
+          </Box>
+        );
+      })}
+      <Box marginTop={1}>
+        <Text dimColor>
+          {selected.length === 0 ? '(none checked = any method allowed)' : `${selected.length} selected`}
+        </Text>
+      </Box>
+    </Box>
+  );
+}
+
 function SourceList({ sources, onSelect, onCreate }: {
   sources: api.Source[];
   onSelect: (id: string) => void;
@@ -163,7 +215,7 @@ function SourceDetail({ sourceId, sources, onBack, onRefresh, onEdit }: {
           setMessage('Source deleted successfully');
           setTimeout(() => { onRefresh(); onBack(); }, 1500);
         }
-      } catch (err) {
+      } catch {
         setMessage('Failed to delete');
         setConfirmDelete(false);
         setTimeout(() => { busy.current = false; }, 300);
@@ -292,11 +344,11 @@ function EditSource({ sourceId, sources, onBack, onSaved }: {
   const allowedMethods = source?.allowedMethods ?? source?.allowed_methods ?? [];
   const fields = [
     { key: 'name', label: 'Name', value: source?.name || '', type: 'text' as const },
-    { key: 'provider', label: 'Provider', value: source?.provider || 'custom', type: 'text' as const },
+    { key: 'provider', label: 'Provider', value: source?.provider || 'custom', type: 'select' as const },
     { key: 'description', label: 'Description', value: source?.description || '', type: 'text' as const },
     { key: 'isActive', label: 'Status', value: isActive ? 'Active' : 'Inactive', type: 'toggle' as const },
     { key: 'transientMode', label: 'Transient Mode', value: isTransient ? 'Enabled' : 'Disabled', type: 'toggle' as const },
-    { key: 'methods', label: 'Methods', value: allowedMethods.join(', '), type: 'text' as const },
+    { key: 'methods', label: 'Methods', value: allowedMethods.join(', '), type: 'multiselect' as const },
   ];
 
   useInput(async (input, key) => {
@@ -339,11 +391,14 @@ function EditSource({ sourceId, sources, onBack, onSaved }: {
             setMessage(`${field.label} updated`);
             onSaved();
           }
-        } catch (err) {
+        } catch {
           setMessage(`Failed to update ${field.label}`);
         }
         setSaving(false);
         setTimeout(() => { busy.current = false; setMessage(null); }, 1500);
+      } else if (field.type === 'select' || field.type === 'multiselect') {
+        // Enter picker mode — no free-text entry, so an invalid provider/method can't be typed
+        setEditingField(field.key);
       } else {
         // Enter text editing mode
         setEditValue(field.value);
@@ -351,6 +406,44 @@ function EditSource({ sourceId, sources, onBack, onSaved }: {
       }
     }
   });
+
+  const handleProviderSelect = async (item: { value: string }) => {
+    busy.current = true;
+    setSaving(true);
+    try {
+      const result = await api.updateSource(sourceId, { provider: item.value } as any);
+      if (result.error) {
+        setMessage(`Error: ${result.error}`);
+      } else {
+        setMessage('Provider updated');
+        onSaved();
+      }
+    } catch {
+      setMessage('Failed to update Provider');
+    }
+    setEditingField(null);
+    setSaving(false);
+    setTimeout(() => { busy.current = false; setMessage(null); }, 1500);
+  };
+
+  const handleMethodsSave = async (methods: string[]) => {
+    busy.current = true;
+    setSaving(true);
+    try {
+      const result = await api.updateSource(sourceId, { allowedMethods: methods } as any);
+      if (result.error) {
+        setMessage(`Error: ${result.error}`);
+      } else {
+        setMessage('Methods updated');
+        onSaved();
+      }
+    } catch {
+      setMessage('Failed to update Methods');
+    }
+    setEditingField(null);
+    setSaving(false);
+    setTimeout(() => { busy.current = false; setMessage(null); }, 1500);
+  };
 
   const handleTextSubmit = async () => {
     if (!editingField) return;
@@ -369,7 +462,7 @@ function EditSource({ sourceId, sources, onBack, onSaved }: {
         setMessage(`${editingField} updated`);
         onSaved();
       }
-    } catch (err) {
+    } catch {
       setMessage(`Failed to update`);
     }
     setEditingField(null);
@@ -397,6 +490,52 @@ function EditSource({ sourceId, sources, onBack, onSaved }: {
         {fields.map((field, index) => {
           const isSelected = index === selectedIndex;
           const isEditing = editingField === field.key;
+
+          if (isEditing && field.type === 'select') {
+            const currentIndex = Math.max(0, PROVIDERS.findIndex((p) => p.value === field.value));
+            return (
+              <Box key={field.key} flexDirection="column" marginY={0}>
+                <Box>
+                  <Box width={2}>
+                    <Text color="yellow" bold>▶</Text>
+                  </Box>
+                  <Box width={18}>
+                    <Text dimColor>{field.label}:</Text>
+                  </Box>
+                  <Text dimColor>(↑↓ select, Enter to save, Esc to cancel)</Text>
+                </Box>
+                <Box marginLeft={20}>
+                  <SelectInput
+                    items={PROVIDERS}
+                    initialIndex={currentIndex}
+                    onSelect={handleProviderSelect}
+                  />
+                </Box>
+              </Box>
+            );
+          }
+
+          if (isEditing && field.type === 'multiselect') {
+            return (
+              <Box key={field.key} flexDirection="column" marginY={0}>
+                <Box>
+                  <Box width={2}>
+                    <Text color="yellow" bold>▶</Text>
+                  </Box>
+                  <Box width={18}>
+                    <Text dimColor>{field.label}:</Text>
+                  </Box>
+                  <Text dimColor>(↑↓ move, Space toggle, Enter save, Esc cancel)</Text>
+                </Box>
+                <Box marginLeft={20}>
+                  <MethodsSelector
+                    initial={allowedMethods}
+                    onSave={handleMethodsSave}
+                  />
+                </Box>
+              </Box>
+            );
+          }
 
           return (
             <Box key={field.key}>
@@ -427,13 +566,15 @@ function EditSource({ sourceId, sources, onBack, onSaved }: {
                     <Text color={isActive ? 'green' : 'red'}>
                       {field.value}
                     </Text>
+                  ) : field.key === 'methods' ? (
+                    <Text color={isSelected ? 'yellow' : undefined}>{field.value || 'Any'}</Text>
                   ) : (
                     <Text color={isSelected ? 'yellow' : undefined}>{field.value || '(empty)'}</Text>
                   )}
                   {isSelected && field.type === 'toggle' && (
                     <Text dimColor> ← Enter/Space to toggle</Text>
                   )}
-                  {isSelected && field.type === 'text' && (
+                  {isSelected && (field.type === 'text' || field.type === 'select' || field.type === 'multiselect') && (
                     <Text dimColor> ← Enter to edit</Text>
                   )}
                 </Box>

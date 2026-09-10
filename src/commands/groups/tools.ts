@@ -37,6 +37,7 @@ import {
   apiKeysListCommand,
   apiKeysCreateCommand,
   apiKeysRevokeCommand,
+  apiKeysRotateSecretCommand,
 } from '../api-keys.js';
 
 export function registerCronCommands(parent: Command): Command {
@@ -50,6 +51,8 @@ export function registerCronCommands(parent: Command): Command {
     .description('List cron jobs')
     .option('-a, --all', 'Show all jobs (including inactive)')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(cronListCommand);
 
   cron
@@ -68,6 +71,8 @@ export function registerCronCommands(parent: Command): Command {
     .option('--no-static-ip', 'Disable static IP delivery')
     .option('-y, --yes', 'Skip confirmation')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(cronCreateCommand);
 
   cron
@@ -75,6 +80,8 @@ export function registerCronCommands(parent: Command): Command {
     .alias('show')
     .description('Get cron job details')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(cronGetCommand);
 
   cron
@@ -93,6 +100,8 @@ export function registerCronCommands(parent: Command): Command {
     .option('--static-ip', 'Enable static IP delivery (Pro/Business)')
     .option('--no-static-ip', 'Disable static IP delivery')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(cronUpdateCommand);
 
   cron
@@ -101,6 +110,8 @@ export function registerCronCommands(parent: Command): Command {
     .description('Delete a cron job')
     .option('-y, --yes', 'Skip confirmation')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(cronDeleteCommand);
 
   cron
@@ -108,6 +119,8 @@ export function registerCronCommands(parent: Command): Command {
     .alias('run')
     .description('Manually trigger a cron job')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(cronTriggerCommand);
 
   cron
@@ -116,18 +129,24 @@ export function registerCronCommands(parent: Command): Command {
     .description('View execution history for a cron job')
     .option('-l, --limit <number>', 'Number of executions to show', '20')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(cronHistoryCommand);
 
   cron
     .command('enable <jobId>')
     .description('Enable a cron job')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(cronEnableCommand);
 
   cron
     .command('disable <jobId>')
     .description('Disable a cron job')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(cronDisableCommand);
 
   cron
@@ -147,6 +166,8 @@ export function registerCronCommands(parent: Command): Command {
     .command('status')
     .description('Show cron jobs status overview')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(cronStatusCommand);
 
   // Cron Groups sub-commands
@@ -159,6 +180,8 @@ export function registerCronCommands(parent: Command): Command {
     .alias('ls')
     .description('List cron groups')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(cronGroupsListCommand);
 
   cronGroups
@@ -168,6 +191,8 @@ export function registerCronCommands(parent: Command): Command {
     .option('-d, --description <description>', 'Group description')
     .option('-y, --yes', 'Skip confirmation')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(cronGroupsCreateCommand);
 
   cronGroups
@@ -175,6 +200,8 @@ export function registerCronCommands(parent: Command): Command {
     .alias('show')
     .description('Get cron group details (accepts ID or slug)')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(cronGroupsGetCommand);
 
   cronGroups
@@ -184,6 +211,8 @@ export function registerCronCommands(parent: Command): Command {
     .option('-d, --description <description>', 'New description')
     .option('-o, --order <number>', 'New sort order')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(cronGroupsUpdateCommand);
 
   cronGroups
@@ -192,12 +221,16 @@ export function registerCronCommands(parent: Command): Command {
     .description('Delete a cron group (accepts ID or slug, jobs become ungrouped)')
     .option('-y, --yes', 'Skip confirmation')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(cronGroupsDeleteCommand);
 
   cronGroups
     .command('reorder')
     .description('Interactively reorder cron groups')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(cronGroupsReorderCommand);
 
   return cron;
@@ -213,6 +246,8 @@ export function registerTunnelsCommands(parent: Command): Command {
     .alias('ls')
     .description('List all tunnels')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(tunnelsListCommand);
 
   tunnels
@@ -222,12 +257,16 @@ export function registerTunnelsCommands(parent: Command): Command {
     .option('-s, --subdomain <subdomain>', 'Custom subdomain (Pro plan)')
     .option('-y, --yes', 'Skip confirmation')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(tunnelsCreateCommand);
 
   tunnels
     .command('connect <tunnelId> <port>')
     .description('Connect to an existing tunnel')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(tunnelsConnectCommand);
 
   tunnels
@@ -241,6 +280,8 @@ export function registerTunnelsCommands(parent: Command): Command {
     .option('--filter-expr <jsonata>', 'Only forward events where this JSONata expression is truthy')
     .option('--filter-skip-status <code>', 'HTTP status returned to relay for filtered-out requests', '204')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(tunnelsStartCommand);
 
   tunnels
@@ -248,12 +289,16 @@ export function registerTunnelsCommands(parent: Command): Command {
     .alias('show')
     .description('Get tunnel details')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(tunnelsGetCommand);
 
   tunnels
     .command('status <tunnelId>')
     .description('Get live tunnel status')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(tunnelsStatusCommand);
 
   tunnels
@@ -261,6 +306,8 @@ export function registerTunnelsCommands(parent: Command): Command {
     .description('Disconnect a tunnel')
     .option('-y, --yes', 'Skip confirmation')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(tunnelsDisconnectCommand);
 
   tunnels
@@ -269,6 +316,8 @@ export function registerTunnelsCommands(parent: Command): Command {
     .description('Delete a tunnel')
     .option('-y, --yes', 'Skip confirmation')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(tunnelsDeleteCommand);
 
   tunnels
@@ -278,6 +327,8 @@ export function registerTunnelsCommands(parent: Command): Command {
     .option('-s, --subdomain <subdomain>', 'Custom subdomain (Pro plan)')
     .option('--hosts <hosts>', 'Comma-separated allowed target hostnames (required)')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(tunnelsProxyCommand);
 
   tunnels
@@ -298,6 +349,8 @@ export function registerApiKeysCommands(parent: Command): Command {
     .alias('ls')
     .description('List all API keys')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(apiKeysListCommand);
 
   apiKeys
@@ -308,6 +361,8 @@ export function registerApiKeysCommands(parent: Command): Command {
     .option('-e, --expires <days>', 'Expiration in days')
     .option('-y, --yes', 'Skip confirmation')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(apiKeysCreateCommand);
 
   apiKeys
@@ -316,7 +371,18 @@ export function registerApiKeysCommands(parent: Command): Command {
     .description('Revoke an API key')
     .option('-y, --yes', 'Skip confirmation')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(apiKeysRevokeCommand);
+
+  apiKeys
+    .command('rotate-secret <keyId>')
+    .description('Rotate the secret for an API key (requires a session login)')
+    .option('-y, --yes', 'Skip confirmation')
+    .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
+    .action(apiKeysRotateSecretCommand);
 
   return apiKeys;
 }

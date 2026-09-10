@@ -5,25 +5,24 @@ import type { ApiKey } from '../lib/api.js';
 import * as config from '../lib/config.js';
 import * as logger from '../lib/logger.js';
 
+import { requireAuth } from '../lib/requireAuth.js';
+import { formatOutput } from '../lib/output.js';
+
 /** Helper to check if an error is a prompt cancellation (Ctrl+C) */
 function isPromptCancelled(error: unknown): boolean {
   return error instanceof ExitPromptError ||
     (error instanceof Error && error.name === 'ExitPromptError');
 }
 
-function requireAuth(): boolean {
-  if (!config.isAuthenticated()) {
-    if (config.hasStaleJwtToken()) {
-      logger.error('Your session uses a JWT token which is no longer supported. Please re-login with an API key: hookbase login');
-    } else {
-      logger.error('Not logged in. Run "hookbase login" with an API key.');
-    }
+function requireSessionAuth(): boolean {
+  if (!config.hasSession()) {
+    logger.error('Not logged in with a session. Run "hookbase login" first.');
     process.exit(1);
   }
   return true;
 }
 
-export async function apiKeysListCommand(options: { json?: boolean }): Promise<void> {
+export async function apiKeysListCommand(options: { json?: boolean; xml?: boolean; yaml?: boolean }): Promise<void> {
   requireAuth();
 
   const spinner = logger.spinner('Fetching API keys...');
@@ -40,8 +39,8 @@ export async function apiKeysListCommand(options: { json?: boolean }): Promise<v
   const raw = result.data as any;
   const keys = raw?.apiKeys || raw?.api_keys || raw?.data || [];
 
-  if (options.json) {
-    console.log(JSON.stringify(keys, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput(keys, options.xml, options.yaml));
     return;
   }
 
@@ -77,8 +76,10 @@ export async function apiKeysCreateCommand(options: {
   expires?: string;
   yes?: boolean;
   json?: boolean;
+  xml?: boolean;
+  yaml?: boolean;
 }): Promise<void> {
-  requireAuth();
+  requireSessionAuth();
 
   let name = options.name;
   let scopes = options.scopes ? options.scopes.split(',').map(s => s.trim()) : undefined;
@@ -155,8 +156,8 @@ export async function apiKeysCreateCommand(options: {
 
   spinner.succeed('API key created');
 
-  if (options.json) {
-    console.log(JSON.stringify(result.data, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput(result.data, options.xml, options.yaml));
     return;
   }
 
@@ -176,9 +177,90 @@ export async function apiKeysCreateCommand(options: {
   }
 }
 
+export async function apiKeysRotateSecretCommand(
+  keyId: string,
+  options: { yes?: boolean; json?: boolean; xml?: boolean; yaml?: boolean }
+): Promise<void> {
+  requireSessionAuth();
+
+  // If we're rotating the key currently used for API-key auth, check now so
+  // we can decide whether to auto-persist the new secret after rotation.
+  let isCurrentKey = false;
+  if (config.isUsingApiKey()) {
+    const currentPrefix = config.getCurrentApiKeyPrefix();
+    if (currentPrefix) {
+      const keysResult = await api.listApiKeys();
+      const keysRaw = keysResult.data as any;
+      const allKeys = keysRaw?.apiKeys || keysRaw?.api_keys || keysRaw?.data || [];
+      const targetKey = allKeys.find((k: any) => k.id === keyId);
+      if (targetKey && currentPrefix.startsWith(targetKey.key_prefix || targetKey.keyPrefix || '')) {
+        isCurrentKey = true;
+      }
+    }
+  }
+
+  try {
+    if (!options.yes) {
+      const confirmed = await confirm({
+        message: `Rotate the secret for API key ${keyId}? The old key will stop working immediately.`,
+        default: false,
+      });
+      if (!confirmed) {
+        logger.info('Cancelled');
+        return;
+      }
+    }
+  } catch (error) {
+    if (isPromptCancelled(error)) {
+      logger.log('');
+      logger.info('Cancelled');
+      return;
+    }
+    throw error;
+  }
+
+  const spinner = logger.spinner('Rotating API key secret...');
+  const result = await api.rotateApiKeySecret(keyId);
+
+  if (result.error) {
+    spinner.fail('Failed to rotate API key secret');
+    logger.error(result.error);
+    return;
+  }
+
+  const newKey = result.data?.apiKey;
+
+  if (isCurrentKey && newKey?.key) {
+    const user = config.getCurrentUser();
+    config.setAuth(newKey.key, user?.id || '', user?.email || '', user?.displayName || '');
+  }
+
+  spinner.succeed('API key secret rotated' + (isCurrentKey ? ' (and auto-saved to your local config)' : ''));
+
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput(result.data, options.xml, options.yaml));
+    return;
+  }
+
+  if (newKey?.key) {
+    logger.log('');
+    logger.box('New API Key Secret', [
+      `Name: ${newKey.name}`,
+      ``,
+      logger.yellow('Save this key - it will not be shown again:'),
+      ``,
+      logger.bold(newKey.key),
+    ].join('\n'));
+    logger.log('');
+    if (!isCurrentKey) {
+      logger.warn('Store this key securely. You won\'t be able to see it again.');
+    }
+  }
+}
+
 export async function apiKeysRevokeCommand(
   keyId: string,
-  options: { yes?: boolean; json?: boolean }
+  options: { yes?: boolean; json?: boolean; xml?: boolean; yaml?: boolean }
 ): Promise<void> {
   requireAuth();
 
@@ -230,7 +312,7 @@ export async function apiKeysRevokeCommand(
 
   spinner.succeed('API key revoked');
 
-  if (options.json) {
-    console.log(JSON.stringify({ success: true, keyId }, null, 2));
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput({ success: true, keyId }, options.xml, options.yaml));
   }
 }

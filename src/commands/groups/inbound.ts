@@ -21,6 +21,9 @@ import {
   routesGetCommand,
   routesUpdateCommand,
   routesDeleteCommand,
+  routesCircuitStatusCommand,
+  routesResetCircuitCommand,
+  routesCircuitConfigCommand,
 } from '../routes.js';
 import {
   eventsListCommand,
@@ -43,6 +46,8 @@ import {
   schemasListCommand,
   schemasCreateCommand,
   schemasGetCommand,
+  schemasUpdateCommand,
+  schemasValidateCommand,
   schemasDeleteCommand,
 } from '../schemas.js';
 import {
@@ -54,7 +59,13 @@ import {
 import {
   channelsListCommand,
   channelsCreateCommand,
+  channelsGetCommand,
+  channelsUpdateCommand,
+  channelsTestCommand,
   channelsLinkCommand,
+  channelsRoutesListCommand,
+  channelsRoutesUpdateCommand,
+  channelsRoutesUnlinkCommand,
   channelsDeleteCommand,
 } from '../notification-channels.js';
 
@@ -68,6 +79,8 @@ export function registerSourcesCommands(parent: Command): Command {
     .alias('ls')
     .description('List all sources')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(sourcesListCommand);
 
   sources
@@ -90,6 +103,8 @@ export function registerSourcesCommands(parent: Command): Command {
     .option('--encrypt-fields <csv>', 'Comma-separated field paths to encrypt (Pro+)')
     .option('--mask-fields <csv>', 'Comma-separated field paths to mask (Pro+)')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(sourcesCreateCommand);
 
   sources
@@ -97,6 +112,8 @@ export function registerSourcesCommands(parent: Command): Command {
     .alias('show')
     .description('Get source details (accepts ID or slug)')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(sourcesGetCommand);
 
   sources
@@ -111,6 +128,8 @@ export function registerSourcesCommands(parent: Command): Command {
     .option('--no-transient', 'Disable transient mode')
     .option('--methods <list>', 'Comma-separated HTTP verbs to accept (e.g. GET,POST). Pass "any" or "" to accept any method')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(sourcesUpdateCommand);
 
   sources
@@ -119,6 +138,8 @@ export function registerSourcesCommands(parent: Command): Command {
     .description('Delete a source (accepts ID or slug)')
     .option('-y, --yes', 'Skip confirmation')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(sourcesDeleteCommand);
 
   sources
@@ -126,6 +147,8 @@ export function registerSourcesCommands(parent: Command): Command {
     .description('Rotate the signing secret for a source (accepts ID or slug)')
     .option('-y, --yes', 'Skip confirmation')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(sourcesRotateSecretCommand);
 
   return sources;
@@ -141,6 +164,8 @@ export function registerDestinationsCommands(parent: Command): Command {
     .alias('ls')
     .description('List all destinations')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(destinationsListCommand);
 
   destinations
@@ -169,6 +194,8 @@ export function registerDestinationsCommands(parent: Command): Command {
     .option('--no-static-ip', 'Disable static IP delivery')
     .option('-y, --yes', 'Skip confirmation')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(destinationsCreateCommand);
 
   destinations
@@ -176,6 +203,8 @@ export function registerDestinationsCommands(parent: Command): Command {
     .alias('show')
     .description('Get destination details (accepts ID or slug)')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(destinationsGetCommand);
 
   destinations
@@ -189,6 +218,8 @@ export function registerDestinationsCommands(parent: Command): Command {
     .option('--static-ip', 'Enable static IP delivery')
     .option('--no-static-ip', 'Disable static IP delivery')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(destinationsUpdateCommand);
 
   destinations
@@ -197,12 +228,16 @@ export function registerDestinationsCommands(parent: Command): Command {
     .description('Delete a destination (accepts ID or slug)')
     .option('-y, --yes', 'Skip confirmation')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(destinationsDeleteCommand);
 
   destinations
     .command('test <destination>')
     .description('Test a destination with a sample webhook (accepts ID or slug)')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(destinationsTestCommand);
 
   return destinations;
@@ -218,6 +253,8 @@ export function registerRoutesCommands(parent: Command): Command {
     .alias('ls')
     .description('List all routes')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(routesListCommand);
 
   routes
@@ -238,6 +275,8 @@ export function registerRoutesCommands(parent: Command): Command {
     .option('--notify-channel <idOrSlug>', 'Notification channel to link on failure (repeatable) (paid plans)', (v: string, prev: string[] = []) => prev.concat(v), [])
     .option('-y, --yes', 'Skip confirmation')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(routesCreateCommand);
 
   routes
@@ -245,6 +284,8 @@ export function registerRoutesCommands(parent: Command): Command {
     .alias('show')
     .description('Get route details')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(routesGetCommand);
 
   routes
@@ -257,6 +298,8 @@ export function registerRoutesCommands(parent: Command): Command {
     .option('--active', 'Set route as active')
     .option('--inactive', 'Set route as inactive')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(routesUpdateCommand);
 
   routes
@@ -265,7 +308,36 @@ export function registerRoutesCommands(parent: Command): Command {
     .description('Delete a route')
     .option('-y, --yes', 'Skip confirmation')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(routesDeleteCommand);
+
+  routes
+    .command('circuit-status <routeId>')
+    .description('Get circuit breaker status for a route (Pro+)')
+    .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
+    .action(routesCircuitStatusCommand);
+
+  routes
+    .command('reset-circuit <routeId>')
+    .description('Reset a route\'s circuit breaker back to closed (Pro+)')
+    .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
+    .action(routesResetCircuitCommand);
+
+  routes
+    .command('circuit-config <routeId>')
+    .description('Update circuit breaker config for a route (Pro+)')
+    .option('--cooldown <seconds>', 'Cooldown period in seconds before probing')
+    .option('--failure-threshold <n>', 'Consecutive failures before opening the circuit')
+    .option('--probe-success-threshold <n>', 'Successful probes needed to close the circuit')
+    .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
+    .action(routesCircuitConfigCommand);
 
   return routes;
 }
@@ -280,9 +352,12 @@ export function registerEventsCommands(parent: Command): Command {
     .alias('ls')
     .description('List recent events')
     .option('-l, --limit <number>', 'Number of events to show', '50')
+    .option('-o, --offset <number>', 'Number of events to skip (for pagination)', '0')
     .option('-s, --source <sourceId>', 'Filter by source')
     .option('--status <status>', 'Filter by status (delivered, failed, pending)')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(eventsListCommand);
 
   events
@@ -290,6 +365,8 @@ export function registerEventsCommands(parent: Command): Command {
     .alias('show')
     .description('Get event details with payload')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(eventsGetCommand);
 
   events
@@ -317,6 +394,8 @@ export function registerDeliveriesCommands(parent: Command): Command {
     .option('-d, --destination <destId>', 'Filter by destination')
     .option('--status <status>', 'Filter by status (success, failed, pending, retrying)')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(deliveriesListCommand);
 
   deliveries
@@ -324,6 +403,8 @@ export function registerDeliveriesCommands(parent: Command): Command {
     .alias('show')
     .description('Get delivery details')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(deliveriesGetCommand);
 
   deliveries
@@ -331,6 +412,8 @@ export function registerDeliveriesCommands(parent: Command): Command {
     .description('Replay a failed delivery')
     .option('-y, --yes', 'Skip confirmation')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(deliveriesReplayCommand);
 
   deliveries
@@ -340,6 +423,8 @@ export function registerDeliveriesCommands(parent: Command): Command {
     .option('-l, --limit <number>', 'Max deliveries to replay', '50')
     .option('-y, --yes', 'Skip confirmation (replay all)')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(deliveriesBulkReplayCommand);
 
   return deliveries;
@@ -355,6 +440,8 @@ export function registerTransformsCommands(parent: Command): Command {
     .alias('ls')
     .description('List all transforms')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(transformsListCommand);
 
   transforms
@@ -366,6 +453,8 @@ export function registerTransformsCommands(parent: Command): Command {
     .option('-f, --file <path>', 'Read transform code from a file')
     .option('-d, --description <text>', 'Description')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(transformsCreateCommand);
 
   transforms
@@ -373,6 +462,8 @@ export function registerTransformsCommands(parent: Command): Command {
     .alias('show')
     .description('Get transform details')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(transformsGetCommand);
 
   transforms
@@ -381,6 +472,8 @@ export function registerTransformsCommands(parent: Command): Command {
     .description('Delete a transform')
     .option('-y, --yes', 'Skip confirmation')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(transformsDeleteCommand);
 
   return transforms;
@@ -396,6 +489,8 @@ export function registerSchemasCommands(parent: Command): Command {
     .alias('ls')
     .description('List all schemas')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(schemasListCommand);
 
   schemas
@@ -405,6 +500,8 @@ export function registerSchemasCommands(parent: Command): Command {
     .option('-f, --file <path>', 'Read the JSON Schema from a file')
     .option('-d, --description <text>', 'Description')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(schemasCreateCommand);
 
   schemas
@@ -412,7 +509,30 @@ export function registerSchemasCommands(parent: Command): Command {
     .alias('show')
     .description('Get schema details')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(schemasGetCommand);
+
+  schemas
+    .command('update <schemaId>')
+    .description('Update a schema')
+    .option('-n, --name <name>', 'New name')
+    .option('-d, --description <text>', 'New description')
+    .option('-f, --file <path>', 'Read the new JSON Schema from a file')
+    .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
+    .action(schemasUpdateCommand);
+
+  schemas
+    .command('validate <schemaId>')
+    .description('Validate a payload against a schema')
+    .option('-p, --payload <json>', 'Payload as a JSON string')
+    .option('-f, --file <path>', 'Read the payload from a file')
+    .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
+    .action(schemasValidateCommand);
 
   schemas
     .command('delete <schemaId>')
@@ -420,6 +540,8 @@ export function registerSchemasCommands(parent: Command): Command {
     .description('Delete a schema')
     .option('-y, --yes', 'Skip confirmation')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(schemasDeleteCommand);
 
   return schemas;
@@ -435,6 +557,8 @@ export function registerFiltersCommands(parent: Command): Command {
     .alias('ls')
     .description('List all filters')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(filtersListCommand);
 
   filters
@@ -445,6 +569,8 @@ export function registerFiltersCommands(parent: Command): Command {
     .option('--condition <spec>', 'Condition "field:operator:value" (repeatable)', (v: string, prev: string[] = []) => prev.concat(v), [])
     .option('-d, --description <text>', 'Description')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(filtersCreateCommand);
 
   filters
@@ -452,6 +578,8 @@ export function registerFiltersCommands(parent: Command): Command {
     .alias('show')
     .description('Get filter details')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(filtersGetCommand);
 
   filters
@@ -460,6 +588,8 @@ export function registerFiltersCommands(parent: Command): Command {
     .description('Delete a filter')
     .option('-y, --yes', 'Skip confirmation')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(filtersDeleteCommand);
 
   return filters;
@@ -476,6 +606,8 @@ export function registerNotificationChannelsCommands(parent: Command): Command {
     .alias('ls')
     .description('List all notification channels')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(channelsListCommand);
 
   channels
@@ -485,7 +617,38 @@ export function registerNotificationChannelsCommands(parent: Command): Command {
     .option('-t, --type <type>', 'Type: email|slack|webhook|teams|pagerduty|discord')
     .option('-c, --config <json>', 'Type-specific config as a JSON object')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(channelsCreateCommand);
+
+  channels
+    .command('get <channelId>')
+    .alias('show')
+    .description('Get notification channel details')
+    .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
+    .action(channelsGetCommand);
+
+  channels
+    .command('update <channelId>')
+    .description('Update a notification channel')
+    .option('-n, --name <name>', 'New name')
+    .option('-c, --config <json>', 'New type-specific config as a JSON object')
+    .option('--active', 'Mark active')
+    .option('--inactive', 'Mark inactive')
+    .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
+    .action(channelsUpdateCommand);
+
+  channels
+    .command('test <channelId>')
+    .description('Send a test notification through this channel')
+    .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
+    .action(channelsTestCommand);
 
   channels
     .command('link <channelId>')
@@ -495,7 +658,48 @@ export function registerNotificationChannelsCommands(parent: Command): Command {
     .option('--on-success', 'Notify on success')
     .option('--no-on-recovery', 'Do not notify on recovery')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(channelsLinkCommand);
+
+  const channelRoutes = channels
+    .command('routes')
+    .description('Manage routes linked to a notification channel');
+
+  channelRoutes
+    .command('list <channelId>')
+    .alias('ls')
+    .description('List routes linked to a channel')
+    .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
+    .action(channelsRoutesListCommand);
+
+  channelRoutes
+    .command('update <channelId> <routeId>')
+    .description('Update notification settings for a linked route')
+    .option('--on-failure', 'Notify on failure')
+    .option('--off-failure', 'Do not notify on failure')
+    .option('--on-success', 'Notify on success')
+    .option('--off-success', 'Do not notify on success')
+    .option('--on-recovery', 'Notify on recovery')
+    .option('--off-recovery', 'Do not notify on recovery')
+    .option('--on-circuit-open', 'Notify on circuit open')
+    .option('--off-circuit-open', 'Do not notify on circuit open')
+    .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
+    .action(channelsRoutesUpdateCommand);
+
+  channelRoutes
+    .command('unlink <channelId> <routeId>')
+    .alias('rm')
+    .description('Unlink a route from a channel')
+    .option('-y, --yes', 'Skip confirmation')
+    .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
+    .action(channelsRoutesUnlinkCommand);
 
   channels
     .command('delete <channelId>')
@@ -503,6 +707,8 @@ export function registerNotificationChannelsCommands(parent: Command): Command {
     .description('Delete a notification channel')
     .option('-y, --yes', 'Skip confirmation')
     .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
     .action(channelsDeleteCommand);
 
   return channels;
@@ -511,7 +717,7 @@ export function registerNotificationChannelsCommands(parent: Command): Command {
 export function registerInboundGroup(parent: Command): Command {
   const inbound = parent
     .command('inbound')
-    .description('Inbound webhook management (sources, destinations, routes, events, deliveries)');
+    .description('Inbound webhook management (sources, destinations, routes, transforms, schemas, filters, channels, events, deliveries)');
 
   registerSourcesCommands(inbound);
   registerDestinationsCommands(inbound);

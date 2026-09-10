@@ -131,7 +131,7 @@ export class TunnelClient {
           this.handleMessage(data.toString());
         });
 
-        this.ws.on('close', (code, reason) => {
+        this.ws.on('close', (_code, _reason) => {
           this.stopPingInterval();
           this.options.onDisconnect?.();
 

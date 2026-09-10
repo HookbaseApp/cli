@@ -2,32 +2,27 @@ import { readFileSync } from 'fs';
 import { input, confirm, select } from '@inquirer/prompts';
 import { ExitPromptError } from '@inquirer/core';
 import * as api from '../lib/api.js';
-import * as config from '../lib/config.js';
 import * as logger from '../lib/logger.js';
 import { loadFeatures, ensureFeature } from '../lib/advanced.js';
+
+import { requireAuth } from '../lib/requireAuth.js';
+import { formatOutput } from '../lib/output.js';
 
 function isPromptCancelled(error: unknown): boolean {
   return error instanceof ExitPromptError ||
     (error instanceof Error && error.name === 'ExitPromptError');
 }
 
-function requireAuth(): void {
-  if (!config.isAuthenticated()) {
-    logger.error('Not logged in. Run "hookbase login" with an API key.');
-    process.exit(1);
-  }
-}
-
 const TRANSFORM_TYPES = ['jsonata', 'javascript', 'liquid', 'xslt'] as const;
 
-export async function transformsListCommand(options: { json?: boolean }): Promise<void> {
+export async function transformsListCommand(options: { json?: boolean; xml?: boolean; yaml?: boolean }): Promise<void> {
   requireAuth();
   const spinner = logger.spinner('Fetching transforms...');
   const result = await api.getTransforms();
   if (result.error) { spinner.fail('Failed to fetch transforms'); logger.error(result.error); return; }
   spinner.stop();
   const transforms = (result.data?.transforms || []) as any[];
-  if (options.json) { console.log(JSON.stringify(transforms, null, 2)); return; }
+  if (options.json || options.xml || options.yaml) { console.log(formatOutput(transforms, options.xml, options.yaml)); return; }
   if (transforms.length === 0) { logger.info('No transforms found'); logger.dim('Create one with "hookbase transforms create"'); return; }
   logger.table(
     ['ID', 'Name', 'Type', 'Routes'],
@@ -48,6 +43,8 @@ export async function transformsCreateCommand(options: {
   description?: string;
   yes?: boolean;
   json?: boolean;
+  xml?: boolean;
+  yaml?: boolean;
 }): Promise<void> {
   requireAuth();
   await loadFeatures();
@@ -94,7 +91,7 @@ export async function transformsCreateCommand(options: {
   });
   if (result.error) { spinner.fail('Failed to create transform'); logger.error(result.error); return; }
   spinner.succeed('Transform created');
-  if (options.json) { console.log(JSON.stringify(result.data?.transform, null, 2)); return; }
+  if (options.json || options.xml || options.yaml) { console.log(formatOutput(result.data?.transform, options.xml, options.yaml)); return; }
   const t = result.data?.transform;
   if (t) {
     logger.log('');
@@ -102,14 +99,14 @@ export async function transformsCreateCommand(options: {
   }
 }
 
-export async function transformsGetCommand(transformId: string, options: { json?: boolean }): Promise<void> {
+export async function transformsGetCommand(transformId: string, options: { json?: boolean; xml?: boolean; yaml?: boolean }): Promise<void> {
   requireAuth();
   const spinner = logger.spinner('Fetching transform...');
   const result = await api.getTransform(transformId);
   if (result.error) { spinner.fail('Failed to fetch transform'); logger.error(result.error); return; }
   spinner.stop();
   const t = result.data?.transform as any;
-  if (options.json) { console.log(JSON.stringify(t, null, 2)); return; }
+  if (options.json || options.xml || options.yaml) { console.log(formatOutput(t, options.xml, options.yaml)); return; }
   if (!t) { logger.error('Transform not found'); return; }
   logger.log('');
   logger.log(logger.bold('Transform Details'));
@@ -123,7 +120,7 @@ export async function transformsGetCommand(transformId: string, options: { json?
   logger.log('');
 }
 
-export async function transformsDeleteCommand(transformId: string, options: { yes?: boolean; json?: boolean }): Promise<void> {
+export async function transformsDeleteCommand(transformId: string, options: { yes?: boolean; json?: boolean; xml?: boolean; yaml?: boolean }): Promise<void> {
   requireAuth();
   try {
     if (!options.yes) {
@@ -138,5 +135,5 @@ export async function transformsDeleteCommand(transformId: string, options: { ye
   const result = await api.deleteTransform(transformId);
   if (result.error) { spinner.fail('Failed to delete transform'); logger.error(result.error); return; }
   spinner.succeed('Transform deleted');
-  if (options.json) console.log(JSON.stringify({ success: true, transformId }, null, 2));
+  if (options.json || options.xml || options.yaml) console.log(formatOutput({ success: true, transformId }, options.xml, options.yaml));
 }

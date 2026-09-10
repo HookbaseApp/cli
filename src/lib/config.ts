@@ -9,6 +9,14 @@ interface ConfigSchema {
   displayName: string | null;
   currentOrgId: string | null;
   currentOrgSlug: string | null;
+  // Session (JWT device-auth flow) credentials — fully separate from the
+  // API-key `authToken`/`refreshToken` above so `hasStaleJwtToken()`'s
+  // meaning (a pre-API-key-enforcement JWT stored as `authToken`) is undisturbed.
+  sessionAccessToken: string | null;
+  sessionRefreshToken: string | null;
+  sessionUserId: string | null;
+  sessionUserEmail: string | null;
+  sessionUserDisplayName: string | null;
 }
 
 const config = new Conf<ConfigSchema>({
@@ -22,6 +30,11 @@ const config = new Conf<ConfigSchema>({
     displayName: null,
     currentOrgId: null,
     currentOrgSlug: null,
+    sessionAccessToken: null,
+    sessionRefreshToken: null,
+    sessionUserId: null,
+    sessionUserEmail: null,
+    sessionUserDisplayName: null,
   },
 });
 
@@ -113,6 +126,57 @@ export function setCurrentOrg(id: string, slug: string): void {
   config.set('currentOrgSlug', slug);
 }
 
+// ============================================================================
+// Session (JWT device-auth) credentials
+// ============================================================================
+// Separate credential set from the API-key auth above — used for features
+// that require a real user session (org member management, 2FA, API key
+// rotation) rather than an org-scoped API key.
+
+export function getSessionAccessToken(): string | null {
+  return config.get('sessionAccessToken');
+}
+
+export function getSessionRefreshToken(): string | null {
+  return config.get('sessionRefreshToken');
+}
+
+export function setSession(
+  accessToken: string,
+  refreshToken: string,
+  user: { id: string; email: string; displayName: string }
+): void {
+  config.set('sessionAccessToken', accessToken);
+  config.set('sessionRefreshToken', refreshToken);
+  config.set('sessionUserId', user.id);
+  config.set('sessionUserEmail', user.email);
+  config.set('sessionUserDisplayName', user.displayName);
+}
+
+export function clearSession(): void {
+  config.set('sessionAccessToken', null);
+  config.set('sessionRefreshToken', null);
+  config.set('sessionUserId', null);
+  config.set('sessionUserEmail', null);
+  config.set('sessionUserDisplayName', null);
+}
+
+export function hasSession(): boolean {
+  return !!config.get('sessionAccessToken');
+}
+
+export function getSessionUser(): { id: string; email: string; displayName: string } | null {
+  const id = config.get('sessionUserId');
+  const email = config.get('sessionUserEmail');
+  const displayName = config.get('sessionUserDisplayName');
+
+  if (!id || !email) {
+    return null;
+  }
+
+  return { id, email, displayName: displayName || email };
+}
+
 export function getConfigPath(): string {
   return config.path;
 }
@@ -156,5 +220,10 @@ export function getAllConfig(): ConfigSchema {
     displayName: config.get('displayName'),
     currentOrgId: getCurrentOrg()?.id || null,
     currentOrgSlug: getCurrentOrg()?.slug || null,
+    sessionAccessToken: config.get('sessionAccessToken') ? '***' : null,
+    sessionRefreshToken: config.get('sessionRefreshToken') ? '***' : null,
+    sessionUserId: config.get('sessionUserId'),
+    sessionUserEmail: config.get('sessionUserEmail'),
+    sessionUserDisplayName: config.get('sessionUserDisplayName'),
   };
 }

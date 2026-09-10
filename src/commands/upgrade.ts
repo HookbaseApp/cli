@@ -3,6 +3,7 @@ import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
 import type { Command } from 'commander';
 import * as logger from '../lib/logger.js';
+import { formatOutput } from '../lib/output.js';
 
 const require = createRequire(import.meta.url);
 const pkg = require('../../package.json') as { name: string; version: string };
@@ -68,7 +69,7 @@ async function fetchLatestVersion(): Promise<string | null> {
 }
 
 /** True if `latest` is a strictly higher x.y.z than `current`. Ignores pre-release tags. */
-function isNewer(latest: string, current: string): boolean {
+export function isNewer(latest: string, current: string): boolean {
   const parse = (v: string) => v.split('-')[0].split('.').map((n) => parseInt(n, 10) || 0);
   const a = parse(latest);
   const b = parse(current);
@@ -112,19 +113,22 @@ interface UpgradeOptions {
   check?: boolean;
   dryRun?: boolean;
   json?: boolean;
+  xml?: boolean;
+  yaml?: boolean;
 }
 
 export async function upgradeCommand(cmdOptions: UpgradeOptions = {}, command?: Command): Promise<void> {
-  // `--json` is declared on both the root program and this subcommand, so
+  // `--json`/`--xml` are declared on both the root program and this subcommand, so
   // commander binds the token to the parent option. optsWithGlobals() merges
-  // parent globals with local options so we see --json regardless of position.
+  // parent globals with local options so we see them regardless of position.
   const options: UpgradeOptions = command ? command.optsWithGlobals() : cmdOptions;
+  const machineOutput = !!(options.json || options.xml || options.yaml);
 
   const current = pkg.version;
   const pm = detectPackageManager();
   const commandStr = pm.install.join(' ');
 
-  const spinner = options.json ? null : logger.spinner('Checking for the latest version…');
+  const spinner = machineOutput ? null : logger.spinner('Checking for the latest version…');
   // Note: this check queries the public npm registry, whereas the install below
   // resolves `@latest` through the user's own package-manager config (which may
   // point at a private/scoped registry). They can therefore disagree — see the
@@ -135,8 +139,8 @@ export async function upgradeCommand(cmdOptions: UpgradeOptions = {}, command?: 
   // --check / --dry-run are purely informational, so they require the lookup.
   if (options.check || options.dryRun) {
     if (!latest) {
-      if (options.json) {
-        console.log(JSON.stringify({ current, latest: null, error: 'registry_unreachable' }, null, 2));
+      if (machineOutput) {
+        console.log(formatOutput({ current, latest: null, error: 'registry_unreachable' }, options.xml, options.yaml));
       } else {
         logger.error('Could not reach the npm registry to check for updates.');
         logger.dim(`To update manually, run: ${commandStr}`);
@@ -145,8 +149,8 @@ export async function upgradeCommand(cmdOptions: UpgradeOptions = {}, command?: 
       return;
     }
     const upToDate = !isNewer(latest, current);
-    if (options.json) {
-      console.log(JSON.stringify({ current, latest, upToDate, packageManager: pm.name, command: commandStr }, null, 2));
+    if (machineOutput) {
+      console.log(formatOutput({ current, latest, upToDate, packageManager: pm.name, command: commandStr }, options.xml, options.yaml));
     } else if (upToDate) {
       logger.success(`You're on the latest version (${current}).`);
     } else {
@@ -158,8 +162,8 @@ export async function upgradeCommand(cmdOptions: UpgradeOptions = {}, command?: 
 
   // Actual upgrade. Only skip the install when we could confirm we're current.
   if (latest && !isNewer(latest, current)) {
-    if (options.json) {
-      console.log(JSON.stringify({ current, latest, upToDate: true, updated: false, packageManager: pm.name }, null, 2));
+    if (machineOutput) {
+      console.log(formatOutput({ current, latest, upToDate: true, updated: false, packageManager: pm.name }, options.xml, options.yaml));
     } else {
       logger.success(`You're already on the latest version (${current}).`);
     }
@@ -169,7 +173,7 @@ export async function upgradeCommand(cmdOptions: UpgradeOptions = {}, command?: 
   // Either a newer version is available, or the public check was inconclusive
   // (offline / private registry). In both cases defer to the package manager,
   // which resolves `@latest` against the user's own registry.
-  if (!options.json) {
+  if (!machineOutput) {
     if (latest) {
       logger.info(`Updating ${PACKAGE_NAME}: ${current} → ${logger.green(latest)}`);
     } else {
@@ -181,11 +185,11 @@ export async function upgradeCommand(cmdOptions: UpgradeOptions = {}, command?: 
     logger.log('');
   }
 
-  const code = await runInstall(pm, !!options.json);
+  const code = await runInstall(pm, machineOutput);
 
   if (code === 0) {
-    if (options.json) {
-      console.log(JSON.stringify({ current, latest, updated: true, packageManager: pm.name }, null, 2));
+    if (machineOutput) {
+      console.log(formatOutput({ current, latest, updated: true, packageManager: pm.name }, options.xml, options.yaml));
     } else {
       logger.log('');
       // This already-running process can't observe the freshly-installed
@@ -196,8 +200,8 @@ export async function upgradeCommand(cmdOptions: UpgradeOptions = {}, command?: 
     return;
   }
 
-  if (options.json) {
-    console.log(JSON.stringify({ current, latest, updated: false, exitCode: code, packageManager: pm.name }, null, 2));
+  if (machineOutput) {
+    console.log(formatOutput({ current, latest, updated: false, exitCode: code, packageManager: pm.name }, options.xml, options.yaml));
   } else {
     logger.log('');
     logger.error(`Update failed (exit code ${code}).`);

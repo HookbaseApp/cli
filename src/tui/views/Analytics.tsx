@@ -78,7 +78,7 @@ export function AnalyticsView({ onNavigate }: AnalyticsViewProps) {
         if (eventsRes.data?.events) {
           setLiveEvents(eventsRes.data.events);
         }
-      } catch (err) {
+      } catch {
         // Silently fail on refresh
       }
     }, 10000);

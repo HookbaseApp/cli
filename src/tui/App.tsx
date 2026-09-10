@@ -1,8 +1,13 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { render, Box, Text, useInput, useApp } from 'ink';
 import Spinner from 'ink-spinner';
+import { createRequire } from 'module';
 import * as api from '../lib/api.js';
 import * as config from '../lib/config.js';
+import { isAuthReady, authErrorMessage } from '../lib/requireAuth.js';
+
+const require = createRequire(import.meta.url);
+const pkg = require('../../package.json') as { version: string };
 
 // Views
 import { OverviewView } from './views/Overview.js';
@@ -73,16 +78,42 @@ interface AppState {
   cronJobs: api.CronJob[];
   apiKeys: api.ApiKey[];
   deliveries: api.Delivery[];
+  // True aggregate counts from the analytics endpoint (not capped by the
+  // `events`/`deliveries` list fetch limits above) — see Overview.tsx.
+  overview: { totalEvents: number; successfulDeliveries: number; failedDeliveries: number } | null;
   loading: boolean;
   error?: string;
 }
 
-function HelpOverlay({ onClose }: { onClose: () => void }) {
+// The analytics endpoint's `overview` object is snake_case (total_events,
+// successful_deliveries, failed_deliveries) despite api.ts's DashboardAnalytics
+// type claiming camelCase — same drift Analytics.tsx already works around.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function normalizeOverview(o: any): AppState['overview'] {
+  if (!o) return null;
+  return {
+    totalEvents: o.totalEvents ?? o.total_events ?? 0,
+    successfulDeliveries: o.successfulDeliveries ?? o.successful_deliveries ?? 0,
+    failedDeliveries: o.failedDeliveries ?? o.failed_deliveries ?? 0,
+  };
+}
+
+function HelpOverlay({ onClose, activeSubTab }: { onClose: () => void; activeSubTab: string }) {
   useInput((input, key) => {
     if (key.escape || input === '?' || input === 'q') {
       onClose();
     }
   });
+
+  // Tunnels/API Keys don't follow the common d=delete binding — see below.
+  const deleteRows = activeSubTab === 'tunnels'
+    ? [
+        <Box key="d"><Box width={20}><Text>d</Text></Box><Text dimColor>Disconnect tunnel</Text></Box>,
+        <Box key="x"><Box width={20}><Text>x</Text></Box><Text dimColor>Delete tunnel</Text></Box>,
+      ]
+    : activeSubTab === 'api-keys'
+    ? [<Box key="x"><Box width={20}><Text>x</Text></Box><Text dimColor>Revoke key</Text></Box>]
+    : [<Box key="d"><Box width={20}><Text>d</Text></Box><Text dimColor>Delete item</Text></Box>];
 
   return (
     <Box flexDirection="column" borderStyle="round" borderColor="cyan" paddingX={2} paddingY={1}>
@@ -102,9 +133,9 @@ function HelpOverlay({ onClose }: { onClose: () => void }) {
       </Box>
 
       <Box marginBottom={1} flexDirection="column">
-        <Text bold dimColor>Actions</Text>
+        <Text bold dimColor>Actions (current view)</Text>
         <Box><Box width={20}><Text>n</Text></Box><Text dimColor>Create new item</Text></Box>
-        <Box><Box width={20}><Text>d</Text></Box><Text dimColor>Delete item</Text></Box>
+        {deleteRows}
         <Box><Box width={20}><Text>t</Text></Box><Text dimColor>Test / trigger</Text></Box>
         <Box><Box width={20}><Text>e</Text></Box><Text dimColor>Enable / disable</Text></Box>
         <Box><Box width={20}><Text>p</Text></Box><Text dimColor>Toggle payload view</Text></Box>
@@ -334,7 +365,7 @@ function Logo() {
       <Box flexDirection="column" marginLeft={2}>
         <Box height={5} />
         <Text bold>HOOKBASE</Text>
-        <Text dimColor>v2.0.0{org ? ` | ${org.slug}` : ''}</Text>
+        <Text dimColor>v{pkg.version}{org ? ` | ${org.slug}` : ''}</Text>
       </Box>
     </Box>
   );
@@ -433,6 +464,7 @@ function App() {
     cronJobs: [],
     apiKeys: [],
     deliveries: [],
+    overview: null,
     loading: true,
   });
 
@@ -507,13 +539,20 @@ function App() {
             const res = await api.getDeliveries({ limit: 50 });
             setData(prev => ({ ...prev, deliveries: res.data?.deliveries || prev.deliveries }));
           },
+          overview: async () => {
+            const res = await api.getDashboardAnalytics('24h');
+            const overview = normalizeOverview(res.data?.overview);
+            if (overview) {
+              setData(prev => ({ ...prev, overview }));
+            }
+          },
         };
         await fetchers[resource]?.();
         return;
       }
 
       // Full refresh
-      const [sourcesRes, destsRes, routesRes, tunnelsRes, eventsRes, cronRes, apiKeysRes, deliveriesRes] = await Promise.all([
+      const [sourcesRes, destsRes, routesRes, tunnelsRes, eventsRes, cronRes, apiKeysRes, deliveriesRes, analyticsRes] = await Promise.all([
         api.getSources(),
         api.getDestinations(),
         api.getRoutes(),
@@ -522,6 +561,7 @@ function App() {
         api.getCronJobs(),
         api.listApiKeys(),
         api.getDeliveries({ limit: 50 }),
+        api.getDashboardAnalytics('24h'),
       ]);
 
       setData({
@@ -533,6 +573,7 @@ function App() {
         cronJobs: cronRes.data?.cronJobs || [],
         apiKeys: apiKeysRes.data?.apiKeys || [],
         deliveries: deliveriesRes.data?.deliveries || [],
+        overview: normalizeOverview(analyticsRes.data?.overview),
         loading: false,
       });
     } catch (error) {
@@ -545,11 +586,11 @@ function App() {
   }, []);
 
   useEffect(() => {
-    if (!config.isAuthenticated()) {
+    if (!isAuthReady()) {
       setData(prev => ({
         ...prev,
         loading: false,
-        error: 'Not authenticated. Run "hookbase login" first.',
+        error: authErrorMessage(),
       }));
       return;
     }
@@ -730,7 +771,7 @@ function App() {
 
       {showHelp && (
         <Box marginTop={1}>
-          <HelpOverlay onClose={() => setShowHelp(false)} />
+          <HelpOverlay onClose={() => setShowHelp(false)} activeSubTab={activeSubTab} />
         </Box>
       )}
 

@@ -5,6 +5,7 @@ import Spinner from 'ink-spinner';
 import * as api from '../../lib/api.js';
 import * as config from '../../lib/config.js';
 import { TunnelClient } from '../../lib/tunnel.js';
+import { resolveWsUrl } from '../../lib/tunnelConnect.js';
 
 interface TunnelsViewProps {
   tunnels: api.Tunnel[];
@@ -142,7 +143,7 @@ function TunnelDetail({ tunnelId, tunnels, onBack, onRefresh }: {
   // Connect mode states
   const [mode, setMode] = useState<'detail' | 'port-input' | 'connecting' | 'connected' | 'history'>('detail');
   const [portInput, setPortInput] = useState('');
-  const [connectionStatus, setConnectionStatus] = useState<'disconnected' | 'connected' | 'error'>('disconnected');
+  const [_connectionStatus, setConnectionStatus] = useState<'disconnected' | 'connected' | 'error'>('disconnected');
   const [requestLogs, setRequestLogs] = useState<RequestLog[]>([]);
   const tunnelClientRef = useRef<TunnelClient | null>(null);
   // History mode states
@@ -180,8 +181,8 @@ function TunnelDetail({ tunnelId, tunnels, onBack, onRefresh }: {
 
       // Use the wsUrl directly from the API response, or construct it
       const authToken = result.data.auth_token || result.data.authToken;
-      const wsUrl = result.data.wsUrl ||
-        `${apiUrl.replace('https://', 'wss://').replace('http://', 'ws://')}/tunnels/${tunnel.subdomain}/ws?tunnelId=${tunnelId}&token=${authToken}`;
+      const wsUrl = resolveWsUrl(result.data.wsUrl ||
+        `${apiUrl.replace('https://', 'wss://').replace('http://', 'ws://')}/tunnels/${tunnel.subdomain}/ws?tunnelId=${tunnelId}&token=${authToken}`);
 
       const client = new TunnelClient({
         wsUrl,
@@ -300,7 +301,7 @@ function TunnelDetail({ tunnelId, tunnels, onBack, onRefresh }: {
           setMessage('Tunnel disconnected');
           onRefresh();
         }
-      } catch (err) {
+      } catch {
         setMessage('Failed to disconnect');
       }
       setAction('none');
@@ -323,7 +324,7 @@ function TunnelDetail({ tunnelId, tunnels, onBack, onRefresh }: {
           setMessage('Tunnel deleted successfully');
           setTimeout(() => { onRefresh(); onBack(); }, 1500);
         }
-      } catch (err) {
+      } catch {
         setMessage('Failed to delete');
         setAction('none');
         setTimeout(() => { busy.current = false; }, 300);

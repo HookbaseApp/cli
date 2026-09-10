@@ -3,6 +3,7 @@ import { Box, Text, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 import SelectInput from 'ink-select-input';
 import * as api from '../../lib/api.js';
+import { parseJsonField } from '../../lib/parseJson.js';
 
 interface DestinationsViewProps {
   destinations: api.Destination[];
@@ -104,13 +105,9 @@ function DestinationList({ destinations, onSelect, onCreate }: {
                     {(() => {
                       const destType = (item as any).type || (item as any).destinationType || 'http';
                       if (destType !== 'http') {
-                        try {
-                          const cfg = JSON.parse((item as any).config || '{}');
-                          const display = `${cfg.bucket || '?'}${cfg.prefix ? '/' + cfg.prefix : ''}`;
-                          return <Text color="blue">{display.slice(0, 38)}{display.length > 38 ? '…' : ''}</Text>;
-                        } catch {
-                          return <Text dimColor>-</Text>;
-                        }
+                        const cfg = parseJsonField((item as any).config, {} as Record<string, unknown>) as any;
+                        const display = `${cfg.bucket || '?'}${cfg.prefix ? '/' + cfg.prefix : ''}`;
+                        return <Text color="blue">{display.slice(0, 38)}{display.length > 38 ? '…' : ''}</Text>;
                       }
                       return <Text color="blue">{item.url.slice(0, 38)}{item.url.length > 38 ? '…' : ''}</Text>;
                     })()}
@@ -192,7 +189,7 @@ function DestinationDetail({ destId, destinations, onBack, onRefresh }: {
           setMessage('Destination deleted successfully');
           setTimeout(() => { onRefresh(); onBack(); }, 1500);
         }
-      } catch (err) {
+      } catch {
         setMessage('Failed to delete');
         setConfirmDelete(false);
         setTimeout(() => { busy.current = false; }, 300);
@@ -246,39 +243,35 @@ function DestinationDetail({ destId, destinations, onBack, onRefresh }: {
         {(() => {
           const destType = (dest as any).type || (dest as any).destinationType || 'http';
           if (destType !== 'http') {
-            try {
-              const cfg = JSON.parse((dest as any).config || '{}');
-              return (
-                <>
+            const cfg = parseJsonField((dest as any).config, {} as Record<string, unknown>) as any;
+            return (
+              <>
+                <Box>
+                  <Box width={16}><Text dimColor>Bucket:</Text></Box>
+                  <Text color="blue">{cfg.bucket || '-'}</Text>
+                </Box>
+                {cfg.region && (
                   <Box>
-                    <Box width={16}><Text dimColor>Bucket:</Text></Box>
-                    <Text color="blue">{cfg.bucket || '-'}</Text>
+                    <Box width={16}><Text dimColor>Region:</Text></Box>
+                    <Text>{cfg.region}</Text>
                   </Box>
-                  {cfg.region && (
-                    <Box>
-                      <Box width={16}><Text dimColor>Region:</Text></Box>
-                      <Text>{cfg.region}</Text>
-                    </Box>
-                  )}
-                  {cfg.prefix && (
-                    <Box>
-                      <Box width={16}><Text dimColor>Prefix:</Text></Box>
-                      <Text>{cfg.prefix}</Text>
-                    </Box>
-                  )}
+                )}
+                {cfg.prefix && (
                   <Box>
-                    <Box width={16}><Text dimColor>File Format:</Text></Box>
-                    <Text>{cfg.fileFormat || 'jsonl'}</Text>
+                    <Box width={16}><Text dimColor>Prefix:</Text></Box>
+                    <Text>{cfg.prefix}</Text>
                   </Box>
-                  <Box>
-                    <Box width={16}><Text dimColor>Partition:</Text></Box>
-                    <Text>{cfg.partitionBy || 'date'}</Text>
-                  </Box>
-                </>
-              );
-            } catch {
-              return null;
-            }
+                )}
+                <Box>
+                  <Box width={16}><Text dimColor>File Format:</Text></Box>
+                  <Text>{cfg.fileFormat || 'jsonl'}</Text>
+                </Box>
+                <Box>
+                  <Box width={16}><Text dimColor>Partition:</Text></Box>
+                  <Text>{cfg.partitionBy || 'date'}</Text>
+                </Box>
+              </>
+            );
           }
           return (
             <>
@@ -397,7 +390,7 @@ function CreateDestination({ onBack, onCreated }: {
   const [configFields, setConfigFields] = useState<Record<string, string>>({});
   const [currentFieldValue, setCurrentFieldValue] = useState('');
   // Common
-  const [useStaticIp, setUseStaticIp] = useState(true);
+  const [_useStaticIp, setUseStaticIp] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [createdDest, setCreatedDest] = useState<api.Destination | null>(null);
 

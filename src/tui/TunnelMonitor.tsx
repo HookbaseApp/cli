@@ -5,6 +5,8 @@ import { Panel, StatusBadge } from './components/Box.js';
 import * as api from '../lib/api.js';
 import * as config from '../lib/config.js';
 import { TunnelClient } from '../lib/tunnel.js';
+import { resolveWsUrl } from '../lib/tunnelConnect.js';
+import { isAuthReady, authErrorMessage } from '../lib/requireAuth.js';
 
 interface RequestLog {
   id: string;
@@ -186,10 +188,8 @@ function TunnelMonitorApp({ tunnelId, port }: TunnelMonitorProps) {
 
         const authToken = tokenRes.data.authToken;
         const apiUrl = config.getApiUrl();
-        const wsUrl = apiUrl
-          .replace('https://', 'wss://')
-          .replace('http://', 'ws://') +
-          `/tunnels/${tunnelRes.data.tunnel.subdomain}/ws?tunnelId=${tunnelId}&token=${authToken}`;
+        const wsUrl = resolveWsUrl(tokenRes.data.wsUrl ||
+          `${apiUrl.replace('https://', 'wss://').replace('http://', 'ws://')}/tunnels/${tunnelRes.data.tunnel.subdomain}/ws?tunnelId=${tunnelId}&token=${authToken}`);
 
         setTunnelUrl(`${apiUrl}/t/${tunnelRes.data.tunnel.subdomain}`);
 
@@ -216,10 +216,10 @@ function TunnelMonitorApp({ tunnelId, port }: TunnelMonitorProps) {
       }
     };
 
-    if (config.isAuthenticated()) {
+    if (isAuthReady()) {
       connect();
     } else {
-      setError('Not authenticated. Run "hookbase login" first.');
+      setError(authErrorMessage());
     }
 
     return () => {

@@ -181,7 +181,7 @@ function RouteDetail({ routeId, routes, onBack, onRefresh }: {
           setMessage('Route deleted successfully');
           setTimeout(() => { onRefresh(); onBack(); }, 1500);
         }
-      } catch (err) {
+      } catch {
         setMessage('Failed to delete');
         setConfirmDelete(false);
         setTimeout(() => { busy.current = false; }, 300);
@@ -204,7 +204,7 @@ function RouteDetail({ routeId, routes, onBack, onRefresh }: {
           setMessage(newActiveState ? 'Route enabled' : 'Route disabled');
           onRefresh();
         }
-      } catch (err) {
+      } catch {
         setMessage('Failed to toggle');
       }
       setToggling(false);
@@ -369,7 +369,7 @@ function CreateRoute({ sources, destinations, onBack, onCreated }: {
           onBack();
         }, 1500);
       }
-    } catch (err) {
+    } catch {
       setError('Failed to create route');
       setStep('name');
     }
