@@ -44,16 +44,39 @@ function parseCsv(raw?: string): string[] | undefined {
 
 const IP_FILTER_MODES = ['none', 'allowlist', 'denylist', 'both'] as const;
 
-// Pinned to VALID_PROVIDERS in api/src/routes/sources.ts — picking anything else 400s with a
-// bare "Invalid input" on create. SendGrid, Mailgun, Paddle and Linear used to be offered here
-// and rejected by every one of them; add a provider to both places at once, not just this list.
+// Pinned to the providers the API accepts — picking anything else 400s with a bare
+// "Invalid input" on create. SendGrid, Mailgun, Paddle and Linear used to be offered here and
+// rejected by every one of them.
+//
+// The API no longer keeps a hand-written list: `api/src/routes/sources.ts` derives its enum
+// from `SUPPORTED_SIGNATURE_PROVIDERS` in `api/src/utils/signature-schemes.ts`, generated from
+// the signature scheme table. Regenerate this with `npx tsx scripts/print-source-enums.ts` in
+// the api package rather than adding entries by hand.
+//
+// The empty value is not the `generic` provider — it leaves the source with no provider at
+// all, which is the only way to get an endpoint that never checks a signature. `generic` is an
+// alias of `custom` and does verify once a signing secret is set. `svix` is likewise an alias
+// of `standard-webhooks` and is not offered separately.
+//
+// Each label carries the header that provider signs with, because that is what the user is
+// looking at in the provider's own dashboard when they answer this prompt.
 const PROVIDERS = [
   { name: 'Generic (no signature verification)', value: '' },
-  { name: 'GitHub', value: 'github' },
-  { name: 'Stripe', value: 'stripe' },
-  { name: 'Shopify', value: 'shopify' },
-  { name: 'Slack', value: 'slack' },
-  { name: 'Twilio', value: 'twilio' },
+  { name: 'GitHub — X-Hub-Signature-256', value: 'github' },
+  { name: 'Stripe — Stripe-Signature', value: 'stripe' },
+  { name: 'Shopify — X-Shopify-Hmac-Sha256', value: 'shopify' },
+  { name: 'Slack — X-Slack-Signature', value: 'slack' },
+  { name: 'Twilio — X-Twilio-Signature', value: 'twilio' },
+  { name: 'Standard Webhooks / Svix — Webhook-Signature (also Resend, Clerk)', value: 'standard-webhooks' },
+  { name: 'Bitbucket — X-Hub-Signature', value: 'bitbucket' },
+  { name: 'GitLab — X-Gitlab-Token', value: 'gitlab' },
+  { name: 'Heroku — Heroku-Webhook-Hmac-SHA256', value: 'heroku' },
+  { name: 'Lemon Squeezy — X-Signature', value: 'lemonsqueezy' },
+  { name: 'Paddle — Paddle-Signature', value: 'paddle' },
+  { name: 'Sentry — Sentry-Hook-Signature', value: 'sentry' },
+  { name: 'Typeform — Typeform-Signature', value: 'typeform' },
+  { name: 'Zoom — X-Zm-Signature', value: 'zoom' },
+  { name: 'Custom — HMAC-SHA256 over the raw body', value: 'custom' },
 ];
 
 export async function sourcesListCommand(options: { json?: boolean; xml?: boolean; yaml?: boolean }): Promise<void> {
