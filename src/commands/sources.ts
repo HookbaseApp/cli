@@ -76,6 +76,13 @@ const PROVIDERS = [
   { name: 'Sentry — Sentry-Hook-Signature', value: 'sentry' },
   { name: 'Typeform — Typeform-Signature', value: 'typeform' },
   { name: 'Zoom — X-Zm-Signature', value: 'zoom' },
+  { name: 'Airtable — X-Airtable-Content-MAC', value: 'airtable' },
+  { name: 'Asana — X-Hook-Signature', value: 'asana' },
+  { name: 'Calendly — Calendly-Webhook-Signature', value: 'calendly' },
+  { name: 'Intercom — X-Hub-Signature', value: 'intercom' },
+  { name: 'Notion — X-Notion-Signature', value: 'notion' },
+  { name: 'Razorpay — X-Razorpay-Signature', value: 'razorpay' },
+  { name: 'WorkOS — WorkOS-Signature', value: 'workos' },
   { name: 'Custom — HMAC-SHA256 over the raw body', value: 'custom' },
 ];
 
