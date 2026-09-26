@@ -26,7 +26,7 @@ export async function applicationsListCommand(options: { json?: boolean; xml?: b
 
   spinner.stop();
 
-  const applications = (result.data as any)?.data || result.data?.applications || [];
+  const applications = result.data?.data ?? [];
 
   if (options.json || options.xml || options.yaml) {
     console.log(formatOutput(applications, options.xml, options.yaml));
@@ -40,24 +40,24 @@ export async function applicationsListCommand(options: { json?: boolean; xml?: b
   }
 
   logger.table(
-    ['ID', 'Name', 'UID', 'Status', 'Endpoints', 'Messages'],
-    applications.map((a: any) => {
-      const isActive = a.is_active ?? (a.isDisabled !== undefined ? !a.isDisabled : true);
-      return [
-        a.id,
-        a.name,
-        a.uid || a.externalId || '-',
-        isActive ? logger.green('active') : logger.dimText('inactive'),
-        String(a.endpoint_count ?? a.endpointCount ?? 0),
-        String(a.message_count ?? a.messageCount ?? 0),
-      ];
-    })
+    ['ID', 'Name', 'External ID', 'Status', 'Endpoints', 'Messages'],
+    applications.map((a) => [
+      a.id,
+      a.name,
+      a.externalId || '-',
+      a.isDisabled ? logger.dimText('inactive') : logger.green('active'),
+      String(a.endpointCount ?? 0),
+      String(a.totalMessagesSent ?? 0),
+    ])
   );
 }
 
 export async function applicationsCreateCommand(options: {
   name?: string;
+  externalId?: string;
+  /** Deprecated alias for --external-id, kept so existing scripts keep working. */
   uid?: string;
+  /** Accepted and ignored; see the warning below. */
   description?: string;
   rateLimit?: string;
   yes?: boolean;
@@ -67,9 +67,15 @@ export async function applicationsCreateCommand(options: {
 }): Promise<void> {
   requireAuth();
 
+  // An application has no description -- webhook_applications has no such column and neither
+  // create nor update accepts one. It was being sent and silently dropped, so the flag has always
+  // been a no-op. Warn rather than error so scripts that pass it keep running.
+  if (options.description) {
+    logger.warn('--description is ignored: webhook applications have no description field.');
+  }
+
   let name = options.name;
-  let uid = options.uid;
-  let description = options.description;
+  let externalId = options.externalId ?? options.uid;
 
   try {
     if (!name) {
@@ -78,12 +84,8 @@ export async function applicationsCreateCommand(options: {
         validate: (value) => value.length > 0 || 'Name is required',
       });
 
-      uid = await input({
-        message: 'Application UID (optional, for your reference):',
-      });
-
-      description = await input({
-        message: 'Description (optional):',
+      externalId = await input({
+        message: 'External ID (optional, your own identifier for this application):',
       });
     }
 
@@ -109,8 +111,7 @@ export async function applicationsCreateCommand(options: {
   const spinner = logger.spinner('Creating application...');
   const result = await api.createWebhookApplication({
     name: name!,
-    uid: uid || undefined,
-    description: description || undefined,
+    externalId: externalId || undefined,
     rateLimitPerMinute: options.rateLimit ? parseInt(options.rateLimit, 10) : undefined,
   });
 
@@ -122,7 +123,7 @@ export async function applicationsCreateCommand(options: {
 
   spinner.succeed('Application created');
 
-  const app = (result.data as any)?.data || result.data?.application;
+  const app = result.data?.data;
 
   if (options.json || options.xml || options.yaml) {
     console.log(formatOutput(app, options.xml, options.yaml));
@@ -134,8 +135,7 @@ export async function applicationsCreateCommand(options: {
     logger.box('Application Created', [
       `ID:          ${app.id}`,
       `Name:        ${app.name}`,
-      app.uid ? `UID:         ${app.uid}` : '',
-      app.description ? `Description: ${app.description}` : '',
+      app.externalId ? `External ID: ${app.externalId}` : '',
     ].filter(Boolean).join('\n'));
   }
 }
@@ -157,7 +157,7 @@ export async function applicationsGetCommand(
 
   spinner.stop();
 
-  const app = (result.data as any)?.data || result.data?.application;
+  const app = result.data?.data;
 
   if (options.json || options.xml || options.yaml) {
     console.log(formatOutput(app, options.xml, options.yaml));
@@ -169,20 +169,18 @@ export async function applicationsGetCommand(
     return;
   }
 
-  const isActive = app.is_active ?? (app.isDisabled !== undefined ? !app.isDisabled : true);
-
   logger.log('');
   logger.log(logger.bold('Application Details'));
   logger.log('');
   logger.log(`ID:          ${app.id}`);
   logger.log(`Name:        ${app.name}`);
-  if (app.uid || app.externalId) logger.log(`UID:         ${app.uid || app.externalId}`);
-  if (app.description) logger.log(`Description: ${app.description}`);
-  logger.log(`Status:      ${isActive ? logger.green('active') : logger.red('inactive')}`);
-  logger.log(`Endpoints:   ${app.endpoint_count ?? app.endpointCount ?? 0}`);
-  logger.log(`Messages:    ${app.message_count ?? app.messageCount ?? 0}`);
-  if (app.rate_limit_per_minute || app.rateLimitPerMinute) logger.log(`Rate Limit:  ${app.rate_limit_per_minute || app.rateLimitPerMinute}/min`);
-  logger.log(`Created:     ${app.created_at || app.createdAt}`);
+  if (app.externalId) logger.log(`External ID: ${app.externalId}`);
+  logger.log(`Status:      ${app.isDisabled ? logger.red('inactive') : logger.green('active')}`);
+  if (app.isDisabled && app.disabledReason) logger.log(`Reason:      ${app.disabledReason}`);
+  logger.log(`Endpoints:   ${app.endpointCount ?? app.totalEndpoints ?? 0}`);
+  logger.log(`Messages:    ${app.totalMessagesSent ?? 0}`);
+  if (app.rateLimitPerMinute) logger.log(`Rate Limit:  ${app.rateLimitPerMinute}/min`);
+  logger.log(`Created:     ${app.createdAt}`);
   logger.log('');
 }
 
@@ -190,6 +188,7 @@ export async function applicationsUpdateCommand(
   appId: string,
   options: {
     name?: string;
+    /** Accepted and ignored; see the warning below. */
     description?: string;
     rateLimit?: string;
     active?: boolean;
@@ -201,16 +200,20 @@ export async function applicationsUpdateCommand(
 ): Promise<void> {
   requireAuth();
 
+  // See applicationsCreateCommand: there is no description field on an application.
+  if (options.description) {
+    logger.warn('--description is ignored: webhook applications have no description field.');
+  }
+
   const updateData: Parameters<typeof api.updateWebhookApplication>[1] = {};
 
   if (options.name) updateData.name = options.name;
-  if (options.description) updateData.description = options.description;
   if (options.rateLimit) updateData.rateLimitPerMinute = parseInt(options.rateLimit, 10);
   if (options.active) updateData.isDisabled = false;
   if (options.inactive) updateData.isDisabled = true;
 
   if (Object.keys(updateData).length === 0) {
-    logger.error('No updates specified. Use --name, --description, --rate-limit, --active, or --inactive');
+    logger.error('No updates specified. Use --name, --rate-limit, --active, or --inactive');
     return;
   }
 
@@ -226,8 +229,7 @@ export async function applicationsUpdateCommand(
   spinner.succeed('Application updated');
 
   if (options.json || options.xml || options.yaml) {
-    const updated = (result.data as any)?.data || result.data?.application;
-    console.log(formatOutput(updated, options.xml, options.yaml));
+    console.log(formatOutput(result.data?.data, options.xml, options.yaml));
   }
 }
 

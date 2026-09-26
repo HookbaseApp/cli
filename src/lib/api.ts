@@ -1947,56 +1947,82 @@ export async function reorderCronGroups(groupIds: string[]): Promise<ApiResponse
 // Outbound Webhooks - Applications
 // ============================================================================
 
+// Mirrors formatApplicationRow() in api/src/routes/webhook-applications.ts, which is camelCase.
+// The previous shape here was snake_case with `description`, `uid` and `is_active` -- none of which
+// the API returns, and `webhook_applications` has no description column at all (that's
+// webhook_endpoints). The display code papered over it by reading both spellings; the fields that
+// only ever existed here are gone rather than kept as optional, so tsc flags any remaining reader.
 export interface WebhookApplication {
   id: string;
-  organization_id: string;
+  organizationId: string;
+  externalId: string | null;
   name: string;
-  description?: string;
-  uid?: string;
-  rate_limit_per_minute?: number;
-  is_active: number;
-  endpoint_count?: number;
-  message_count?: number;
-  created_at: string;
-  updated_at: string;
+  metadata?: Record<string, unknown> | null;
+  rateLimitPerSecond?: number | null;
+  rateLimitPerMinute?: number | null;
+  rateLimitPerHour?: number | null;
+  isDisabled: boolean;
+  disabledAt?: string | null;
+  disabledReason?: string | null;
+  totalEndpoints?: number;
+  totalMessagesSent?: number;
+  totalMessagesFailed?: number;
+  lastEventAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  createdBy?: string | null;
+  apiKeyId?: string | null;
+  sendEventUrl?: string;
+  /** Present on list and single-get responses only; computed, not a column. */
+  endpointCount?: number;
 }
 
-export async function getWebhookApplications(): Promise<ApiResponse<{ applications: WebhookApplication[] }>> {
+export async function getWebhookApplications(): Promise<
+  ApiResponse<{ data: WebhookApplication[]; pagination: { hasMore: boolean; nextCursor: string | null } }>
+> {
 
-  return request<{ applications: WebhookApplication[] }>('GET', `/api/webhook-applications`);
+  return request<{ data: WebhookApplication[]; pagination: { hasMore: boolean; nextCursor: string | null } }>(
+    'GET',
+    `/api/webhook-applications`
+  );
 }
 
-export async function getWebhookApplication(appId: string): Promise<ApiResponse<{ application: WebhookApplication }>> {
+export async function getWebhookApplication(appId: string): Promise<ApiResponse<{ data: WebhookApplication }>> {
 
-  return request<{ application: WebhookApplication }>('GET', `/api/webhook-applications/${appId}`);
+  return request<{ data: WebhookApplication }>('GET', `/api/webhook-applications/${appId}`);
 }
 
+// POST /api/webhook-applications -- createApplicationSchema accepts exactly
+// externalId?, name, metadata?, rateLimitPerSecond?, rateLimitPerMinute?, rateLimitPerHour?.
+// `uid` and `description` were being sent and silently dropped by z.object(); once that schema
+// becomes .strict() they would 400 instead.
 export async function createWebhookApplication(data: {
   name: string;
-  description?: string;
-  uid?: string;
+  externalId?: string;
   rateLimitPerMinute?: number;
-}): Promise<ApiResponse<{ application: WebhookApplication }>> {
+}): Promise<ApiResponse<{ data: WebhookApplication }>> {
 
-  return request<{ application: WebhookApplication }>('POST', `/api/webhook-applications`, {
+  return request<{ data: WebhookApplication }>('POST', `/api/webhook-applications`, {
     name: data.name,
-    description: data.description,
-    uid: data.uid,
+    externalId: data.externalId,
     rateLimitPerMinute: data.rateLimitPerMinute,
   });
 }
 
+// PATCH /api/webhook-applications/:id -- updateApplicationSchema accepts exactly
+// name?, metadata?, the three rate limits, isDisabled? and disabledReason?. There is no
+// description field on an application, so it is not accepted here either.
 export async function updateWebhookApplication(
   appId: string,
   data: {
     name?: string;
-    description?: string;
     rateLimitPerMinute?: number;
     isDisabled?: boolean;
+    disabledReason?: string;
   }
-): Promise<ApiResponse<{ application: WebhookApplication }>> {
+): Promise<ApiResponse<{ data: WebhookApplication }>> {
 
-  return request<{ application: WebhookApplication }>('PATCH', `/api/webhook-applications/${appId}`, data);
+  return request<{ data: WebhookApplication }>('PATCH', `/api/webhook-applications/${appId}`, data);
 }
 
 export async function deleteWebhookApplication(appId: string): Promise<ApiResponse<{ success: boolean }>> {

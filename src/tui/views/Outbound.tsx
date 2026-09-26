@@ -17,9 +17,11 @@ function CreateApplication({ onBack, onCreated }: {
   onBack: () => void;
   onCreated: () => void;
 }) {
-  const [step, setStep] = useState<'name' | 'description' | 'creating' | 'done'>('name');
+  const [step, setStep] = useState<'name' | 'externalId' | 'creating' | 'done'>('name');
   const [name, setName] = useState('');
-  const [description, setDescription] = useState('');
+  // An application has no description -- this step used to collect one and the API dropped it.
+  // externalId is the real optional field on createApplicationSchema.
+  const [externalId, setExternalId] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [createdApp, setCreatedApp] = useState<api.WebhookApplication | null>(null);
 
@@ -34,13 +36,13 @@ function CreateApplication({ onBack, onCreated }: {
     try {
       const result = await api.createWebhookApplication({
         name: name.trim(),
-        description: description.trim() || undefined,
+        externalId: externalId.trim() || undefined,
       });
       if (result.error) {
         setError(result.error);
         setStep('name');
       } else {
-        setCreatedApp((result.data as any)?.data || result.data?.application || null);
+        setCreatedApp(result.data?.data ?? null);
         setStep('done');
         setTimeout(onCreated, 1500);
       }
@@ -64,22 +66,22 @@ function CreateApplication({ onBack, onCreated }: {
             <TextInput
               value={name}
               onChange={setName}
-              onSubmit={() => name.trim() && setStep('description')}
+              onSubmit={() => name.trim() && setStep('externalId')}
               placeholder="My Webhook App"
             />
           </Box>
         )}
 
-        {step === 'description' && (
+        {step === 'externalId' && (
           <Box flexDirection="column">
             <Text dimColor>Name: {name}</Text>
             <Box marginTop={1}>
-              <Text>Description (optional, Enter to skip): </Text>
+              <Text>External ID (optional, Enter to skip): </Text>
               <TextInput
-                value={description}
-                onChange={setDescription}
+                value={externalId}
+                onChange={setExternalId}
                 onSubmit={handleCreate}
-                placeholder=""
+                placeholder="your-own-identifier"
               />
             </Box>
           </Box>
@@ -262,11 +264,10 @@ function CreateEndpoint({ applications, onBack, onCreated }: {
 }
 
 // Helper to get active status from app (API uses isDisabled, not is_active)
-function getAppIsActive(app: any): boolean {
-  if ('isDisabled' in app) return !app.isDisabled;
-  if ('is_disabled' in app) return !app.is_disabled;
-  if ('is_active' in app) return !!app.is_active;
-  return true;
+// The API reports application state as isDisabled (see formatApplicationRow). The former
+// is_disabled/is_active fallbacks here matched nothing the API has ever returned.
+function getAppIsActive(app: Pick<api.WebhookApplication, 'isDisabled'>): boolean {
+  return !app.isDisabled;
 }
 
 function getDate(obj: any, ...keys: string[]): string {
@@ -373,8 +374,8 @@ function AppDetail({ appId, applications, onBack, onRefresh }: {
         {(a.uid || a.externalId) && (
           <Box><Box width={16}><Text dimColor>UID:</Text></Box><Text>{a.uid || a.externalId}</Text></Box>
         )}
-        {(a.description || a.metadata) && (
-          <Box><Box width={16}><Text dimColor>Description:</Text></Box><Text>{a.description || '-'}</Text></Box>
+        {a.metadata && (
+          <Box><Box width={16}><Text dimColor>Metadata:</Text></Box><Text>{JSON.stringify(a.metadata)}</Text></Box>
         )}
         <Box>
           <Box width={16}><Text dimColor>Status:</Text></Box>
@@ -641,7 +642,7 @@ export function OutboundView({ subView, onNavigate, onRefresh: _onRefresh }: Out
       if (endpointsRes.error) throw new Error(endpointsRes.error);
 
       // API returns { data: [...] } for all list endpoints
-      setApplications((appsRes.data as any)?.data || appsRes.data?.applications || []);
+      setApplications(appsRes.data?.data ?? []);
       setEndpoints((endpointsRes.data as any)?.data || endpointsRes.data?.endpoints || []);
       setMessages((messagesRes.data as any)?.data || messagesRes.data?.messages || []);
       setDlqMessages((dlqRes.data as any)?.data || dlqRes.data?.messages || []);
@@ -1027,10 +1028,10 @@ export function OutboundView({ subView, onNavigate, onRefresh: _onRefresh }: Out
                     </Text>
                   </Box>
                   <Box width={14}>
-                    <Text dimColor>{app.endpoint_count || 0} endpoints</Text>
+                    <Text dimColor>{app.endpointCount ?? 0} endpoints</Text>
                   </Box>
                   <Box width={10}>
-                    <Text dimColor>{app.message_count || 0} msgs</Text>
+                    <Text dimColor>{app.totalMessagesSent ?? 0} msgs</Text>
                   </Box>
                   <Box width={8}>
                     <Text color={getAppIsActive(app) ? 'green' : 'red'}>

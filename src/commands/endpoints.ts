@@ -96,7 +96,7 @@ export async function endpointsCreateCommand(options: {
     if (!applicationId) {
       // Fetch applications for selection
       const appsResult = await api.getWebhookApplications();
-      const apps = (appsResult.data as any)?.data || appsResult.data?.applications || [];
+      const apps = appsResult.data?.data ?? [];
       if (appsResult.error || !apps.length) {
         logger.error('No applications found. Create one first with "hookbase outbound applications create"');
         return;
@@ -104,7 +104,7 @@ export async function endpointsCreateCommand(options: {
 
       applicationId = await select({
         message: 'Select application:',
-        choices: apps.map((a: any) => ({
+        choices: apps.map((a) => ({
           name: `${a.name} (${a.id})`,
           value: a.id,
         })),
