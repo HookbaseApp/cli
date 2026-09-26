@@ -449,7 +449,7 @@ program
   .command('init')
   .description('Scaffold a webhook handler project (express, fastify, hono, nextjs, cloudflare-worker)')
   .option('--framework <name>', 'Framework: express, fastify, hono, nextjs, cloudflare-worker')
-  .option('--provider <id>', 'Signature provider: stripe, github, shopify, slack, custom')
+  .option('--provider <id>', 'Signature provider, e.g. github, stripe, standard-webhooks, custom (omit for the full list)')
   .option('--dir <path>', 'Output directory', './hookbase-handler')
   .option('--source <id>', 'Source ID (used to inject ingest URL into README)')
   .option('--force', 'Overwrite existing directory contents')

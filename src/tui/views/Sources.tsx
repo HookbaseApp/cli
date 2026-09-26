@@ -12,13 +12,33 @@ interface SourcesViewProps {
   onRefresh: () => void;
 }
 
+/** Providers the API accepts, in the same order as the picker in commands/sources.ts. Anything
+ *  outside this list 400s on update — see the comment on PROVIDERS there for how to regenerate
+ *  it from the API's signature scheme table. `generic` and `svix` are aliases of `custom` and
+ *  `standard-webhooks` and are not listed separately. */
 const PROVIDERS = [
-  { label: 'Custom/Generic', value: 'custom' },
   { label: 'GitHub', value: 'github' },
   { label: 'Stripe', value: 'stripe' },
   { label: 'Shopify', value: 'shopify' },
   { label: 'Slack', value: 'slack' },
   { label: 'Twilio', value: 'twilio' },
+  { label: 'Standard Webhooks / Svix', value: 'standard-webhooks' },
+  { label: 'Bitbucket', value: 'bitbucket' },
+  { label: 'GitLab', value: 'gitlab' },
+  { label: 'Heroku', value: 'heroku' },
+  { label: 'Lemon Squeezy', value: 'lemonsqueezy' },
+  { label: 'Paddle', value: 'paddle' },
+  { label: 'Sentry', value: 'sentry' },
+  { label: 'Typeform', value: 'typeform' },
+  { label: 'Zoom', value: 'zoom' },
+  { label: 'Airtable', value: 'airtable' },
+  { label: 'Asana', value: 'asana' },
+  { label: 'Calendly', value: 'calendly' },
+  { label: 'Intercom', value: 'intercom' },
+  { label: 'Notion', value: 'notion' },
+  { label: 'Razorpay', value: 'razorpay' },
+  { label: 'WorkOS', value: 'workos' },
+  { label: 'Custom/Generic', value: 'custom' },
 ];
 
 /** HTTP verbs the ingest endpoint can be restricted to. Mirrors VALID_INGEST_METHODS in

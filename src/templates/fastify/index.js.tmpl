@@ -19,14 +19,12 @@ app.addContentTypeParser('*', { parseAs: 'string' }, (_req, body, done) => {
 
 app.post('/webhook', async (req, reply) => {
   const rawBody = typeof req.body === 'string' ? req.body : '';
-  const signature = req.headers['{{HEADER_NAME}}'];
-  const timestamp = req.headers['x-slack-request-timestamp'];
+  // The verifier reads whatever headers its provider signs — the signature, and for some
+  // providers a timestamp or message id alongside it.
+  const getHeader = (name) => String(req.headers[name.toLowerCase()] ?? '');
+  const requestUrl = `${req.protocol}://${req.headers.host}${req.url}`;
 
-  if (!signature) {
-    return reply.code(401).send({ error: 'missing signature header' });
-  }
-
-  const ok = verifySignature(rawBody, signature, SIGNING_SECRET, timestamp);
+  const ok = verifySignature(rawBody, SIGNING_SECRET, getHeader, requestUrl);
   if (!ok) {
     return reply.code(401).send({ error: 'invalid signature' });
   }

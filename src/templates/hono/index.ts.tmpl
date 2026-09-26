@@ -14,14 +14,11 @@ if (!SIGNING_SECRET) {
 
 app.post('/webhook', async (c) => {
   const rawBody = await c.req.text();
-  const signature = c.req.header('{{HEADER_NAME}}');
-  const timestamp = c.req.header('x-slack-request-timestamp');
+  // The verifier reads whatever headers its provider signs — the signature, and for some
+  // providers a timestamp or message id alongside it.
+  const getHeader = (name: string) => c.req.header(name) ?? '';
 
-  if (!signature) {
-    return c.json({ error: 'missing signature header' }, 401);
-  }
-
-  const ok = verifySignature(rawBody, signature, SIGNING_SECRET, timestamp);
+  const ok = verifySignature(rawBody, SIGNING_SECRET, getHeader, c.req.url);
   if (!ok) {
     return c.json({ error: 'invalid signature' }, 401);
   }

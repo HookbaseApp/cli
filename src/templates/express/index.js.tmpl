@@ -15,14 +15,12 @@ if (!SIGNING_SECRET) {
 // object. express.raw gives us the buffer; we parse JSON ourselves after.
 app.post('/webhook', express.raw({ type: '*/*' }), (req, res) => {
   const rawBody = req.body.toString('utf8');
-  const signature = req.headers['{{HEADER_NAME}}'];
-  const timestamp = req.headers['x-slack-request-timestamp']; // only used by Slack
+  // The verifier reads whatever headers its provider signs — the signature, and for some
+  // providers a timestamp or message id alongside it.
+  const getHeader = (name) => String(req.headers[name.toLowerCase()] ?? '');
+  const requestUrl = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
 
-  if (!signature) {
-    return res.status(401).json({ error: 'missing signature header' });
-  }
-
-  const ok = verifySignature(rawBody, signature, SIGNING_SECRET, timestamp);
+  const ok = verifySignature(rawBody, SIGNING_SECRET, getHeader, requestUrl);
   if (!ok) {
     return res.status(401).json({ error: 'invalid signature' });
   }

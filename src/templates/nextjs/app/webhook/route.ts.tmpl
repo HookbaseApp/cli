@@ -11,14 +11,11 @@ const SIGNING_SECRET = process.env.{{ENV_VAR_NAME}} || '';
 export async function POST(request: Request) {
   // Use request.text() to keep the raw bytes the signature was computed over.
   const rawBody = await request.text();
-  const signature = request.headers.get('{{HEADER_NAME}}') || '';
-  const timestamp = request.headers.get('x-slack-request-timestamp') || '';
+  // The verifier reads whatever headers its provider signs — the signature, and for some
+  // providers a timestamp or message id alongside it.
+  const getHeader = (name: string) => request.headers.get(name) ?? '';
 
-  if (!signature) {
-    return NextResponse.json({ error: 'missing signature header' }, { status: 401 });
-  }
-
-  const ok = verifySignature(rawBody, signature, SIGNING_SECRET, timestamp);
+  const ok = verifySignature(rawBody, SIGNING_SECRET, getHeader, request.url);
   if (!ok) {
     return NextResponse.json({ error: 'invalid signature' }, { status: 401 });
   }

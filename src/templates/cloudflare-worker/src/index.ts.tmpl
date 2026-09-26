@@ -5,69 +5,7 @@ interface Env {
   {{ENV_VAR_NAME}}: string;
 }
 
-const PROVIDER = '{{PROVIDER}}' as 'stripe' | 'github' | 'shopify' | 'slack' | 'custom';
-const HEADER_NAME = '{{HEADER_NAME}}';
-
-async function hmac(secret: string, data: string, encoding: 'hex' | 'base64'): Promise<string> {
-  const key = await crypto.subtle.importKey(
-    'raw',
-    new TextEncoder().encode(secret),
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign']
-  );
-  const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(data));
-  const bytes = new Uint8Array(sig);
-  if (encoding === 'base64') {
-    return btoa(String.fromCharCode(...bytes));
-  }
-  return Array.from(bytes).map((b) => b.toString(16).padStart(2, '0')).join('');
-}
-
-function timingSafeEqual(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let r = 0;
-  for (let i = 0; i < a.length; i++) r |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return r === 0;
-}
-
-async function verifySignature(
-  rawBody: string,
-  header: string,
-  secret: string,
-  timestamp: string | null
-): Promise<boolean> {
-  if (!header || !secret) return false;
-
-  switch (PROVIDER) {
-    case 'stripe': {
-      const parts = Object.fromEntries(header.split(',').map((s) => s.split('='))) as Record<string, string>;
-      const ts = parts.t; const v1 = parts.v1;
-      if (!ts || !v1) return false;
-      if (Math.abs(Date.now() / 1000 - Number(ts)) > 300) return false;
-      const sig = await hmac(secret, `${ts}.${rawBody}`, 'hex');
-      return timingSafeEqual(sig, v1);
-    }
-    case 'github': {
-      if (!header.startsWith('sha256=')) return false;
-      const expected = 'sha256=' + (await hmac(secret, rawBody, 'hex'));
-      return timingSafeEqual(expected, header);
-    }
-    case 'shopify': {
-      const expected = await hmac(secret, rawBody, 'base64');
-      return timingSafeEqual(expected, header);
-    }
-    case 'slack': {
-      if (!timestamp || Math.abs(Date.now() / 1000 - Number(timestamp)) > 300) return false;
-      const expected = 'v0=' + (await hmac(secret, `v0:${timestamp}:${rawBody}`, 'hex'));
-      return timingSafeEqual(expected, header);
-    }
-    default: {
-      const expected = await hmac(secret, rawBody, 'hex');
-      return timingSafeEqual(expected, header);
-    }
-  }
-}
+{{VERIFY_SNIPPET}}
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -77,14 +15,11 @@ export default {
     }
 
     const rawBody = await request.text();
-    const signature = request.headers.get(HEADER_NAME) || '';
-    const timestamp = request.headers.get('x-slack-request-timestamp');
+    // The verifier reads whatever headers its provider signs — the signature, and for some
+    // providers a timestamp or message id alongside it.
+    const getHeader = (name: string) => request.headers.get(name) ?? '';
 
-    if (!signature) {
-      return Response.json({ error: 'missing signature header' }, { status: 401 });
-    }
-
-    const ok = await verifySignature(rawBody, signature, env.{{ENV_VAR_NAME}}, timestamp);
+    const ok = await verifySignature(rawBody, env.{{ENV_VAR_NAME}}, getHeader, request.url);
     if (!ok) {
       return Response.json({ error: 'invalid signature' }, { status: 401 });
     }
