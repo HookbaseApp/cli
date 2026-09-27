@@ -33,20 +33,24 @@ function pickerValues(source: string, marker: string): Set<string> {
 }
 
 describe.skipIf(!existsSync(API_SCHEMES))('CLI provider lists track the API', () => {
-  const apiIds = schemeIds(readFileSync(API_SCHEMES, 'utf8'));
+  // Read lazily. describe.skipIf still runs this callback to collect the tests it then marks
+  // skipped, so reading the API file here instead of inside a test throws at collection time and
+  // fails the suite in the CLI's own CI -- exactly the outcome the skip exists to avoid.
+  let cached: Set<string> | undefined;
+  const apiIds = (): Set<string> => (cached ??= schemeIds(readFileSync(API_SCHEMES, 'utf8')));
 
   it('finds a plausible number of providers in the API table', () => {
     // Guards the regexes above: if the API file is reformatted so nothing matches, every
     // comparison below would trivially pass against an empty set.
-    expect(apiIds.size).toBeGreaterThan(15);
-    expect(apiIds).toContain('github');
-    expect(apiIds).toContain('custom');
+    expect(apiIds().size).toBeGreaterThan(15);
+    expect(apiIds()).toContain('github');
+    expect(apiIds()).toContain('custom');
   });
 
   it('init.ts offers every provider the API verifies', () => {
     const initIds = schemeIds(readFileSync(join(import.meta.dirname, 'init.ts'), 'utf8'));
-    expect([...apiIds].filter((id) => !initIds.has(id))).toEqual([]);
-    expect([...initIds].filter((id) => !apiIds.has(id))).toEqual([]);
+    expect([...apiIds()].filter((id) => !initIds.has(id))).toEqual([]);
+    expect([...initIds].filter((id) => !apiIds().has(id))).toEqual([]);
   });
 
   it('the sources create picker offers every provider the API verifies', () => {
@@ -54,8 +58,8 @@ describe.skipIf(!existsSync(API_SCHEMES))('CLI provider lists track the API', ()
       readFileSync(join(import.meta.dirname, 'sources.ts'), 'utf8'),
       'const PROVIDERS = ['
     );
-    expect([...apiIds].filter((id) => !values.has(id))).toEqual([]);
-    expect([...values].filter((id) => !apiIds.has(id))).toEqual([]);
+    expect([...apiIds()].filter((id) => !values.has(id))).toEqual([]);
+    expect([...values].filter((id) => !apiIds().has(id))).toEqual([]);
   });
 
   it('the TUI sources picker offers every provider the API verifies', () => {
@@ -64,7 +68,7 @@ describe.skipIf(!existsSync(API_SCHEMES))('CLI provider lists track the API', ()
       'utf8'
     );
     const values = pickerValues(source, 'const PROVIDERS = [');
-    expect([...apiIds].filter((id) => !values.has(id))).toEqual([]);
-    expect([...values].filter((id) => !apiIds.has(id))).toEqual([]);
+    expect([...apiIds()].filter((id) => !values.has(id))).toEqual([]);
+    expect([...values].filter((id) => !apiIds().has(id))).toEqual([]);
   });
 });
