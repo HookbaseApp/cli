@@ -1,9 +1,22 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Box, Text, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 import SelectInput from 'ink-select-input';
 import * as api from '../../lib/api.js';
 import * as config from '../../lib/config.js';
+import {
+  FALLBACK_PROVIDERS,
+  NO_PROVIDER,
+  OTHER_PROVIDER,
+  loadProviderChoices,
+  getChoiceSecretInfo,
+  lookupProviderSecretInfo,
+  planSecret,
+  readSecretValue,
+  type ProviderChoice,
+  type SecretInfo,
+  type SecretPlan,
+} from '../../lib/providerCatalog.js';
 
 interface SourcesViewProps {
   sources: api.Source[];
@@ -12,34 +25,83 @@ interface SourcesViewProps {
   onRefresh: () => void;
 }
 
-/** Providers the API accepts, in the same order as the picker in commands/sources.ts. Anything
- *  outside this list 400s on update — see the comment on PROVIDERS there for how to regenerate
- *  it from the API's signature scheme table. `generic` and `svix` are aliases of `custom` and
- *  `standard-webhooks` and are not listed separately. */
-const PROVIDERS = [
-  { label: 'GitHub', value: 'github' },
-  { label: 'Stripe', value: 'stripe' },
-  { label: 'Shopify', value: 'shopify' },
-  { label: 'Slack', value: 'slack' },
-  { label: 'Twilio', value: 'twilio' },
-  { label: 'Standard Webhooks / Svix', value: 'standard-webhooks' },
-  { label: 'Bitbucket', value: 'bitbucket' },
-  { label: 'GitLab', value: 'gitlab' },
-  { label: 'Heroku', value: 'heroku' },
-  { label: 'Lemon Squeezy', value: 'lemonsqueezy' },
-  { label: 'Paddle', value: 'paddle' },
-  { label: 'Sentry', value: 'sentry' },
-  { label: 'Typeform', value: 'typeform' },
-  { label: 'Zoom', value: 'zoom' },
-  { label: 'Airtable', value: 'airtable' },
-  { label: 'Asana', value: 'asana' },
-  { label: 'Calendly', value: 'calendly' },
-  { label: 'Intercom', value: 'intercom' },
-  { label: 'Notion', value: 'notion' },
-  { label: 'Razorpay', value: 'razorpay' },
-  { label: 'WorkOS', value: 'workos' },
-  { label: 'Custom/Generic', value: 'custom' },
-];
+/** The provider picker's choices: the live catalog, or the short fallback list until it loads
+ *  (and for good if it can't). Shared with commands/sources.ts via lib/providerCatalog.ts. */
+function useProviderChoices(): { choices: ProviderChoice[]; loading: boolean; offline: boolean } {
+  const [state, setState] = useState<{ choices: ProviderChoice[]; loading: boolean; offline: boolean }>({
+    choices: [...FALLBACK_PROVIDERS],
+    loading: true,
+    offline: false,
+  });
+  useEffect(() => {
+    let alive = true;
+    loadProviderChoices().then((r) => {
+      if (alive) setState({ ...r, loading: false });
+    });
+    return () => { alive = false; };
+  }, []);
+  return state;
+}
+
+function providerItems(choices: ProviderChoice[]) {
+  return choices.map((c) => ({ key: c.value || '(none)', label: c.name, value: c.value }));
+}
+
+/** How many picker rows to show at once; the catalog is far longer than a terminal. */
+const PICKER_LIMIT = 12;
+
+/** One-word secret state, matching `sources list`. */
+function secretState(s: api.Source): string {
+  if (s.verifiesWithoutSecret) return 'Not needed (key built in)';
+  if (s.hasSigningSecret) return s.signingSecretLast4 ? `Set (${s.signingSecretLast4})` : 'Set';
+  if (s.awaitingSigningSecret) return 'Awaiting (vendor issues it after registration)';
+  return s.provider ? 'Not set' : 'None (no provider)';
+}
+
+/** Entry for a vendor-issued secret or public key. Blank is refused when the secret is required. */
+function SecretEntry({ provider, info, plan, onSubmit }: {
+  provider: string;
+  info?: SecretInfo;
+  plan: SecretPlan;
+  onSubmit: (secret: string | undefined) => void;
+}) {
+  const [value, setValue] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const label = info?.secretLabel ?? 'Signing secret';
+  const name = info?.providerName ?? provider;
+  const required = plan.action === 'prompt' || plan.action === 'prompt_public_key';
+  const isKey = plan.action === 'prompt_public_key';
+
+  const submit = () => {
+    if (!value.trim()) {
+      if (required) {
+        setError(`${label} is required — ${name} issues it`);
+        return;
+      }
+      onSubmit(undefined);
+      return;
+    }
+    try {
+      onSubmit(readSecretValue(value));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not read the file');
+    }
+  };
+
+  return (
+    <Box flexDirection="column">
+      <Text>{label} from {name}{info?.secretPlaceholder ? ` (${info.secretPlaceholder})` : ''}:</Text>
+      {info?.secretInstruction && <Text dimColor>{info.secretInstruction}</Text>}
+      {isKey && <Text dimColor>Paste the key on one line, or @path to a PEM file.</Text>}
+      {!required && <Text dimColor>Leave blank to let Hookbase generate one where the provider allows it.</Text>}
+      <Box>
+        <Text>&gt; </Text>
+        <TextInput value={value} onChange={(v) => { setValue(v); setError(null); }} onSubmit={submit} mask={isKey ? undefined : '*'} />
+      </Box>
+      {error && <Text color="red">{error}</Text>}
+    </Box>
+  );
+}
 
 /** HTTP verbs the ingest endpoint can be restricted to. Mirrors VALID_INGEST_METHODS in
  * the API and INGEST_METHODS in commands/sources.ts. No selection = any method allowed. */
@@ -284,7 +346,13 @@ function SourceDetail({ sourceId, sources, onBack, onRefresh, onEdit }: {
         </Box>
         <Box>
           <Box width={16}><Text dimColor>Provider:</Text></Box>
-          <Text color="blue">{source.provider || 'generic'}</Text>
+          <Text color="blue">{source.provider || 'none'}</Text>
+        </Box>
+        <Box>
+          <Box width={16}><Text dimColor>Secret:</Text></Box>
+          <Text color={source.awaitingSigningSecret || (source.provider && !source.hasSigningSecret && !source.verifiesWithoutSecret) ? 'yellow' : undefined}>
+            {secretState(source)}
+          </Text>
         </Box>
         <Box>
           <Box width={16}><Text dimColor>Status:</Text></Box>
@@ -357,6 +425,10 @@ function EditSource({ sourceId, sources, onBack, onSaved }: {
   const [message, setMessage] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const busy = useRef(false);
+  const { choices, loading: choicesLoading } = useProviderChoices();
+  // A provider switch that needs the vendor's secret in the same update (the API 400s otherwise).
+  const [pendingProvider, setPendingProvider] = useState<{ provider: string; info?: SecretInfo; plan: SecretPlan } | null>(null);
+  const [note, setNote] = useState<string | null>(null);
 
   // Editable fields
   const isTransient = source?.transient_mode || source?.transientMode;
@@ -364,7 +436,8 @@ function EditSource({ sourceId, sources, onBack, onSaved }: {
   const allowedMethods = source?.allowedMethods ?? source?.allowed_methods ?? [];
   const fields = [
     { key: 'name', label: 'Name', value: source?.name || '', type: 'text' as const },
-    { key: 'provider', label: 'Provider', value: source?.provider || 'custom', type: 'select' as const },
+    { key: 'provider', label: 'Provider', value: source?.provider || NO_PROVIDER, type: 'select' as const },
+    { key: 'signingSecret', label: 'Signing Secret', value: source ? secretState(source) : '', type: 'secret' as const },
     { key: 'description', label: 'Description', value: source?.description || '', type: 'text' as const },
     { key: 'isActive', label: 'Status', value: isActive ? 'Active' : 'Inactive', type: 'toggle' as const },
     { key: 'transientMode', label: 'Transient Mode', value: isTransient ? 'Enabled' : 'Disabled', type: 'toggle' as const },
@@ -417,7 +490,12 @@ function EditSource({ sourceId, sources, onBack, onSaved }: {
         setSaving(false);
         setTimeout(() => { busy.current = false; setMessage(null); }, 1500);
       } else if (field.type === 'select' || field.type === 'multiselect') {
-        // Enter picker mode — no free-text entry, so an invalid provider/method can't be typed
+        // Enter picker mode — no free-text entry, so an invalid method can't be typed
+        // (a provider outside the catalog goes through "Other", which the API validates)
+        setNote(null);
+        setEditingField(field.key);
+      } else if (field.type === 'secret') {
+        setEditValue('');
         setEditingField(field.key);
       } else {
         // Enter text editing mode
@@ -427,19 +505,90 @@ function EditSource({ sourceId, sources, onBack, onSaved }: {
     }
   });
 
-  const handleProviderSelect = async (item: { value: string }) => {
+  const saveProvider = async (provider: string, signingSecret: string | undefined, after?: string) => {
     busy.current = true;
     setSaving(true);
     try {
-      const result = await api.updateSource(sourceId, { provider: item.value } as any);
+      const result = await api.updateSource(sourceId, {
+        provider: provider || null,
+        ...(signingSecret !== undefined ? { signingSecret } : {}),
+      });
       if (result.error) {
         setMessage(`Error: ${result.error}`);
       } else {
-        setMessage('Provider updated');
+        setMessage(signingSecret !== undefined ? 'Provider and secret updated' : 'Provider updated');
+        if (after) setNote(after);
         onSaved();
       }
     } catch {
       setMessage('Failed to update Provider');
+    }
+    setEditingField(null);
+    setPendingProvider(null);
+    setSaving(false);
+    setTimeout(() => { busy.current = false; setMessage(null); }, 1500);
+  };
+
+  /** Look up what the new provider needs: its secret is asked for first when the vendor issues it. */
+  const chooseProvider = async (provider: string, load: () => Promise<SecretInfo | undefined>) => {
+    busy.current = true;
+    setSaving(true);
+    const info = provider ? await load() : undefined;
+    const plan = planSecret(provider, info);
+    setSaving(false);
+    busy.current = false;
+    if (provider !== (source?.provider ?? '') && (plan.action === 'prompt' || plan.action === 'prompt_public_key')) {
+      setPendingProvider({ provider, info, plan });
+      setEditingField('providerSecret');
+      return;
+    }
+    const after = plan.action === 'skip' && provider
+      ? plan.reason
+      : plan.action === 'generated' && provider
+        ? 'The existing secret is kept. Use rotate-secret (CLI) to generate a new one for this provider.'
+        : undefined;
+    await saveProvider(provider, undefined, after);
+  };
+
+  const handleProviderSelect = async (item: { value: string }) => {
+    if (item.value === OTHER_PROVIDER) {
+      setEditValue('');
+      setEditingField('providerOther');
+      return;
+    }
+    const choice = choices.find((c) => c.value === item.value);
+    await chooseProvider(item.value, async () => (choice ? getChoiceSecretInfo(choice) : undefined));
+  };
+
+  const handleOtherProviderSubmit = async () => {
+    const typed = editValue.trim();
+    if (!/^[a-z0-9-]+$/.test(typed)) {
+      setMessage('Error: provider id is lowercase letters, digits and hyphens');
+      return;
+    }
+    await chooseProvider(typed, () => lookupProviderSecretInfo(typed));
+  };
+
+  const handleSecretSubmit = async () => {
+    const raw = editValue.trim();
+    if (!raw) {
+      // Blank cancels rather than clears — clearing a secret is a CLI step
+      // ("hookbase inbound sources update <source> --signing-secret ''").
+      setEditingField(null);
+      return;
+    }
+    busy.current = true;
+    setSaving(true);
+    try {
+      const result = await api.updateSource(sourceId, { signingSecret: readSecretValue(raw) });
+      if (result.error) {
+        setMessage(`Error: ${result.error}`);
+      } else {
+        setMessage('Signing secret updated');
+        onSaved();
+      }
+    } catch (err) {
+      setMessage(`Error: ${err instanceof Error ? err.message : 'Failed to update signing secret'}`);
     }
     setEditingField(null);
     setSaving(false);
@@ -511,8 +660,55 @@ function EditSource({ sourceId, sources, onBack, onSaved }: {
           const isSelected = index === selectedIndex;
           const isEditing = editingField === field.key;
 
+          if (field.key === 'provider' && editingField === 'providerOther') {
+            return (
+              <Box key={field.key}>
+                <Box width={2}><Text color="yellow" bold>▶</Text></Box>
+                <Box width={18}><Text dimColor>Provider id:</Text></Box>
+                <TextInput value={editValue} onChange={setEditValue} onSubmit={handleOtherProviderSubmit} placeholder="e.g. grafana-hmac" />
+                <Text dimColor> (Enter to save, Esc to cancel)</Text>
+              </Box>
+            );
+          }
+
+          if (field.key === 'provider' && editingField === 'providerSecret' && pendingProvider) {
+            return (
+              <Box key={field.key} flexDirection="column">
+                <Box>
+                  <Box width={2}><Text color="yellow" bold>▶</Text></Box>
+                  <Box width={18}><Text dimColor>Provider:</Text></Box>
+                  <Text>{pendingProvider.provider} (needs its secret in the same update; Esc to cancel)</Text>
+                </Box>
+                <Box marginLeft={20}>
+                  <SecretEntry
+                    provider={pendingProvider.provider}
+                    info={pendingProvider.info}
+                    plan={pendingProvider.plan}
+                    onSubmit={(secret) => saveProvider(pendingProvider.provider, secret)}
+                  />
+                </Box>
+              </Box>
+            );
+          }
+
+          if (isEditing && field.type === 'secret') {
+            return (
+              <Box key={field.key} flexDirection="column">
+                <Box>
+                  <Box width={2}><Text color="yellow" bold>▶</Text></Box>
+                  <Box width={18}><Text dimColor>{field.label}:</Text></Box>
+                  <TextInput value={editValue} onChange={setEditValue} onSubmit={handleSecretSubmit} mask="*" />
+                </Box>
+                <Box marginLeft={20}>
+                  <Text dimColor>New secret or public key (@path reads a file). Enter to save, blank or Esc cancels.</Text>
+                </Box>
+              </Box>
+            );
+          }
+
           if (isEditing && field.type === 'select') {
-            const currentIndex = Math.max(0, PROVIDERS.findIndex((p) => p.value === field.value));
+            const items = providerItems(choices);
+            const currentIndex = Math.max(0, items.findIndex((p) => p.value === field.value));
             return (
               <Box key={field.key} flexDirection="column" marginY={0}>
                 <Box>
@@ -522,12 +718,13 @@ function EditSource({ sourceId, sources, onBack, onSaved }: {
                   <Box width={18}>
                     <Text dimColor>{field.label}:</Text>
                   </Box>
-                  <Text dimColor>(↑↓ select, Enter to save, Esc to cancel)</Text>
+                  <Text dimColor>(↑↓ select, Enter to save, Esc to cancel){choicesLoading ? ' loading catalog…' : ''}</Text>
                 </Box>
                 <Box marginLeft={20}>
                   <SelectInput
-                    items={PROVIDERS}
+                    items={items}
                     initialIndex={currentIndex}
+                    limit={PICKER_LIMIT}
                     onSelect={handleProviderSelect}
                   />
                 </Box>
@@ -588,13 +785,15 @@ function EditSource({ sourceId, sources, onBack, onSaved }: {
                     </Text>
                   ) : field.key === 'methods' ? (
                     <Text color={isSelected ? 'yellow' : undefined}>{field.value || 'Any'}</Text>
+                  ) : field.key === 'provider' ? (
+                    <Text color={isSelected ? 'yellow' : undefined}>{field.value || 'None (no verification)'}</Text>
                   ) : (
                     <Text color={isSelected ? 'yellow' : undefined}>{field.value || '(empty)'}</Text>
                   )}
                   {isSelected && field.type === 'toggle' && (
                     <Text dimColor> ← Enter/Space to toggle</Text>
                   )}
-                  {isSelected && (field.type === 'text' || field.type === 'select' || field.type === 'multiselect') && (
+                  {isSelected && (field.type === 'text' || field.type === 'select' || field.type === 'multiselect' || field.type === 'secret') && (
                     <Text dimColor> ← Enter to edit</Text>
                   )}
                 </Box>
@@ -602,6 +801,12 @@ function EditSource({ sourceId, sources, onBack, onSaved }: {
             </Box>
           );
         })}
+
+        {note && (
+          <Box marginTop={1} paddingX={1}>
+            <Text dimColor>{note}</Text>
+          </Box>
+        )}
 
         {/* Transient warning */}
         {isTransient && (
@@ -630,15 +835,31 @@ function CreateSource({ onBack, onCreated }: {
   onBack: () => void;
   onCreated: () => void;
 }) {
-  const [step, setStep] = useState<'name' | 'slug' | 'provider' | 'transient' | 'confirm' | 'creating' | 'done'>('name');
+  type Step = 'name' | 'slug' | 'provider' | 'other' | 'lookup' | 'secret' | 'transient' | 'creating' | 'done';
+  const [step, setStep] = useState<Step>('name');
   const [name, setName] = useState('');
   const [slug, setSlug] = useState('');
   const [provider, setProvider] = useState('');
+  const [otherProvider, setOtherProvider] = useState('');
+  const [secretInfo, setSecretInfo] = useState<SecretInfo | undefined>(undefined);
+  const [secretPlan, setSecretPlan] = useState<SecretPlan | null>(null);
+  const [signingSecret, setSigningSecret] = useState<string | undefined>(undefined);
+  const [note, setNote] = useState<string | null>(null);
   const [transient, setTransient] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [createdSource, setCreatedSource] = useState<api.Source | null>(null);
+  const { choices, loading: choicesLoading, offline } = useProviderChoices();
+
+  // A generated secret, verify token or "awaiting" note is shown once, so the done screen waits
+  // for a key instead of returning to the list on a timer.
+  const hasSomethingToShow = (s: api.Source | null) =>
+    !!s && ((!!s.signingSecret && signingSecret === undefined) || !!s.verifyToken || !!s.awaitingSigningSecret);
 
   useInput((input, key) => {
+    if (step === 'done' && hasSomethingToShow(createdSource) && (key.return || key.escape)) {
+      onBack();
+      return;
+    }
     if (key.escape && step !== 'creating') {
       onBack();
     }
@@ -657,8 +878,46 @@ function CreateSource({ onBack, onCreated }: {
     }
   };
 
+  /** Find out what the provider needs, then ask for the secret or explain why there is none. */
+  const resolveSecret = async (value: string, load: () => Promise<SecretInfo | undefined>) => {
+    setProvider(value);
+    setStep('lookup');
+    const info = value ? await load() : undefined;
+    const plan = planSecret(value, info);
+    setSecretInfo(info);
+    setSecretPlan(plan);
+    if (plan.action === 'prompt' || plan.action === 'prompt_public_key' || plan.action === 'optional') {
+      setStep('secret');
+      return;
+    }
+    if (plan.action === 'skip' && value) setNote(plan.reason);
+    if (plan.action === 'generated') {
+      setNote(`Hookbase will generate the ${(info?.secretLabel ?? 'signing secret').toLowerCase()} and show it once after the source is created.`);
+    }
+    setStep('transient');
+  };
+
   const handleProviderSelect = (item: { value: string }) => {
-    setProvider(item.value);
+    if (item.value === OTHER_PROVIDER) {
+      setStep('other');
+      return;
+    }
+    const choice = choices.find((c) => c.value === item.value);
+    void resolveSecret(item.value, async () => (choice ? getChoiceSecretInfo(choice) : undefined));
+  };
+
+  const handleOtherSubmit = () => {
+    const typed = otherProvider.trim();
+    if (!/^[a-z0-9-]+$/.test(typed)) {
+      setError('Provider id is lowercase letters, digits and hyphens');
+      return;
+    }
+    setError(null);
+    void resolveSecret(typed, () => lookupProviderSecretInfo(typed));
+  };
+
+  const handleSecretSubmit = (secret: string | undefined) => {
+    setSigningSecret(secret);
     setStep('transient');
   };
 
@@ -670,23 +929,29 @@ function CreateSource({ onBack, onCreated }: {
     try {
       const result = await api.createSource(name, slug, provider, {
         transientMode: isTransient,
+        ...(signingSecret !== undefined ? { signingSecret } : {}),
       });
       if (result.error) {
         setError(result.error);
-        setStep('confirm');
+        setStep('transient');
       } else {
-        setCreatedSource(result.data?.source || null);
+        const created = result.data?.source || null;
+        setCreatedSource(created);
+        setError(null);
         setStep('done');
-        setTimeout(() => {
-          onCreated();
-          onBack();
-        }, 1500);
+        onCreated();
+        if (!hasSomethingToShow(created)) {
+          setTimeout(() => onBack(), 1500);
+        }
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create source');
-      setStep('confirm');
+      setStep('transient');
     }
   };
+
+  const items = providerItems(choices);
+  const providerName = secretInfo?.providerName ?? (provider || 'none');
 
   return (
     <Box flexDirection="column">
@@ -728,24 +993,53 @@ function CreateSource({ onBack, onCreated }: {
         {step === 'provider' && (
           <Box flexDirection="column">
             <Box marginBottom={1}>
-              <Text dimColor>Name: {name}</Text>
+              <Text dimColor>Name: {name} | Slug: {slug}</Text>
             </Box>
-            <Box marginBottom={1}>
-              <Text dimColor>Slug: {slug}</Text>
-            </Box>
-            <Text>Select provider:</Text>
+            <Text>Select provider (for signature verification):{choicesLoading ? ' loading catalog…' : ''}</Text>
+            {offline && <Text dimColor>Could not load the provider catalog — short list shown; pick "Other" for any provider id.</Text>}
             <SelectInput
-              items={PROVIDERS}
+              items={items}
+              limit={PICKER_LIMIT}
               onSelect={handleProviderSelect}
             />
           </Box>
         )}
 
+        {step === 'other' && (
+          <Box>
+            <Text>Provider id: </Text>
+            <TextInput
+              value={otherProvider}
+              onChange={setOtherProvider}
+              onSubmit={handleOtherSubmit}
+              placeholder="e.g. grafana-hmac"
+            />
+          </Box>
+        )}
+
+        {step === 'lookup' && (
+          <Text color="yellow">Looking up {provider}…</Text>
+        )}
+
+        {step === 'secret' && secretPlan && (
+          <SecretEntry
+            provider={provider}
+            info={secretInfo}
+            plan={secretPlan}
+            onSubmit={handleSecretSubmit}
+          />
+        )}
+
         {step === 'transient' && (
           <Box flexDirection="column">
             <Box marginBottom={1}>
-              <Text dimColor>Name: {name} | Slug: {slug} | Provider: {provider}</Text>
+              <Text dimColor>Name: {name} | Slug: {slug} | Provider: {provider || 'none'}{signingSecret !== undefined ? ' | Secret: entered' : ''}</Text>
             </Box>
+            {note && (
+              <Box marginBottom={1}>
+                <Text dimColor>{note}</Text>
+              </Box>
+            )}
             <Text>Enable transient mode?</Text>
             <Text dimColor>Payloads are never stored at rest. Replay is unavailable.</Text>
             <Box marginTop={1}>
@@ -778,8 +1072,27 @@ function CreateSource({ onBack, onCreated }: {
                 <Text color="magenta">Mode: Transient (payloads not stored)</Text>
               </Box>
             )}
-            <Box>
-              <Text dimColor>Returning to list...</Text>
+            {createdSource.signingSecret && signingSecret === undefined && (
+              <Box flexDirection="column" marginTop={1}>
+                <Text color="yellow">{secretInfo?.secretLabel ?? 'Signing secret'} — shown once, save it now:</Text>
+                <Text bold>{createdSource.signingSecret}</Text>
+                <Text dimColor>{secretInfo?.secretInstruction ?? `Configure ${providerName} to sign its webhooks with this secret.`}</Text>
+              </Box>
+            )}
+            {createdSource.verifyToken && (
+              <Box flexDirection="column" marginTop={1}>
+                <Text color="yellow">{secretInfo?.verifyToken?.label ?? 'Verify token'}:</Text>
+                <Text bold>{createdSource.verifyToken}</Text>
+                <Text dimColor>{secretInfo?.verifyToken?.instruction ?? `Enter it when you register the ingest URL with ${providerName}.`}</Text>
+              </Box>
+            )}
+            {createdSource.awaitingSigningSecret && (
+              <Box marginTop={1}>
+                <Text color="yellow">{note ?? `${providerName} issues its secret after the ingest URL is registered.`}</Text>
+              </Box>
+            )}
+            <Box marginTop={1}>
+              <Text dimColor>{hasSomethingToShow(createdSource) ? 'Press Enter to return to the list' : 'Returning to list...'}</Text>
             </Box>
           </Box>
         )}

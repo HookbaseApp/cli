@@ -6,10 +6,42 @@ import * as logger from '../lib/logger.js';
 
 import { requireAuth } from '../lib/requireAuth.js';
 import { formatOutput } from '../lib/output.js';
+import { lookupProviderSecretInfo, afterRegistrationNote } from '../lib/providerCatalog.js';
 
 function isPromptCancelled(error: unknown): boolean {
   return error instanceof ExitPromptError ||
     (error instanceof Error && error.name === 'ExitPromptError');
+}
+
+/**
+ * Why a test send to a source with a provider went out unsigned, in terms of what the user can do
+ * about it. The API reports `signingError` when it tried and couldn't (asymmetric and bespoke
+ * schemes are refused on purpose: Hookbase never holds the vendor's private key).
+ */
+async function unsignedReason(
+  provider: string,
+  source: { slug?: string; hasSigningSecret?: boolean; awaitingSigningSecret?: boolean; verifiesWithoutSecret?: boolean } | undefined,
+  signingError: string | null | undefined,
+): Promise<string> {
+  const info = await lookupProviderSecretInfo(provider);
+  const name = info?.providerName ?? provider;
+  const ref = source?.slug ?? '<source>';
+  if (info?.secretSource === 'public_key' || info?.secretSource === 'built_in' || source?.verifiesWithoutSecret) {
+    return `Sent unsigned: ${name} signs with its private key, which Hookbase doesn't have. Send a real event from ${name} to test verification.`;
+  }
+  if (signingError) {
+    return `Sent unsigned: ${signingError}`;
+  }
+  if (source?.awaitingSigningSecret || info?.secretAfterRegistration) {
+    return `Sent unsigned: this source has no secret yet. ${afterRegistrationNote(provider, name).replace(/<source>/g, ref)}`;
+  }
+  if (info?.secretSource === 'provider') {
+    return `Sent unsigned: this source has no signing secret. Paste the one ${name} issued with "hookbase inbound sources update ${ref} --signing-secret <secret>".`;
+  }
+  if (info?.secretSource === 'none') {
+    return `Sent unsigned: ${name} doesn't sign its webhooks.`;
+  }
+  return `Sent unsigned: this source has no signing secret. Set one with "hookbase inbound sources update ${ref} --signing-secret <secret>".`;
 }
 
 interface TriggerOptions {
@@ -197,7 +229,7 @@ export async function triggerCommand(options: TriggerOptions): Promise<void> {
     if (data.signed && data.signatureHeader) {
       logger.dim(`Signed with ${data.signatureHeader} header`);
     } else if (sign && sourceProvider) {
-      logger.warn('Source has provider but signing was skipped — check signing_secret');
+      logger.warn(await unsignedReason(sourceProvider, sourceRecord, data.signingError));
     }
 
     const result2 = data.result as any;

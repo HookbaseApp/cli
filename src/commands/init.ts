@@ -24,18 +24,23 @@ type Framework = typeof FRAMEWORKS[number];
 // is simply unreachable from `hookbase init`. The scheme fields are mirrored too, not just the
 // ids, because the scaffold has to emit a verifier that agrees with the one Hookbase runs.
 //
-// Menu order and label shape follow the provider picker in src/commands/sources.ts, so the two
-// prompts read the same way. `PROVIDERS` — what --provider accepts, and what the error message
-// lists — is sorted instead, so it can be diffed against VALID_PROVIDERS directly.
+// Only `hmac` and `shared_secret` rows (plus Twilio, whose bespoke verifier predates this) are
+// scaffolded. Providers the API verifies with a public key, a certificate or a bespoke scheme are
+// listed in INGEST_VERIFIED instead: Hookbase ingest verifies them, and the scaffolded handler
+// receives the events Hookbase forwards, so it gets no local verifier. Together the two tables
+// cover every id in the API's table — src/commands/provider-lists.test.ts checks that.
+// `PROVIDERS` — what --provider accepts, and what the error message lists — is sorted.
 // ---------------------------------------------------------------------------------------------
 
 type HeaderFormat =
-  | { readonly type: 'plain' }
+  /** With `listSeparator`, the header may hold several signatures (key rotation); any may match. */
+  | { readonly type: 'plain'; readonly listSeparator?: string }
   | {
       readonly type: 'key_value';
       readonly pairSeparator: string;
       readonly signatureKey: string;
-      readonly timestampKey: string;
+      /** Absent when the timestamp isn't in the header (or isn't signed at all). */
+      readonly timestampKey?: string;
     }
   | {
       readonly type: 'versioned_list';
@@ -53,10 +58,12 @@ interface ProviderScheme {
    * `bespoke` — not a function of the body alone, so it gets its own generated verifier.
    */
   readonly kind: 'hmac' | 'shared_secret' | 'bespoke';
-  readonly algorithm: 'sha1' | 'sha256';
+  readonly algorithm: 'sha1' | 'sha256' | 'sha512';
   readonly encoding: 'hex' | 'base64';
   /** Headers carrying the signature; several means the first one present is used. */
   readonly header: readonly string[];
+  /** Numbered headers `<prefix>1`..`<prefix><count>`, every present one a candidate (DocuSign). */
+  readonly allHeadersPattern?: { readonly prefix: string; readonly count: number };
   readonly headerFormat: HeaderFormat;
   /** Fixed prefix on the encoded signature, e.g. `sha256=`. Required unless `prefixOptional`. */
   readonly signaturePrefix?: string;
@@ -67,6 +74,8 @@ interface ProviderScheme {
   readonly idHeader?: readonly string[];
   /** Max accepted clock skew, seconds. Set whenever `{timestamp}` is in the signing string. */
   readonly timestampTolerance?: number;
+  /** How the timestamp is written. Default `unix_s`; WorkOS sends ms, Klaviyo an HTTP date. */
+  readonly timestampFormat?: 'unix_s' | 'unix_ms' | 'http_date';
   /** Stripped from the configured secret before use, e.g. Standard Webhooks' `whsec_`. */
   readonly secretPrefix?: string;
   /** `base64` means the secret encodes the key bytes and must be decoded before signing. */
@@ -329,7 +338,421 @@ const PROVIDER_SCHEMES = [
     header: ['workos-signature'],
     headerFormat: { type: 'key_value', pairSeparator: ',', signatureKey: 'v1', timestampKey: 't' },
     signingTemplate: '{timestamp}.{body}',
+    // Milliseconds, not seconds — checked as seconds, every WorkOS request reads as far future.
+    timestampFormat: 'unix_ms',
     timestampTolerance: 300,
+  },
+
+  // Added 2026-10 from the API scheme table, in its order.
+  {
+    id: 'gitlab-signing-token',
+    label: 'GitLab (Signing Token)',
+    kind: 'hmac',
+    algorithm: 'sha256',
+    encoding: 'base64',
+    header: ['webhook-signature', 'svix-signature'],
+    headerFormat: {
+      type: 'versioned_list',
+      entrySeparator: ' ',
+      versionSeparator: ',',
+      version: 'v1',
+    },
+    signingTemplate: '{id}.{timestamp}.{body}',
+    timestampHeader: ['webhook-timestamp', 'svix-timestamp'],
+    idHeader: ['webhook-id', 'svix-id'],
+    timestampTolerance: 300,
+    secretPrefix: 'whsec_',
+    secretEncoding: 'base64',
+  },
+  {
+    id: 'linear',
+    label: 'Linear',
+    kind: 'hmac',
+    algorithm: 'sha256',
+    encoding: 'hex',
+    header: ['linear-signature'],
+    headerFormat: { type: 'plain' },
+    signingTemplate: '{body}',
+  },
+  {
+    id: 'vercel',
+    label: 'Vercel',
+    kind: 'hmac',
+    algorithm: 'sha1',
+    encoding: 'hex',
+    header: ['x-vercel-signature'],
+    headerFormat: { type: 'plain' },
+    signingTemplate: '{body}',
+  },
+  {
+    id: 'supabase-auth-hooks',
+    label: 'Supabase Auth Hooks',
+    kind: 'hmac',
+    algorithm: 'sha256',
+    encoding: 'base64',
+    header: ['webhook-signature', 'svix-signature'],
+    headerFormat: {
+      type: 'versioned_list',
+      entrySeparator: ' ',
+      versionSeparator: ',',
+      version: 'v1',
+    },
+    signingTemplate: '{id}.{timestamp}.{body}',
+    timestampHeader: ['webhook-timestamp', 'svix-timestamp'],
+    idHeader: ['webhook-id', 'svix-id'],
+    timestampTolerance: 300,
+    secretPrefix: 'v1,whsec_',
+    secretEncoding: 'base64',
+  },
+  {
+    id: 'circleci',
+    label: 'CircleCI',
+    kind: 'hmac',
+    algorithm: 'sha256',
+    encoding: 'hex',
+    header: ['circleci-signature'],
+    headerFormat: { type: 'key_value', pairSeparator: ',', signatureKey: 'v1' },
+    signingTemplate: '{body}',
+  },
+  {
+    id: 'whatsapp',
+    label: 'WhatsApp Business',
+    kind: 'hmac',
+    algorithm: 'sha256',
+    encoding: 'hex',
+    header: ['x-hub-signature-256'],
+    headerFormat: { type: 'plain' },
+    signaturePrefix: 'sha256=',
+    signingTemplate: '{body}',
+  },
+  {
+    id: 'zendesk',
+    label: 'Zendesk',
+    kind: 'hmac',
+    algorithm: 'sha256',
+    encoding: 'base64',
+    header: ['x-zendesk-webhook-signature'],
+    headerFormat: { type: 'plain' },
+    signingTemplate: '{timestamp}{body}',
+    timestampHeader: ['x-zendesk-webhook-signature-timestamp'],
+    timestampTolerance: 300,
+  },
+  {
+    id: 'clickup',
+    label: 'ClickUp',
+    kind: 'hmac',
+    algorithm: 'sha256',
+    encoding: 'hex',
+    header: ['x-signature'],
+    headerFormat: { type: 'plain' },
+    signingTemplate: '{body}',
+  },
+  {
+    id: 'mailchimp',
+    label: 'Mailchimp',
+    kind: 'hmac',
+    algorithm: 'sha256',
+    encoding: 'hex',
+    header: ['x-mailchimp-signature'],
+    headerFormat: { type: 'key_value', pairSeparator: ',', signatureKey: 'v1', timestampKey: 't' },
+    signingTemplate: '{timestamp}.{body}',
+    timestampTolerance: 300,
+  },
+  {
+    id: 'pagerduty',
+    label: 'PagerDuty',
+    kind: 'hmac',
+    algorithm: 'sha256',
+    encoding: 'hex',
+    header: ['x-pagerduty-signature'],
+    headerFormat: { type: 'key_value', pairSeparator: ',', signatureKey: 'v1' },
+    signingTemplate: '{body}',
+  },
+  {
+    id: 'woocommerce',
+    label: 'WooCommerce',
+    kind: 'hmac',
+    algorithm: 'sha256',
+    encoding: 'base64',
+    header: ['x-wc-webhook-signature'],
+    headerFormat: { type: 'plain' },
+    signingTemplate: '{body}',
+  },
+  {
+    id: 'docusign',
+    label: 'DocuSign',
+    kind: 'hmac',
+    algorithm: 'sha256',
+    encoding: 'base64',
+    header: ['x-docusign-signature-1'],
+    // One numbered header per active key, up to 100; any of them may carry the match.
+    allHeadersPattern: { prefix: 'x-docusign-signature-', count: 100 },
+    headerFormat: { type: 'plain' },
+    signingTemplate: '{body}',
+  },
+  {
+    id: 'coinbase-commerce',
+    label: 'Coinbase Commerce',
+    kind: 'hmac',
+    algorithm: 'sha256',
+    encoding: 'hex',
+    header: ['x-cc-webhook-signature'],
+    headerFormat: { type: 'plain' },
+    signingTemplate: '{body}',
+  },
+  {
+    id: 'gocardless',
+    label: 'GoCardless',
+    kind: 'hmac',
+    algorithm: 'sha256',
+    encoding: 'hex',
+    header: ['webhook-signature'],
+    headerFormat: { type: 'plain' },
+    signingTemplate: '{body}',
+  },
+  {
+    id: 'terraform-cloud',
+    label: 'HCP Terraform (Terraform Cloud)',
+    kind: 'hmac',
+    algorithm: 'sha512',
+    encoding: 'hex',
+    header: ['x-tfe-notification-signature'],
+    headerFormat: { type: 'plain' },
+    signingTemplate: '{body}',
+  },
+  {
+    id: 'launchdarkly',
+    label: 'LaunchDarkly',
+    kind: 'hmac',
+    algorithm: 'sha256',
+    encoding: 'hex',
+    header: ['x-ld-signature'],
+    headerFormat: { type: 'plain' },
+    signingTemplate: '{body}',
+  },
+  {
+    id: 'segment',
+    label: 'Segment',
+    kind: 'hmac',
+    algorithm: 'sha1',
+    encoding: 'hex',
+    header: ['x-signature'],
+    headerFormat: { type: 'plain' },
+    signingTemplate: '{body}',
+  },
+  {
+    id: 'klaviyo',
+    label: 'Klaviyo',
+    kind: 'hmac',
+    algorithm: 'sha256',
+    encoding: 'hex',
+    header: ['klaviyo-signature'],
+    headerFormat: { type: 'plain' },
+    signingTemplate: '{body}{timestamp}',
+    timestampHeader: ['klaviyo-timestamp'],
+    timestampFormat: 'http_date',
+    timestampTolerance: 300,
+  },
+  {
+    id: 'telegram',
+    label: 'Telegram',
+    kind: 'shared_secret',
+    algorithm: 'sha256',
+    encoding: 'hex',
+    header: ['x-telegram-bot-api-secret-token'],
+    headerFormat: { type: 'plain' },
+    signingTemplate: '{body}',
+  },
+  {
+    id: 'jira',
+    label: 'Jira',
+    kind: 'hmac',
+    algorithm: 'sha256',
+    encoding: 'hex',
+    header: ['x-hub-signature'],
+    headerFormat: { type: 'plain' },
+    signaturePrefix: 'sha256=',
+    signingTemplate: '{body}',
+  },
+  {
+    id: 'okta',
+    label: 'Okta (header echo)',
+    kind: 'shared_secret',
+    algorithm: 'sha256',
+    encoding: 'hex',
+    header: ['authorization'],
+    headerFormat: { type: 'plain' },
+    signingTemplate: '{body}',
+  },
+  {
+    id: 'grafana',
+    label: 'Grafana Cloud (Bearer token)',
+    kind: 'shared_secret',
+    algorithm: 'sha256',
+    encoding: 'hex',
+    header: ['authorization'],
+    headerFormat: { type: 'plain' },
+    signaturePrefix: 'Bearer ',
+    signingTemplate: '{body}',
+  },
+  {
+    id: 'grafana-hmac',
+    label: 'Grafana Cloud (HMAC, no timestamp)',
+    kind: 'hmac',
+    algorithm: 'sha256',
+    encoding: 'hex',
+    header: ['x-grafana-alerting-signature'],
+    headerFormat: { type: 'plain' },
+    signingTemplate: '{body}',
+  },
+  {
+    id: 'grafana-hmac-timestamped',
+    label: 'Grafana Cloud (HMAC, with timestamp)',
+    kind: 'hmac',
+    algorithm: 'sha256',
+    encoding: 'hex',
+    header: ['x-grafana-alerting-signature'],
+    headerFormat: { type: 'plain' },
+    signingTemplate: '{timestamp}:{body}',
+    timestampHeader: ['x-grafana-alerting-signature-timestamp'],
+    timestampTolerance: 300,
+  },
+  {
+    id: 'auth0',
+    label: 'Auth0',
+    kind: 'shared_secret',
+    algorithm: 'sha256',
+    encoding: 'hex',
+    header: ['authorization'],
+    headerFormat: { type: 'plain' },
+    signingTemplate: '{body}',
+  },
+  {
+    id: 'newrelic',
+    label: 'New Relic',
+    kind: 'shared_secret',
+    algorithm: 'sha256',
+    encoding: 'hex',
+    header: ['authorization'],
+    headerFormat: { type: 'plain' },
+    signaturePrefix: 'Bearer ',
+    signingTemplate: '{body}',
+  },
+  {
+    id: 'railway',
+    label: 'Railway',
+    kind: 'shared_secret',
+    algorithm: 'sha256',
+    encoding: 'hex',
+    header: ['authorization'],
+    headerFormat: { type: 'plain' },
+    signaturePrefix: 'Bearer ',
+    prefixOptional: true,
+    signingTemplate: '{body}',
+  },
+  {
+    id: 'pipedrive',
+    label: 'Pipedrive',
+    kind: 'shared_secret',
+    algorithm: 'sha256',
+    encoding: 'hex',
+    header: ['authorization'],
+    headerFormat: { type: 'plain' },
+    signaturePrefix: 'Basic ',
+    signingTemplate: '{body}',
+  },
+  {
+    id: 'chargebee',
+    label: 'Chargebee',
+    kind: 'shared_secret',
+    algorithm: 'sha256',
+    encoding: 'hex',
+    header: ['authorization'],
+    headerFormat: { type: 'plain' },
+    signaturePrefix: 'Basic ',
+    signingTemplate: '{body}',
+  },
+  {
+    id: 'cloudflare',
+    label: 'Cloudflare (Notification Webhooks)',
+    kind: 'shared_secret',
+    algorithm: 'sha256',
+    encoding: 'hex',
+    header: ['cf-webhook-auth'],
+    headerFormat: { type: 'plain' },
+    signingTemplate: '{body}',
+  },
+  {
+    id: 'freshdesk',
+    label: 'Freshdesk',
+    kind: 'shared_secret',
+    algorithm: 'sha256',
+    encoding: 'hex',
+    header: ['authorization'],
+    headerFormat: { type: 'plain' },
+    signingTemplate: '{body}',
+  },
+  {
+    id: 'postmark',
+    label: 'Postmark',
+    kind: 'shared_secret',
+    algorithm: 'sha256',
+    encoding: 'hex',
+    header: ['authorization'],
+    headerFormat: { type: 'plain' },
+    signingTemplate: '{body}',
+  },
+  {
+    id: 'datadog',
+    label: 'Datadog',
+    kind: 'shared_secret',
+    algorithm: 'sha256',
+    encoding: 'hex',
+    header: ['authorization'],
+    headerFormat: { type: 'plain' },
+    signingTemplate: '{body}',
+  },
+  {
+    id: 'supabase',
+    label: 'Supabase (Database Webhooks)',
+    kind: 'shared_secret',
+    algorithm: 'sha256',
+    encoding: 'hex',
+    header: ['authorization'],
+    headerFormat: { type: 'plain' },
+    signaturePrefix: 'Bearer ',
+    prefixOptional: true,
+    signingTemplate: '{body}',
+  },
+  {
+    id: 'bigcommerce',
+    label: 'BigCommerce',
+    kind: 'hmac',
+    algorithm: 'sha256',
+    encoding: 'base64',
+    header: ['webhook-signature'],
+    headerFormat: {
+      type: 'versioned_list',
+      entrySeparator: ' ',
+      versionSeparator: ',',
+      version: 'v1',
+    },
+    signingTemplate: '{id}.{timestamp}.{body}',
+    timestampHeader: ['webhook-timestamp'],
+    idHeader: ['webhook-id'],
+    timestampTolerance: 300,
+  },
+  {
+    id: 'mollie',
+    label: 'Mollie (Next-gen Webhooks)',
+    kind: 'hmac',
+    algorithm: 'sha256',
+    encoding: 'hex',
+    header: ['x-mollie-signature'],
+    headerFormat: { type: 'plain', listSeparator: ',' },
+    signaturePrefix: 'sha256=',
+    prefixOptional: true,
+    signingTemplate: '{body}',
   },
 
   // The fallback, last.
@@ -349,7 +772,87 @@ const PROVIDER_SCHEMES = [
   },
 ] as const satisfies readonly ProviderScheme[];
 
-type CanonicalProvider = typeof PROVIDER_SCHEMES[number]['id'];
+/**
+ * Providers the API verifies with a public key (Discord, SendGrid, Wise), a certificate the request
+ * points at (AWS SNS) or a bespoke scheme (the rest). Reproducing those locally is a verifier per
+ * vendor, and pointless behind Hookbase: ingest has already verified the request before it is
+ * forwarded. These get a handler that accepts what Hookbase forwards, and a note saying so.
+ */
+interface IngestVerified {
+  readonly id: string;
+  readonly label: string;
+  readonly kind: 'asymmetric' | 'bespoke';
+}
+
+const INGEST_VERIFIED = [
+  {
+    id: 'discord',
+    label: 'Discord',
+    kind: 'asymmetric',
+  },
+  {
+    id: 'sendgrid',
+    label: 'SendGrid',
+    kind: 'asymmetric',
+  },
+  {
+    id: 'wise',
+    label: 'Wise',
+    kind: 'asymmetric',
+  },
+  {
+    id: 'wise-sandbox',
+    label: 'Wise (sandbox)',
+    kind: 'asymmetric',
+  },
+  {
+    id: 'netlify',
+    label: 'Netlify',
+    kind: 'bespoke',
+  },
+  {
+    id: 'mailgun',
+    label: 'Mailgun',
+    kind: 'bespoke',
+  },
+  {
+    id: 'adyen',
+    label: 'Adyen',
+    kind: 'bespoke',
+  },
+  {
+    id: 'braintree',
+    label: 'Braintree',
+    kind: 'bespoke',
+  },
+  {
+    id: 'square',
+    label: 'Square',
+    kind: 'bespoke',
+  },
+  {
+    id: 'trello',
+    label: 'Trello',
+    kind: 'bespoke',
+  },
+  {
+    id: 'paypal',
+    label: 'PayPal',
+    kind: 'bespoke',
+  },
+  {
+    id: 'aws-sns',
+    label: 'AWS SNS',
+    kind: 'bespoke',
+  },
+  {
+    id: 'hubspot',
+    label: 'HubSpot',
+    kind: 'bespoke',
+  },
+] as const satisfies readonly IngestVerified[];
+
+type CanonicalProvider = typeof PROVIDER_SCHEMES[number]['id'] | typeof INGEST_VERIFIED[number]['id'];
 
 /**
  * Accepted on `--provider` but deliberately absent from the menu: each is a second spelling of a
@@ -358,6 +861,11 @@ type CanonicalProvider = typeof PROVIDER_SCHEMES[number]['id'];
  */
 const PROVIDER_ALIASES = {
   svix: 'standard-webhooks',
+  clerk: 'standard-webhooks',
+  resend: 'standard-webhooks',
+  render: 'standard-webhooks',
+  etsy: 'standard-webhooks',
+  stytch: 'standard-webhooks',
   generic: 'custom',
 } as const satisfies Record<string, CanonicalProvider>;
 
@@ -367,11 +875,22 @@ type Provider = CanonicalProvider | ProviderAlias;
 /** Every provider id the API accepts, aliases included — the mirror of VALID_PROVIDERS. */
 const PROVIDERS: readonly Provider[] = [
   ...PROVIDER_SCHEMES.map((s) => s.id),
+  ...INGEST_VERIFIED.map((s) => s.id),
   ...(Object.keys(PROVIDER_ALIASES) as ProviderAlias[]),
 ].sort();
 
+function canonicalId(p: Provider): string {
+  return p in PROVIDER_ALIASES ? PROVIDER_ALIASES[p as ProviderAlias] : p;
+}
+
+/** The ingest-verified entry for a provider, or undefined when it gets a local verifier. */
+function ingestVerifiedFor(p: Provider): IngestVerified | undefined {
+  const canonical = canonicalId(p);
+  return INGEST_VERIFIED.find((s) => s.id === canonical);
+}
+
 function schemeFor(p: Provider): ProviderScheme {
-  const canonical: string = p in PROVIDER_ALIASES ? PROVIDER_ALIASES[p as ProviderAlias] : p;
+  const canonical = canonicalId(p);
   const scheme = PROVIDER_SCHEMES.find((s) => s.id === canonical);
   if (!scheme) {
     // Unreachable: `p` was checked against PROVIDERS, which is built from this same table.
@@ -450,12 +969,18 @@ export async function initCommand(options: InitOptions): Promise<void> {
       provider = (await select({
         message: 'Provider for signature verification:',
         pageSize: 12,
-        choices: PROVIDER_SCHEMES.map((s) => ({
-          // The header is part of the label because that is what the user is looking at in the
-          // provider's own dashboard when they answer this prompt.
-          name: `${s.label} — ${displayHeader(s.header[0])}`,
-          value: s.id,
-        })),
+        choices: [
+          ...PROVIDER_SCHEMES.map((s) => ({
+            // The header is part of the label because that is what the user is looking at in the
+            // provider's own dashboard when they answer this prompt.
+            name: `${s.label} — ${displayHeader(s.header[0])}`,
+            value: s.id as Provider,
+          })),
+          ...INGEST_VERIFIED.map((s) => ({
+            name: `${s.label} — verified by Hookbase ingest (no local verifier)`,
+            value: s.id as Provider,
+          })),
+        ],
       })) as Provider;
     }
     if (!PROVIDERS.includes(provider)) {
@@ -488,11 +1013,17 @@ export async function initCommand(options: InitOptions): Promise<void> {
       return;
     }
 
+    const ingestVerified = ingestVerifiedFor(provider);
     copyTemplate(srcDir, targetDir, {
       PROVIDER: provider,
       PROVIDER_LABEL: providerLabel(provider),
-      VERIFY_SNIPPET: getVerifySnippet(provider, framework),
+      VERIFY_SNIPPET: ingestVerified
+        ? passThroughSnippet(ingestVerified, framework)
+        : getVerifySnippet(provider, framework),
       ENV_VAR_NAME: envVarName(provider),
+      MISSING_SECRET_NOTE: ingestVerified
+        ? `not needed: Hookbase ingest verifies ${ingestVerified.label} signatures`
+        : 'signature verification will fail',
       SOURCE_URL: options.source ? `Configure your Hookbase source destination URL to hit this endpoint.` : 'See https://www.hookbase.app/docs',
       HEADER_NAME: signatureHeader(provider),
     });
@@ -509,6 +1040,15 @@ export async function initCommand(options: InitOptions): Promise<void> {
     }
     logger.log('');
     logger.dim(`Then point a Hookbase destination at your dev URL (use 'hookbase listen <port>' for a tunnel).`);
+    if (ingestVerified) {
+      logger.log('');
+      logger.info(
+        `${ingestVerified.label} uses ${ingestVerified.kind === 'asymmetric' ? 'public-key' : 'a provider-specific'} signature verification, ` +
+        'which Hookbase ingest performs before forwarding. The scaffolded handler receives those forwarded ' +
+        'events and does not re-verify them — keep its URL private (a Hookbase tunnel or destination), ' +
+        `and point ${ingestVerified.label} at your source's ingest URL, not at this handler.`
+      );
+    }
   } catch (error) {
     if (isPromptCancelled(error)) {
       return;
@@ -518,18 +1058,19 @@ export async function initCommand(options: InitOptions): Promise<void> {
 }
 
 function providerLabel(p: Provider): string {
-  return schemeFor(p).label;
+  return ingestVerifiedFor(p)?.label ?? schemeFor(p).label;
 }
 
 function envVarName(p: Provider): string {
-  const scheme = schemeFor(p);
+  const passthrough = ingestVerifiedFor(p);
+  const scheme = passthrough ? undefined : schemeFor(p);
   // `standard-webhooks` would otherwise produce a name with a hyphen in it, which is not a
   // legal shell identifier.
-  return scheme.envVar ?? `${scheme.id.toUpperCase().replace(/[^A-Z0-9]/g, '_')}_SIGNING_SECRET`;
+  return scheme?.envVar ?? `${canonicalId(p).toUpperCase().replace(/[^A-Z0-9]/g, '_')}_SIGNING_SECRET`;
 }
 
 function signatureHeader(p: Provider): string {
-  return schemeFor(p).header[0];
+  return ingestVerifiedFor(p) ? '(verified by Hookbase ingest)' : schemeFor(p).header[0];
 }
 
 /** `x-hub-signature-256` -> `X-Hub-Signature-256`, for display only. Header names are matched
@@ -581,15 +1122,25 @@ function signingExpr(template: string): string {
 function keyLines(scheme: ProviderScheme, runtime: Runtime): string[] {
   if (scheme.secretEncoding !== 'base64') return [];
   const stripped = scheme.secretPrefix
-    ? `secret.replace(/^${scheme.secretPrefix}/, '')`
+    ? `secret.replace(/^${scheme.secretPrefix.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')}/, '')`
     : 'secret';
+  if (runtime === 'node') {
+    return [
+      '// The secret encodes the key bytes; signing with the string itself never matches.',
+      `const key = Buffer.from(${stripped}, 'base64');`,
+    ];
+  }
   return [
     '// The secret encodes the key bytes; signing with the string itself never matches.',
-    runtime === 'node'
-      ? `const key = Buffer.from(${stripped}, 'base64');`
-      // `new Uint8Array(...)` rather than `Uint8Array.from(...)`: only the constructor is typed
-      // as backed by an ArrayBuffer, which is what crypto.subtle.importKey will accept.
-      : `const key = new Uint8Array([...atob(${stripped})].map((c) => c.charCodeAt(0)));`,
+    '// atob throws on a malformed secret — fail closed rather than answer 500.',
+    'let key;',
+    'try {',
+    // `new Uint8Array(...)` rather than `Uint8Array.from(...)`: only the constructor is typed
+    // as backed by an ArrayBuffer, which is what crypto.subtle.importKey will accept.
+    `  key = new Uint8Array([...atob(${stripped})].map((c) => c.charCodeAt(0)));`,
+    '} catch {',
+    '  return false;',
+    '}',
   ];
 }
 
@@ -601,13 +1152,24 @@ function digestExpr(scheme: ProviderScheme, runtime: Runtime, dataExpr: string):
   if (runtime === 'node') {
     return `crypto.createHmac('${scheme.algorithm}', ${keyExpr(scheme)}).update(${dataExpr}, 'utf8').digest('${scheme.encoding}')`;
   }
-  const webAlg = scheme.algorithm === 'sha1' ? 'SHA-1' : 'SHA-256';
+  const webAlg = scheme.algorithm === 'sha1' ? 'SHA-1' : scheme.algorithm === 'sha512' ? 'SHA-512' : 'SHA-256';
   return `await hmac(${keyExpr(scheme)}, ${dataExpr}, '${webAlg}', '${scheme.encoding}')`;
 }
 
-function timestampGuard(tolerance: number): string[] {
+function timestampGuard(tolerance: number, format: ProviderScheme['timestampFormat'] = 'unix_s'): string[] {
+  if (format === 'http_date') {
+    return [
+      '// An HTTP date such as "Thu, 04 Jan 2024 18:05:25 GMT", not a number.',
+      'const sentAt = Date.parse(timestamp) / 1000;',
+      `if (!Number.isFinite(sentAt) || Math.abs(Date.now() / 1000 - sentAt) > ${tolerance}) {`,
+      '  return false;',
+      '}',
+    ];
+  }
+  const seconds = format === 'unix_ms' ? 'Number(timestamp) / 1000' : 'Number(timestamp)';
   return [
-    `if (!/^\\d+$/.test(timestamp) || Math.abs(Date.now() / 1000 - Number(timestamp)) > ${tolerance}) {`,
+    ...(format === 'unix_ms' ? ['// Milliseconds since the epoch, not seconds.'] : []),
+    `if (!/^\\d+$/.test(timestamp) || Math.abs(Date.now() / 1000 - ${seconds}) > ${tolerance}) {`,
     '  return false;',
     '}',
   ];
@@ -637,9 +1199,25 @@ function verifyBody(scheme: ProviderScheme, runtime: Runtime, lang: Lang): strin
       `const token = ${readHeader(scheme.header)};`,
       'if (!token || !secret) return false;',
       '// The provider echoes the token you configured on the webhook; there is no hash to',
-      '// recompute, but the token IS the credential, so it is still compared in constant time.',
-      'return timingSafeEqual(secret, token);'
+      '// recompute, but the token IS the credential, so it is still compared in constant time.'
     );
+    if (!scheme.signaturePrefix) {
+      lines.push('return timingSafeEqual(secret, token);');
+    } else if (scheme.prefixOptional) {
+      lines.push(
+        `// Sent as "${scheme.signaturePrefix}<token>", though the secret may have been saved with the prefix.`,
+        `const prefix = '${scheme.signaturePrefix}';`,
+        'if (token.startsWith(prefix) && timingSafeEqual(secret, token.slice(prefix.length))) return true;',
+        'return timingSafeEqual(secret, token);'
+      );
+    } else {
+      lines.push(
+        `// Sent as "${scheme.signaturePrefix}<token>"; the configured secret is the part after it.`,
+        `const prefix = '${scheme.signaturePrefix}';`,
+        'if (!token.startsWith(prefix)) return false;',
+        'return timingSafeEqual(secret, token.slice(prefix.length));'
+      );
+    }
     return lines;
   }
 
@@ -673,23 +1251,38 @@ function verifyBody(scheme: ProviderScheme, runtime: Runtime, lang: Lang): strin
   const format = scheme.headerFormat;
 
   if (format.type === 'key_value') {
+    const example = format.timestampKey
+      ? `${format.timestampKey}=<timestamp>${format.pairSeparator}${format.signatureKey}=<signature>`
+      : `${format.signatureKey}=<signature>`;
     lines.push(
       `const header = ${readHeader(scheme.header)};`,
       'if (!header || !secret) return false;',
-      `// Header is a "${format.pairSeparator}"-separated list of key=value pairs,`,
-      `// e.g. "${format.timestampKey}=<timestamp>${format.pairSeparator}${format.signatureKey}=<signature>".`,
-      lang === 'ts' ? 'const parts: Record<string, string> = {};' : 'const parts = {};',
+      `// Header is a "${format.pairSeparator}"-separated list of key=value pairs, e.g. "${example}".`,
+      `// Every ${format.signatureKey}= entry is a candidate: senders repeat it while rotating secrets.`,
+      lang === 'ts' ? 'const candidates: string[] = [];' : 'const candidates = [];',
+      ...(format.timestampKey ? ["let timestamp = '';"] : []),
       `for (const pair of header.split('${format.pairSeparator}')) {`,
       "  const i = pair.indexOf('=');",
-      '  if (i > 0) parts[pair.slice(0, i).trim()] = pair.slice(i + 1).trim();',
+      '  if (i <= 0) continue;',
+      '  const key = pair.slice(0, i).trim();',
+      '  const value = pair.slice(i + 1).trim();',
+      ...(format.timestampKey
+        ? [
+            `  if (key === '${format.timestampKey}') {`,
+            '    if (!timestamp) timestamp = value;',
+            `  } else if (key === '${format.signatureKey}') {`,
+            '    candidates.push(value);',
+            '  }',
+          ]
+        : [`  if (key === '${format.signatureKey}') candidates.push(value);`]),
       '}',
-      `const timestamp = parts['${format.timestampKey}'] || '';`,
-      `const provided = parts['${format.signatureKey}'] || '';`,
-      'if (!timestamp || !provided) return false;',
-      ...timestampGuard(scheme.timestampTolerance ?? 300),
+      'if (candidates.length === 0) return false;',
+      ...(format.timestampKey
+        ? ['if (!timestamp) return false;', ...timestampGuard(scheme.timestampTolerance ?? 300, scheme.timestampFormat)]
+        : []),
       ...keyLines(scheme, runtime),
       `const expected = ${digestExpr(scheme, runtime, signingExpr(scheme.signingTemplate))};`,
-      'return timingSafeEqual(expected, provided);'
+      'return candidates.some((candidate) => timingSafeEqual(expected, candidate));'
     );
     return lines;
   }
@@ -700,7 +1293,7 @@ function verifyBody(scheme: ProviderScheme, runtime: Runtime, lang: Lang): strin
       `const timestamp = ${readHeader(scheme.timestampHeader ?? [])};`,
       `const id = ${readHeader(scheme.idHeader ?? [])};`,
       'if (!header || !timestamp || !id || !secret) return false;',
-      ...timestampGuard(scheme.timestampTolerance ?? 300),
+      ...timestampGuard(scheme.timestampTolerance ?? 300, scheme.timestampFormat),
       ...keyLines(scheme, runtime),
       `const expected = ${digestExpr(scheme, runtime, signingExpr(scheme.signingTemplate))};`,
       `// The header is a ${format.entrySeparator === ' ' ? 'space' : `"${format.entrySeparator}"`}-delimited list of`,
@@ -717,6 +1310,42 @@ function verifyBody(scheme: ProviderScheme, runtime: Runtime, lang: Lang): strin
     return lines;
   }
 
+  // plain, but several candidates: one header listing them, or several numbered headers
+  if (format.listSeparator || scheme.allHeadersPattern) {
+    const pattern = scheme.allHeadersPattern;
+    if (pattern) {
+      lines.push(
+        `// One numbered header per active key (${pattern.prefix}1..${pattern.count}); the configured`,
+        '// key may be in any of them, so every one present is a candidate.',
+        lang === 'ts' ? 'const values: string[] = [];' : 'const values = [];',
+        `for (let i = 1; i <= ${pattern.count}; i++) {`,
+        `  const value = getHeader('${pattern.prefix}' + i);`,
+        '  if (value) values.push(value);',
+        '}',
+        'if (values.length === 0 || !secret) return false;'
+      );
+    } else {
+      lines.push(
+        `const header = ${readHeader(scheme.header)};`,
+        'if (!header || !secret) return false;',
+        `// May carry several signatures while a secret rotates, separated by "${format.listSeparator}".`,
+        `const values = header.split('${format.listSeparator}').map((v) => v.trim()).filter(Boolean);`
+      );
+    }
+    const strip = !scheme.signaturePrefix
+      ? 'values'
+      : scheme.prefixOptional
+        ? `values.map((v) => (v.startsWith('${scheme.signaturePrefix}') ? v.slice(${scheme.signaturePrefix.length}) : v))`
+        : `values.filter((v) => v.startsWith('${scheme.signaturePrefix}')).map((v) => v.slice(${scheme.signaturePrefix.length}))`;
+    lines.push(
+      `const candidates = ${strip};`,
+      ...keyLines(scheme, runtime),
+      `const expected = ${digestExpr(scheme, runtime, signingExpr(scheme.signingTemplate))};`,
+      'return candidates.some((candidate) => timingSafeEqual(expected, candidate));'
+    );
+    return lines;
+  }
+
   // plain
   lines.push(
     `const header = ${readHeader(scheme.header)};`,
@@ -726,7 +1355,7 @@ function verifyBody(scheme: ProviderScheme, runtime: Runtime, lang: Lang): strin
     lines.push(
       `const timestamp = ${readHeader(scheme.timestampHeader)};`,
       'if (!timestamp) return false;',
-      ...timestampGuard(scheme.timestampTolerance ?? 300)
+      ...timestampGuard(scheme.timestampTolerance ?? 300, scheme.timestampFormat)
     );
   }
   lines.push(
@@ -815,3 +1444,26 @@ function getVerifySnippet(p: Provider, framework: Framework): string {
     '}',
   ].join('\n');
 }
+
+/**
+ * The `verifySignature` for a provider Hookbase ingest verifies itself (public-key, certificate and
+ * bespoke schemes). Same signature as the generated verifiers so the templates need no branch.
+ */
+function passThroughSnippet(p: IngestVerified, framework: Framework): string {
+  const { runtime, lang } = FRAMEWORK_TARGET[framework];
+  const params = lang === 'ts'
+    ? '_rawBody: string, _secret: string, _getHeader: (name: string) => string, _requestUrl: string'
+    : '_rawBody, _secret, _getHeader, _requestUrl';
+  const ret = lang === 'ts' ? (runtime === 'web' ? ': Promise<boolean>' : ': boolean') : '';
+  return [
+    `// ${p.label} signs with ${p.kind === 'asymmetric' ? 'a public-key scheme' : 'a provider-specific scheme'}, and Hookbase ingest`,
+    '// verifies it before forwarding the event here. This handler only ever sees what Hookbase',
+    '// forwards, so it accepts it as-is — keep its URL private (a Hookbase tunnel or destination).',
+    `${runtime === 'web' ? 'async ' : ''}function verifySignature(${params})${ret} {`,
+    '  return true;',
+    '}',
+  ].join('\n');
+}
+
+/** Exported for init.verify.test.ts only. */
+export const __testing = { getVerifySnippet, PROVIDER_SCHEMES, INGEST_VERIFIED, PROVIDERS, passThroughSnippet };

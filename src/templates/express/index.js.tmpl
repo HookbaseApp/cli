@@ -6,7 +6,7 @@ const PORT = process.env.PORT || 3000;
 const SIGNING_SECRET = process.env.{{ENV_VAR_NAME}};
 
 if (!SIGNING_SECRET) {
-  console.warn('Warning: {{ENV_VAR_NAME}} not set — signature verification will fail.');
+  console.warn('Warning: {{ENV_VAR_NAME}} not set — {{MISSING_SECRET_NOTE}}.');
 }
 
 {{VERIFY_SNIPPET}}
