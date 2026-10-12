@@ -233,6 +233,12 @@ export class TunnelClient {
     // Apply filter (if any) before doing any local I/O. Rejected requests get
     // a configurable status (default 204) so the upstream still sees a sane
     // response and the local app stays unaware.
+    //
+    // Provider handshakes (Slack url_verification, Zoom endpoint.url_validation, Okta's
+    // verification GET, AWS SNS SubscriptionConfirmation, Notion's verification token, Meta's
+    // hub.challenge) sent to a source's ingest URL are answered by Hookbase ingest and never reach
+    // the tunnel, so a filter can't break a vendor's registration. A vendor pointed straight at the
+    // public tunnel URL bypasses ingest, and then the local app has to answer them itself.
     const filter = this.options.filter;
     if (filter) {
       const skipReason = await this.evaluateFilter(request, filter);
@@ -436,6 +442,7 @@ export class TunnelClient {
       }
     }
 
+    // No exemption for handshake payloads: ingest answers those itself (see forwardRequest).
     if (filter.eventPatterns && filter.eventPatterns.length > 0) {
       const eventType = detectEventType(request.headers, parsedBody);
       if (!eventType) {

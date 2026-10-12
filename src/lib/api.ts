@@ -605,7 +605,19 @@ export interface Source {
   slug: string;
   provider: string | null;
   description?: string;
-  signing_secret?: string;
+  /** The secret itself is never on a read: these are its masked form (GET / and GET /:id). */
+  hasSigningSecret?: boolean;
+  signingSecretLast4?: string | null;
+  /** The vendor issues the secret only after the ingest URL is registered (Asana, Notion). */
+  awaitingSigningSecret?: boolean;
+  /** Verified with a key Hookbase already has (Wise's published key, AWS SNS certificates). */
+  verifiesWithoutSecret?: boolean;
+  /** Create reply only: the full secret, shown once (null when there is none to show). */
+  signingSecret?: string | null;
+  /** Create reply only, Meta providers (WhatsApp): the verify token Meta checks at registration. */
+  verifyToken?: string;
+  ingestUrl?: string;
+  rejectInvalidSignatures?: boolean;
   reject_invalid_signatures?: boolean;
   rate_limit_per_minute?: number;
   isActive?: boolean;
@@ -642,6 +654,8 @@ export async function createSource(
   options?: {
     description?: string;
     signingSecret?: string;
+    /** Meta providers (WhatsApp) only; the API generates one when omitted. */
+    verifyToken?: string;
     rejectInvalidSignatures?: boolean;
     rateLimitPerMinute?: number;
     ipFilterMode?: 'none' | 'allowlist' | 'denylist' | 'both';
@@ -663,6 +677,7 @@ export async function createSource(
     slug,
     description: options?.description,
     signingSecret: options?.signingSecret,
+    verifyToken: options?.verifyToken,
     rejectInvalidSignatures: options?.rejectInvalidSignatures,
     rateLimitPerMinute: options?.rateLimitPerMinute,
     ipFilterMode: options?.ipFilterMode,
@@ -690,21 +705,29 @@ export async function updateSource(
   sourceId: string,
   data: {
     name?: string;
-    provider?: string;
+    /** null removes the provider (no signature verification). */
+    provider?: string | null;
     description?: string;
     isActive?: boolean;
+    /** null clears it. */
+    signingSecret?: string | null;
+    /** Meta providers (WhatsApp) only; '' or null makes the API generate a fresh one. */
+    verifyToken?: string | null;
     rejectInvalidSignatures?: boolean;
     rateLimitPerMinute?: number;
     transientMode?: boolean;
     allowedMethods?: string[];
   }
-): Promise<ApiResponse<{ source: Source }>> {
+): Promise<ApiResponse<{ success: boolean }>> {
 
-  return request<{ source: Source }>('PATCH', `/api/sources/${sourceId}`, {
+  // PATCH answers {success:true} only — read the source back with getSource() for its new state.
+  return request<{ success: boolean }>('PATCH', `/api/sources/${sourceId}`, {
     name: data.name,
     provider: data.provider,
     description: data.description,
     isActive: data.isActive,
+    signingSecret: data.signingSecret,
+    verifyToken: data.verifyToken,
     rejectInvalidSignatures: data.rejectInvalidSignatures,
     rateLimitPerMinute: data.rateLimitPerMinute,
     transientMode: data.transientMode,
@@ -717,8 +740,39 @@ export async function deleteSource(sourceId: string): Promise<ApiResponse<{ succ
   return request<{ success: boolean }>('DELETE', `/api/sources/${sourceId}`);
 }
 
-export async function rotateSourceSecret(sourceId: string): Promise<ApiResponse<{ source: Source; signingSecret: string }>> {
-  return request<{ source: Source; signingSecret: string }>('POST', `/api/sources/${sourceId}/rotate-secret`);
+export async function rotateSourceSecret(sourceId: string): Promise<ApiResponse<{ signingSecret: string }>> {
+  return request<{ signingSecret: string }>('POST', `/api/sources/${sourceId}/rotate-secret`);
+}
+
+/** The full signing secret. 404 when the source has none. Write-scope keys only. */
+export async function revealSourceSecret(sourceId: string): Promise<ApiResponse<{ signingSecret: string | null }>> {
+  return request<{ signingSecret: string | null }>('GET', `/api/sources/${sourceId}/reveal-secret`);
+}
+
+/** Meta (WhatsApp) verify token. 400 for any provider that has none. */
+export async function getSourceVerifyToken(sourceId: string): Promise<ApiResponse<{ verifyToken: string }>> {
+  return request<{ verifyToken: string }>('GET', `/api/sources/${sourceId}/verify-token`);
+}
+
+export async function rotateSourceVerifyToken(sourceId: string): Promise<ApiResponse<{ verifyToken: string }>> {
+  return request<{ verifyToken: string }>('POST', `/api/sources/${sourceId}/rotate-verify-token`);
+}
+
+export interface PendingVerification {
+  provider: string;
+  token: string;
+  receivedAt: string;
+  clientIp: string | null;
+}
+
+/** A verification token the vendor delivered to the ingest URL (Notion). 404 when none waits. */
+export async function getSourcePendingVerification(sourceId: string): Promise<ApiResponse<PendingVerification>> {
+  return request<PendingVerification>('GET', `/api/sources/${sourceId}/pending-verification`);
+}
+
+/** Make the pending verification token this source's signing secret. */
+export async function adoptSourcePendingVerification(sourceId: string): Promise<ApiResponse<{ success: boolean }>> {
+  return request<{ success: boolean }>('POST', `/api/sources/${sourceId}/pending-verification/adopt`);
 }
 
 export async function triggerSource(sourceId: string, data: {
@@ -733,6 +787,8 @@ export async function triggerSource(sourceId: string, data: {
   statusCode: number;
   signed?: boolean;
   signatureHeader?: string | null;
+  /** Why signing was skipped or failed (e.g. asymmetric/bespoke schemes Hookbase cannot self-sign). */
+  signingError?: string | null;
   payloadSource?: 'catalog' | 'template' | 'generic';
   result: unknown;
   request: { url: string; method: string; headers: Record<string, string>; payload: unknown };
@@ -776,8 +832,37 @@ export async function getOrgFeatures(): Promise<ApiResponse<OrgFeatures>> {
 }
 
 // ============================================================================
-// Provider Catalog (for `hookbase trigger`)
+// Provider Catalog (public, no auth)
 // ============================================================================
+
+/**
+ * Which side produces a source's credential (api/src/data/provider-catalog.ts):
+ * - provider   — the vendor issues it; the user pastes it into Hookbase.
+ * - operator   — Hookbase generates it; the user pastes it into the vendor.
+ * - public_key — the vendor's public verification key, pasted.
+ * - built_in   — Hookbase already has the key; nothing to enter.
+ * - none       — the vendor doesn't sign.
+ */
+export type SecretSource = 'provider' | 'operator' | 'public_key' | 'built_in' | 'none';
+
+/** The secret summary on list items. Not on older API deployments — fall back to the detail. */
+export interface CatalogSignatureSummary {
+  supported: boolean;
+  kind?: 'hmac' | 'shared_secret' | 'bespoke' | 'asymmetric';
+  secretSource?: SecretSource;
+  secretLabel?: string;
+  secretPlaceholder?: string;
+  secretAfterRegistration?: boolean;
+}
+
+export interface CatalogSignatureDetail extends CatalogSignatureSummary {
+  algorithm?: string;
+  headerName?: string;
+  secretLocationHint?: string;
+  secretInstruction?: string;
+  secretFormat?: 'whsec' | 'basic_auth';
+  verifyToken?: { label: string; instruction: string };
+}
 
 export interface ProviderCatalogSummary {
   id: string;
@@ -786,9 +871,18 @@ export interface ProviderCatalogSummary {
   description: string;
   icon: string;
   eventTypeCount: number;
+  /** The value to send as a source's `provider` — can differ from the catalog `id`. */
   hookbaseProvider: string;
   hasSignatureVerification: boolean;
   hasIpRanges: boolean;
+  signatureVerification?: CatalogSignatureSummary | null;
+}
+
+export interface ProviderCatalogDetail {
+  id: string;
+  name: string;
+  hookbaseProvider: string;
+  signatureVerification: CatalogSignatureDetail | null;
 }
 
 export interface ProviderEventType {
@@ -796,12 +890,46 @@ export interface ProviderEventType {
   description: string;
 }
 
+/**
+ * The catalog routes are public, so they skip request(): that would refuse them under a session
+ * login (they aren't org-scoped) and would send a credential the endpoint doesn't need.
+ */
+async function publicRequest<T>(path: string): Promise<ApiResponse<T>> {
+  try {
+    const response = await fetch(`${getApiUrl()}${path}`, { method: 'GET' });
+    const rawBody = await response.text();
+    let data: Record<string, unknown> = {};
+    if (rawBody) {
+      try {
+        data = JSON.parse(rawBody) as Record<string, unknown>;
+      } catch {
+        data = {};
+      }
+    }
+    if (!response.ok) {
+      return {
+        error: (data.error as string) || `Request failed (HTTP ${response.status})`,
+        status: response.status,
+      };
+    }
+    return { data: data as T, status: response.status };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : 'Network error', status: 0 };
+  }
+}
+
 export async function getProviderCatalog(): Promise<ApiResponse<{
   providers: ProviderCatalogSummary[];
   categories: string[];
   total: number;
 }>> {
-  return request('GET', `/api/catalog/providers`);
+  return publicRequest(`/api/catalog/providers`);
+}
+
+export async function getProviderCatalogEntry(providerId: string): Promise<ApiResponse<{
+  provider: ProviderCatalogDetail;
+}>> {
+  return publicRequest(`/api/catalog/providers/${encodeURIComponent(providerId)}`);
 }
 
 export async function getProviderEvents(providerId: string): Promise<ApiResponse<{
@@ -810,7 +938,7 @@ export async function getProviderEvents(providerId: string): Promise<ApiResponse
   eventTypes: ProviderEventType[];
   samplePayloads: Record<string, object>;
 }>> {
-  return request('GET', `/api/catalog/providers/${providerId}/events`);
+  return publicRequest(`/api/catalog/providers/${encodeURIComponent(providerId)}/events`);
 }
 
 // ============================================================================

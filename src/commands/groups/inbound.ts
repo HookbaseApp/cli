@@ -6,6 +6,11 @@ import {
   sourcesUpdateCommand,
   sourcesDeleteCommand,
   sourcesRotateSecretCommand,
+  sourcesRevealSecretCommand,
+  sourcesVerifyTokenCommand,
+  sourcesRotateVerifyTokenCommand,
+  sourcesPendingVerificationCommand,
+  sourcesAdoptVerificationCommand,
 } from '../sources.js';
 import {
   destinationsListCommand,
@@ -88,8 +93,10 @@ export function registerSourcesCommands(parent: Command): Command {
     .description('Create a new source (add --* advanced flags or answer the "Advanced setup?" prompt)')
     .option('-n, --name <name>', 'Source name')
     .option('-s, --slug <slug>', 'Custom slug')
-    .option('-p, --provider <provider>', 'Provider (github, stripe, etc.)')
+    .option('-p, --provider <provider>', 'Provider id, e.g. github, stripe, standard-webhooks, custom (any id the API accepts; omit to pick from the catalog)')
     .option('-d, --description <text>', 'Description')
+    .option('--signing-secret <secret>', 'Signing secret or public key the provider issued (@path reads a file, e.g. a PEM). Omit for providers where Hookbase generates it')
+    .option('--verify-token <token>', 'Verify token for Meta providers (WhatsApp); generated when omitted')
     .option('-y, --yes', 'Skip confirmation')
     .option('--transient', 'Enable transient mode (payloads not stored)')
     .option('--methods <list>', 'Comma-separated HTTP verbs the ingest endpoint accepts (e.g. GET,POST). Omit for any method')
@@ -120,7 +127,9 @@ export function registerSourcesCommands(parent: Command): Command {
     .command('update <source>')
     .description('Update a source (accepts ID or slug)')
     .option('-n, --name <name>', 'New name')
-    .option('-p, --provider <provider>', 'New provider')
+    .option('-p, --provider <provider>', 'New provider id (switching to a vendor-issued-secret provider needs --signing-secret too)')
+    .option('--signing-secret <secret>', 'New signing secret or public key (@path reads a file; "" clears it)')
+    .option('--verify-token <token>', 'New verify token for Meta providers (WhatsApp); "" generates one')
     .option('-d, --description <description>', 'New description')
     .option('--active', 'Set source as active')
     .option('--inactive', 'Set source as inactive')
@@ -144,12 +153,54 @@ export function registerSourcesCommands(parent: Command): Command {
 
   sources
     .command('rotate-secret <source>')
-    .description('Rotate the signing secret for a source (accepts ID or slug)')
+    .description('Generate a new signing secret (only for secrets Hookbase generated; vendor-issued secrets are rotated at the vendor)')
     .option('-y, --yes', 'Skip confirmation')
     .option('--json', 'Output as JSON')
     .option('--xml', 'Output as XML')
     .option('--yaml', 'Output as YAML')
     .action(sourcesRotateSecretCommand);
+
+  sources
+    .command('reveal-secret <source>')
+    .description('Print the full signing secret (accepts ID or slug; needs a write-scope key)')
+    .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
+    .action(sourcesRevealSecretCommand);
+
+  sources
+    .command('verify-token <source>')
+    .description('Print the Meta (WhatsApp) verify token (accepts ID or slug)')
+    .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
+    .action(sourcesVerifyTokenCommand);
+
+  sources
+    .command('rotate-verify-token <source>')
+    .description('Generate a new Meta (WhatsApp) verify token (accepts ID or slug)')
+    .option('-y, --yes', 'Skip confirmation')
+    .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
+    .action(sourcesRotateVerifyTokenCommand);
+
+  sources
+    .command('pending-verification <source>')
+    .description('Show a verification token the vendor sent to the ingest URL (Notion) (accepts ID or slug)')
+    .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
+    .action(sourcesPendingVerificationCommand);
+
+  sources
+    .command('adopt-verification <source>')
+    .description('Make the pending verification token the source\'s signing secret (accepts ID or slug)')
+    .option('-y, --yes', 'Skip confirmation')
+    .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
+    .action(sourcesAdoptVerificationCommand);
 
   return sources;
 }
@@ -353,7 +404,7 @@ export function registerEventsCommands(parent: Command): Command {
     .description('List recent events')
     .option('-l, --limit <number>', 'Number of events to show', '50')
     .option('-o, --offset <number>', 'Number of events to skip (for pagination)', '0')
-    .option('-s, --source <sourceId>', 'Filter by source')
+    .option('-s, --source <source>', 'Filter by source ID or slug')
     .option('--status <status>', 'Filter by status (delivered, failed, pending)')
     .option('--json', 'Output as JSON')
     .option('--xml', 'Output as XML')
@@ -373,7 +424,7 @@ export function registerEventsCommands(parent: Command): Command {
     .command('follow')
     .alias('stream')
     .description('Stream live events')
-    .option('-s, --source <sourceId>', 'Filter by source')
+    .option('-s, --source <source>', 'Filter by source ID or slug')
     .action(eventsFollowCommand);
 
   return events;
