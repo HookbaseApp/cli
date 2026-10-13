@@ -608,7 +608,7 @@ export interface Source {
   /** The secret itself is never on a read: these are its masked form (GET / and GET /:id). */
   hasSigningSecret?: boolean;
   signingSecretLast4?: string | null;
-  /** The vendor issues the secret only after the ingest URL is registered (Asana, Notion). */
+  /** No secret is set and only the vendor can issue one (e.g. Stripe, or Asana/Notion after registration). */
   awaitingSigningSecret?: boolean;
   /** Verified with a key Hookbase already has (Wise's published key, AWS SNS certificates). */
   verifiesWithoutSecret?: boolean;

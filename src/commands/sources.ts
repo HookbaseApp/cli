@@ -69,7 +69,7 @@ function secretState(s: api.Source): string {
 function secretDetail(s: api.Source): string {
   if (s.verifiesWithoutSecret) return 'not needed (verified with a key Hookbase already has)';
   if (s.hasSigningSecret) return s.signingSecretLast4 ? `set (${s.signingSecretLast4})` : 'set';
-  if (s.awaitingSigningSecret) return logger.yellow(`awaiting — ${s.provider} issues it after the ingest URL is registered`);
+  if (s.awaitingSigningSecret) return logger.yellow(`awaiting — only ${s.provider} can issue it; events are not verified until it is set`);
   return s.provider ? logger.yellow('not set') : 'none (no provider, nothing is verified)';
 }
 
@@ -190,7 +190,7 @@ function showCreatedSecrets(source: api.Source, opts: { secretProvided: boolean;
 
   if (source.awaitingSigningSecret) {
     logger.log('');
-    logger.warn(afterRegistrationNote(source.provider ?? '', name).replace(/<source>/g, source.slug));
+    logger.warn(afterRegistrationNote(source.provider ?? '', name, !!opts.info?.secretAfterRegistration).replace(/<source>/g, source.slug));
   } else if (source.verifiesWithoutSecret) {
     logger.dim(`${name} is verified with a key Hookbase already has — no secret needed.`);
   }
