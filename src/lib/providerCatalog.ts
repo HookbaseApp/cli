@@ -249,7 +249,7 @@ export function planSecret(provider: string, info: SecretInfo | undefined): Secr
   if (!provider) return { action: 'skip', reason: 'No provider, so nothing is verified and no secret is needed.' };
   const name = info?.providerName ?? provider;
   if (info?.secretAfterRegistration) {
-    return { action: 'skip', reason: afterRegistrationNote(provider, name) };
+    return { action: 'skip', reason: afterRegistrationNote(provider, name, true) };
   }
   switch (info?.secretSource) {
     case 'provider':
@@ -267,15 +267,23 @@ export function planSecret(provider: string, info: SecretInfo | undefined): Secr
   }
 }
 
-/** What to tell the user about a provider whose secret only exists after registration. */
-export function afterRegistrationNote(provider: string, name = provider): string {
+/**
+ * What to tell the user about a source with no secret yet where only the vendor can issue one
+ * (`awaitingSigningSecret`): Stripe-style secrets copied from the vendor's dashboard, or ones that
+ * exist only after the ingest URL is registered (`afterRegistration`, e.g. Asana and Notion).
+ */
+export function afterRegistrationNote(provider: string, name = provider, afterRegistration = false): string {
   if (provider === 'notion') {
     return `${name} sends a verification token to the ingest URL when you create the subscription. ` +
       `Run "hookbase inbound sources pending-verification <source>" to see it, paste it into ${name}'s Verify form, ` +
       `then "hookbase inbound sources adopt-verification <source>" to make it this source's secret.`;
   }
-  return `${name} issues its secret only after the ingest URL is registered with it. ` +
-    `Once you have it, set it with "hookbase inbound sources update <source> --signing-secret <secret>".`;
+  const set = `set it with "hookbase inbound sources update <source> --signing-secret <secret>"`;
+  if (afterRegistration) {
+    return `${name} issues its secret only after the ingest URL is registered with it. Once you have it, ${set}.`;
+  }
+  return `${name} issues this source's signing secret and none is set yet, so events are accepted but not verified. ` +
+    `Copy it from ${name} and ${set}.`;
 }
 
 /**

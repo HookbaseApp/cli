@@ -33,7 +33,7 @@ async function unsignedReason(
     return `Sent unsigned: ${signingError}`;
   }
   if (source?.awaitingSigningSecret || info?.secretAfterRegistration) {
-    return `Sent unsigned: this source has no secret yet. ${afterRegistrationNote(provider, name).replace(/<source>/g, ref)}`;
+    return `Sent unsigned: this source has no secret yet. ${afterRegistrationNote(provider, name, !!info?.secretAfterRegistration).replace(/<source>/g, ref)}`;
   }
   if (info?.secretSource === 'provider') {
     return `Sent unsigned: this source has no signing secret. Paste the one ${name} issued with "hookbase inbound sources update ${ref} --signing-secret <secret>".`;

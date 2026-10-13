@@ -54,7 +54,7 @@ const PICKER_LIMIT = 12;
 function secretState(s: api.Source): string {
   if (s.verifiesWithoutSecret) return 'Not needed (key built in)';
   if (s.hasSigningSecret) return s.signingSecretLast4 ? `Set (${s.signingSecretLast4})` : 'Set';
-  if (s.awaitingSigningSecret) return 'Awaiting (vendor issues it after registration)';
+  if (s.awaitingSigningSecret) return 'Awaiting (paste the secret the vendor issues)';
   return s.provider ? 'Not set' : 'None (no provider)';
 }
 
@@ -1088,7 +1088,7 @@ function CreateSource({ onBack, onCreated }: {
             )}
             {createdSource.awaitingSigningSecret && (
               <Box marginTop={1}>
-                <Text color="yellow">{note ?? `${providerName} issues its secret after the ingest URL is registered.`}</Text>
+                <Text color="yellow">{note ?? `${providerName} issues this source's secret — events are not verified until you set it.`}</Text>
               </Box>
             )}
             <Box marginTop={1}>
