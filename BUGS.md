@@ -88,6 +88,31 @@ and `webhook-endpoints.ts`.
 
 ---
 
+## G. Outbound contract re-audit — 2026-10-17
+
+Checked against `api/` branch `feat/outbound-dual-sign` (`send-event.ts`, `outbound-messages.ts`,
+`webhook-endpoints.ts`, `webhook-applications.ts`) and the opaque keyset cursors on
+`fix/outbound-keyset-cursors`. Tests: `lib/api.outbound.test.ts`, `commands/outbound.test.ts`.
+
+| # | Sev | File | Problem | Fix |
+|---|-----|------|---------|-----|
+| G1 | HIGH | `lib/api.ts` `sendWebhookEvent` | `send --endpoints` sent only `endpointIds`, which deployed APIs strip, so the event went to **every** subscribed endpoint. | Send `endpointIds`, plus `endpointId` when exactly one id is given (honoured by every deployment). |
+| G2 | MED | `lib/api.ts` + `commands/send.ts` | No idempotency key at all, so re-running `send` duplicated events. | New `-k/--idempotency-key`: sent as body `idempotencyKey` and `Idempotency-Key` header (`request()`/`sessionRequest()` take extra headers). |
+| G3 | MED | `lib/api.ts` lists + `commands/{outbound,endpoints,applications}.ts` | No list got past page one: messages/DLQ sent an `offset` the API ignores, `--limit` >100 was silently capped, apps/endpoints showed only 50, `--json` printed `total: undefined`. | `collectPages()` follows the opaque `nextCursor` (never parsed). Apps/endpoints lists and pickers fetch all pages; messages/DLQ `--limit` spans pages; new `--cursor`; `--json` gives `{ messages, hasMore, nextCursor }`. |
+| G4 | MED | `commands/endpoints.ts` test + `tui/views/Outbound.tsx` | `endpoints test` read `statusCode`/`duration`/`error`; the API nests `delivery.{responseStatus,responseTimeMs,errorMessage}`, so the output showed `undefined` and `0ms` and never said why a test failed. | Read the `delivery` fields (command and both TUI paths). |
+| G5 | LOW-MED | `lib/api.ts` DLQ retry | Single retry used `/:id/replay`, which skips the DLQ retry counter; bulk retry replayed one id at a time ("no bulk endpoint exists" was wrong); the picker printed `(undefined)`. | `POST /dlq/:id/retry`; `POST /dlq/retry-bulk` in chunks of 100 returning `{ queued, skipped, messages }`; the label uses `dlqReason`. |
+| G6 | LOW | `commands/endpoints.ts` rotate-secret | No way to set `gracePeriodSeconds`; the response was typed as `{ endpoint, secret }`; the prompt claimed the old secret "stops working immediately" (server default grace is 3600s). | New `-g/--grace-period`; typed `{ secret, previousSecretExpiresAt, secretVersion }`; the prompt and output show the grace window. |
+| G7 | LOW | `commands/endpoints.ts` + TUI | Success Rate always `-` and Messages always 0, because `success_rate`/`message_count` are not API fields. | `endpointSuccessRate()` from `totalSuccesses / totalMessages`; Messages reads `totalMessages`. `WebhookEndpoint` is now the camelCase `formatEndpoint()` shape. |
+| G8 | LOW | `commands/groups/outbound.ts` | `--status` help listed `delivered` (the API value is `success`). | Help is generated from `OUTBOUND_MESSAGE_STATUSES` (all 7 statuses); the status type stays open-ended. |
+| G9 | MED | `tui/views/Outbound.tsx` | The A8/A9/A10 fixes never reached the TUI detail panes: they read `response_status`, `error_message`, `delivered_at`, `attempt_count`, `reason` and `original_message_id`, so errors, reason and attempts never showed. The endpoint pane still had a fake "Event Types" row (A6). | Read `lastResponseStatus`, `lastErrorMessage`, `completedAt`, `attempts`, `dlqReason` and `dlqMovedAt`; drop the fake rows. `WebhookMessage`/`DlqMessage` types now match the API. |
+
+Still missing (not built, out of scope): subscriptions CRUD, event types, export, DLQ bulk delete
+(`DELETE /dlq/bulk`), send `labels`/`priority`/`metadata`, endpoint `test` `eventType`/`payload`,
+and endpoint retry/circuit/status-code fields. When those commands are added,
+`ORG_SCOPED_PATH_PREFIXES` will also need their prefixes.
+
+---
+
 ## Rejected during verification (considered, not bugs)
 
 `api-keys create` scopes-not-array crash · `cron-groups --order` as string ·
