@@ -1,4 +1,5 @@
 import type { Command } from 'commander';
+import { OUTBOUND_MESSAGE_STATUSES } from '../../lib/api.js';
 import {
   applicationsListCommand,
   applicationsCreateCommand,
@@ -174,6 +175,7 @@ export function registerEndpointsCommands(parent: Command): Command {
   endpoints
     .command('rotate-secret <endpointId>')
     .description('Rotate the signing secret for an endpoint')
+    .option('-g, --grace-period <seconds>', 'Seconds the old secret stays valid (0-86400, default 3600)')
     .option('-y, --yes', 'Skip confirmation')
     .option('--json', 'Output as JSON')
     .option('--xml', 'Output as XML')
@@ -210,6 +212,7 @@ export function registerSendCommand(parent: Command): Command {
     .option('-p, --payload <json>', 'JSON payload')
     .option('-f, --file <path>', 'Read payload from file')
     .option('--endpoints <ids>', 'Comma-separated endpoint IDs (default: all)')
+    .option('-k, --idempotency-key <key>', 'Idempotency key: re-sending with the same key does not create a duplicate event')
     .option('--json', 'Output as JSON')
     .option('--xml', 'Output as XML')
     .option('--yaml', 'Output as YAML')
@@ -229,9 +232,10 @@ export function registerMessagesCommands(parent: Command): Command {
     .description('List outbound messages')
     .option('-a, --app <appId>', 'Filter by application')
     .option('-e, --endpoint <endpointId>', 'Filter by endpoint')
-    .option('-s, --status <status>', 'Filter by status (pending, delivered, failed, exhausted)')
+    .option('-s, --status <status>', `Filter by status (${OUTBOUND_MESSAGE_STATUSES.join(', ')})`)
     .option('-t, --event-type <type>', 'Filter by event type')
-    .option('-l, --limit <number>', 'Number of messages to show', '50')
+    .option('-l, --limit <number>', 'Number of messages to show (pages past 100 automatically)', '50')
+    .option('--cursor <cursor>', 'Resume from a previous listing\'s next cursor')
     .option('--json', 'Output as JSON')
     .option('--xml', 'Output as XML')
     .option('--yaml', 'Output as YAML')
@@ -277,7 +281,8 @@ export function registerDlqCommands(parent: Command): Command {
     .description('List DLQ messages')
     .option('-a, --app <appId>', 'Filter by application')
     .option('-e, --endpoint <endpointId>', 'Filter by endpoint')
-    .option('-l, --limit <number>', 'Number of messages to show', '50')
+    .option('-l, --limit <number>', 'Number of messages to show (pages past 100 automatically)', '50')
+    .option('--cursor <cursor>', 'Resume from a previous listing\'s next cursor')
     .option('--json', 'Output as JSON')
     .option('--xml', 'Output as XML')
     .option('--yaml', 'Output as YAML')
@@ -354,6 +359,7 @@ export function registerOutboundGroup(parent: Command): Command {
     .option('-s, --status <status>', 'Filter by status')
     .option('-t, --event-type <type>', 'Filter by event type')
     .option('-l, --limit <number>', 'Number of messages to show', '50')
+    .option('--cursor <cursor>', 'Resume from a previous listing\'s next cursor')
     .option('--json', 'Output as JSON')
     .option('--xml', 'Output as XML')
     .option('--yaml', 'Output as YAML')

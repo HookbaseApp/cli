@@ -161,9 +161,10 @@ function CreateEndpoint({ applications, onBack, onCreated }: {
         setError(result.error);
         setStep('staticIp');
       } else {
-        const resData = (result.data as any)?.data || result.data;
-        setCreatedEndpoint(resData || null);
-        setSecret(resData?.secret || result.data?.secret || null);
+        // POST /webhook-endpoints answers { data: { ...endpoint, secret }, warning }.
+        const created = result.data?.data;
+        setCreatedEndpoint(created || null);
+        setSecret(created?.secret || null);
         setStep('done');
         setTimeout(onCreated, 3000);
       }
@@ -451,12 +452,13 @@ function EndpointDetail({ endpointId, endpoints, onBack, onRefresh }: {
         if (result.error) {
           setTestResult({ success: false, status: 0, time: 0, error: result.error });
         } else {
-          const d = (result.data as any)?.data || result.data;
+          // The outcome is nested under `delivery` (responseStatus/responseTimeMs/errorMessage).
+          const d = result.data;
           setTestResult({
             success: d?.success === true,
-            status: (d?.statusCode ?? d?.status_code ?? 0),
-            time: (d?.duration ?? d?.responseTime ?? d?.response_time ?? 0),
-            error: d?.error,
+            status: d?.delivery?.responseStatus ?? 0,
+            time: d?.delivery?.responseTimeMs ?? 0,
+            error: d?.delivery?.errorMessage ?? undefined,
           });
         }
       } catch {
@@ -501,11 +503,9 @@ function EndpointDetail({ endpointId, endpoints, onBack, onRefresh }: {
     );
   }
 
-  const ep = endpoint as any;
-  const epActive = ep.is_active || ep.isActive || !ep.isDisabled;
-  const eventTypes = Array.isArray(ep.event_types || ep.eventTypes)
-    ? (ep.event_types || ep.eventTypes).join(', ')
-    : '*';
+  const ep = endpoint;
+  const epActive = !ep.isDisabled;
+  const successRate = api.endpointSuccessRate(ep);
 
   return (
     <Box flexDirection="column">
@@ -519,7 +519,7 @@ function EndpointDetail({ endpointId, endpoints, onBack, onRefresh }: {
         <Box><Box width={16}><Text dimColor>URL:</Text></Box><Text color="blue">{endpoint.url}</Text></Box>
         <Box>
           <Box width={16}><Text dimColor>Application:</Text></Box>
-          <Text>{ep.application_name || ep.applicationName || ep.application_id || ep.applicationId}</Text>
+          <Text>{ep.applicationId}</Text>
         </Box>
         {(ep.description) && (
           <Box><Box width={16}><Text dimColor>Description:</Text></Box><Text>{ep.description}</Text></Box>
@@ -531,26 +531,24 @@ function EndpointDetail({ endpointId, endpoints, onBack, onRefresh }: {
         <Box>
           <Box width={16}><Text dimColor>Circuit:</Text></Box>
           {(() => {
-            const state = ep.circuit_state || ep.circuitState;
+            const state = ep.circuitState;
             const color = state === 'closed' ? 'green' : state === 'open' ? 'red' : 'yellow';
             return <Text color={color}>{state || 'unknown'}</Text>;
           })()}
         </Box>
-        <Box><Box width={16}><Text dimColor>Event Types:</Text></Box><Text>{eventTypes}</Text></Box>
-        <Box><Box width={16}><Text dimColor>Timeout:</Text></Box><Text>{(ep as any).timeoutSeconds ?? (ep.timeout_ms ? Math.round(ep.timeout_ms / 1000) : 30)}s</Text></Box>
+        <Box><Box width={16}><Text dimColor>Timeout:</Text></Box><Text>{ep.timeoutSeconds ?? 30}s</Text></Box>
         <Box>
           <Box width={16}><Text dimColor>Static IP:</Text></Box>
           {(() => {
-            const staticIp = ep.use_static_ip ?? ep.useStaticIp;
-            const enabled = staticIp === 1 || staticIp === true;
+            const enabled = ep.useStaticIp === true;
             return <Text color={enabled ? 'green' : 'gray'}>{enabled ? 'Enabled' : 'Disabled'}</Text>;
           })()}
         </Box>
-        <Box><Box width={16}><Text dimColor>Messages:</Text></Box><Text>{ep.message_count ?? ep.messageCount ?? 0}</Text></Box>
-        {(ep.success_rate !== undefined || ep.successRate !== undefined) && (
+        <Box><Box width={16}><Text dimColor>Messages:</Text></Box><Text>{ep.totalMessages ?? 0}</Text></Box>
+        {successRate !== undefined && (
           <Box>
             <Box width={16}><Text dimColor>Success Rate:</Text></Box>
-            <Text>{((ep.success_rate ?? ep.successRate) * 100).toFixed(1)}%</Text>
+            <Text>{(successRate * 100).toFixed(1)}%</Text>
           </Box>
         )}
         <Box>
@@ -632,8 +630,8 @@ export function OutboundView({ subView, onNavigate, onRefresh: _onRefresh }: Out
     setError(null);
     try {
       const [appsRes, endpointsRes, messagesRes, dlqRes] = await Promise.all([
-        api.getWebhookApplications(),
-        api.getWebhookEndpoints(),
+        api.listAllWebhookApplications(),
+        api.listAllWebhookEndpoints(),
         api.getWebhookMessages({ limit: 50 }),
         api.getDlqMessages({ limit: 50 }),
       ]);
@@ -643,9 +641,9 @@ export function OutboundView({ subView, onNavigate, onRefresh: _onRefresh }: Out
 
       // API returns { data: [...] } for all list endpoints
       setApplications(appsRes.data?.data ?? []);
-      setEndpoints((endpointsRes.data as any)?.data || endpointsRes.data?.endpoints || []);
-      setMessages((messagesRes.data as any)?.data || messagesRes.data?.messages || []);
-      setDlqMessages((dlqRes.data as any)?.data || dlqRes.data?.messages || []);
+      setEndpoints(endpointsRes.data?.data ?? []);
+      setMessages(messagesRes.data?.data ?? []);
+      setDlqMessages(dlqRes.data?.data ?? []);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch data');
     } finally {
@@ -758,10 +756,10 @@ export function OutboundView({ subView, onNavigate, onRefresh: _onRefresh }: Out
     if (result.error) {
       setStatusMessage(`Test failed: ${result.error}`);
     } else if (result.data?.success) {
-      const d = (result.data as any)?.data || result.data;
-      setStatusMessage(`Test passed: ${d.statusCode || d.status_code || '?'} (${d.duration ?? d.responseTime ?? 0}ms)`);
+      const delivery = result.data.delivery;
+      setStatusMessage(`Test passed: ${delivery?.responseStatus ?? '?'} (${delivery?.responseTimeMs ?? 0}ms)`);
     } else {
-      setStatusMessage(`Test failed: ${result.data?.error || 'Unknown error'}`);
+      setStatusMessage(`Test failed: ${result.data?.delivery?.errorMessage || 'Unknown error'}`);
     }
     setTimeout(() => setStatusMessage(null), 3000);
   };
@@ -880,16 +878,16 @@ export function OutboundView({ subView, onNavigate, onRefresh: _onRefresh }: Out
     if (type === 'messages') {
       const message = messages.find(m => m.id === id);
       if (!message) return <Text color="red">Message not found</Text>;
-      const m = message as any;
-      const eventType = m.event_type || m.eventType || '-';
-      const respStatus = m.response_status || m.responseStatus;
-      const errorMsg = m.error_message || m.errorMessage;
-      const nextRetry = m.next_retry_at || m.nextRetryAt;
-      const deliveredAt = m.delivered_at || m.deliveredAt;
-      const createdAt = m.created_at || m.createdAt || '';
-      const endpointId = m.endpoint_id || m.endpointId || '-';
-      const appId = m.application_id || m.applicationId || '-';
+      const m = message;
+      const eventType = m.eventType || '-';
+      const respStatus = m.lastResponseStatus;
+      const errorMsg = m.lastErrorMessage;
+      const completedAt = m.completedAt;
+      const createdAt = m.createdAt || '';
+      const endpointId = m.endpointId || '-';
+      const appId = m.applicationName || m.applicationId || '-';
       const ep = endpoints.find(e => e.id === endpointId);
+      const endpointLabel = ep ? ep.url : (m.endpointUrl || endpointId);
       return (
         <Box flexDirection="column">
           <Box marginBottom={1}>
@@ -899,12 +897,12 @@ export function OutboundView({ subView, onNavigate, onRefresh: _onRefresh }: Out
           <Box flexDirection="column" borderStyle="round" borderColor="cyan" paddingX={2} paddingY={1}>
             <Box><Box width={16}><Text dimColor>ID:</Text></Box><Text>{message.id}</Text></Box>
             <Box><Box width={16}><Text dimColor>Event Type:</Text></Box><Text>{eventType}</Text></Box>
-            <Box><Box width={16}><Text dimColor>Endpoint:</Text></Box><Text color="blue">{ep ? ep.url : endpointId}</Text></Box>
+            <Box><Box width={16}><Text dimColor>Endpoint:</Text></Box><Text color="blue">{endpointLabel}</Text></Box>
             <Box><Box width={16}><Text dimColor>Application:</Text></Box><Text>{appId}</Text></Box>
             <Box><Box width={16}><Text dimColor>Status:</Text></Box>{formatStatus(message.status)}</Box>
             <Box>
               <Box width={16}><Text dimColor>Attempts:</Text></Box>
-              <Text>{m.attempt_count ?? m.attemptCount ?? 0}/{m.max_attempts ?? m.maxAttempts ?? 5}</Text>
+              <Text>{m.attempts ?? 0}/{m.maxAttempts ?? 5}</Text>
             </Box>
             {respStatus && (
               <Box>
@@ -915,11 +913,8 @@ export function OutboundView({ subView, onNavigate, onRefresh: _onRefresh }: Out
             {errorMsg && (
               <Box><Box width={16}><Text dimColor>Error:</Text></Box><Text color="red">{errorMsg}</Text></Box>
             )}
-            {nextRetry && (
-              <Box><Box width={16}><Text dimColor>Next Retry:</Text></Box><Text color="yellow">{new Date(nextRetry).toLocaleString()}</Text></Box>
-            )}
-            {deliveredAt && (
-              <Box><Box width={16}><Text dimColor>Delivered:</Text></Box><Text color="green">{new Date(deliveredAt).toLocaleString()}</Text></Box>
+            {completedAt && (
+              <Box><Box width={16}><Text dimColor>Completed:</Text></Box><Text color={m.status === 'success' ? 'green' : undefined}>{new Date(completedAt).toLocaleString()}</Text></Box>
             )}
             <Box><Box width={16}><Text dimColor>Created:</Text></Box><Text dimColor>{new Date(createdAt).toLocaleString()}</Text></Box>
           </Box>
@@ -930,14 +925,14 @@ export function OutboundView({ subView, onNavigate, onRefresh: _onRefresh }: Out
     if (type === 'dlq') {
       const dlqMessage = dlqMessages.find(m => m.id === id);
       if (!dlqMessage) return <Text color="red">DLQ message not found</Text>;
-      const d = dlqMessage as any;
-      const eventType = d.event_type || d.eventType || '-';
-      const reason = d.reason || '-';
-      const errorMsg = d.error_message || d.errorMessage;
-      const lastResp = d.last_response_status || d.lastResponseStatus;
-      const origId = d.original_message_id || d.originalMessageId || '-';
-      const endpointId = d.endpoint_id || d.endpointId || '-';
-      const createdAt = d.created_at || d.createdAt || '';
+      const d = dlqMessage;
+      const eventType = d.eventType || '-';
+      const reason = d.dlqReason || d.lastErrorType || '-';
+      const errorMsg = d.lastErrorMessage;
+      const lastResp = d.lastResponseStatus;
+      const movedAt = d.dlqMovedAt;
+      const endpointId = d.endpointId || '-';
+      const createdAt = d.createdAt || '';
       const ep = endpoints.find(e => e.id === endpointId);
       return (
         <Box flexDirection="column">
@@ -947,19 +942,21 @@ export function OutboundView({ subView, onNavigate, onRefresh: _onRefresh }: Out
           </Box>
           <Box flexDirection="column" borderStyle="round" borderColor="red" paddingX={2} paddingY={1}>
             <Box><Box width={18}><Text dimColor>ID:</Text></Box><Text>{dlqMessage.id}</Text></Box>
-            <Box><Box width={18}><Text dimColor>Original Msg:</Text></Box><Text dimColor>{origId}</Text></Box>
             <Box><Box width={18}><Text dimColor>Event Type:</Text></Box><Text>{eventType}</Text></Box>
-            <Box><Box width={18}><Text dimColor>Endpoint:</Text></Box><Text color="blue">{ep ? ep.url : endpointId}</Text></Box>
+            <Box><Box width={18}><Text dimColor>Endpoint:</Text></Box><Text color="blue">{ep ? ep.url : (d.endpointUrl || endpointId)}</Text></Box>
             <Box><Box width={18}><Text dimColor>Reason:</Text></Box><Text color="red">{reason}</Text></Box>
             <Box>
               <Box width={18}><Text dimColor>Attempts:</Text></Box>
-              <Text>{d.attempt_count ?? d.attemptCount ?? 0}</Text>
+              <Text>{d.attempts ?? 0}/{d.maxAttempts ?? 5}</Text>
             </Box>
             {lastResp && (
               <Box><Box width={18}><Text dimColor>Last Response:</Text></Box><Text color="red">{lastResp}</Text></Box>
             )}
             {errorMsg && (
               <Box><Box width={18}><Text dimColor>Error:</Text></Box><Text color="red">{errorMsg}</Text></Box>
+            )}
+            {movedAt && (
+              <Box><Box width={18}><Text dimColor>Moved to DLQ:</Text></Box><Text dimColor>{new Date(movedAt).toLocaleString()}</Text></Box>
             )}
             <Box><Box width={18}><Text dimColor>Created:</Text></Box><Text dimColor>{new Date(createdAt).toLocaleString()}</Text></Box>
           </Box>
@@ -1076,13 +1073,12 @@ export function OutboundView({ subView, onNavigate, onRefresh: _onRefresh }: Out
                     </Text>
                   </Box>
                   <Box width={12}>
-                    {formatCircuitState((ep as any).circuitState || ep.circuit_state)}
+                    {formatCircuitState(ep.circuitState)}
                   </Box>
                   <Box width={8}>
                     {(() => {
-                      // API sends `isDisabled`, not `is_active` — fall through so
-                      // active endpoints don't all render red "Off".
-                      const active = ep.is_active ?? (ep as any).isActive ?? !(ep as any).isDisabled;
+                      // API sends `isDisabled`, not `is_active`.
+                      const active = !ep.isDisabled;
                       return <Text color={active ? 'green' : 'red'}>{active ? 'Active' : 'Off'}</Text>;
                     })()}
                   </Box>

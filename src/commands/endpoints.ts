@@ -30,7 +30,7 @@ export async function endpointsListCommand(options: {
   requireAuth();
 
   const spinner = logger.spinner('Fetching endpoints...');
-  const result = await api.getWebhookEndpoints(options.app);
+  const result = await api.listAllWebhookEndpoints(options.app);
 
   if (result.error) {
     spinner.fail('Failed to fetch endpoints');
@@ -40,7 +40,7 @@ export async function endpointsListCommand(options: {
 
   spinner.stop();
 
-  const endpoints = (result.data as any)?.data || result.data?.endpoints || [];
+  const endpoints = result.data?.data ?? [];
 
   if (options.json || options.xml || options.yaml) {
     console.log(formatOutput(endpoints, options.xml, options.yaml));
@@ -55,14 +55,17 @@ export async function endpointsListCommand(options: {
 
   logger.table(
     ['ID', 'URL', 'App', 'Circuit', 'Status', 'Success Rate'],
-    endpoints.map((e: any) => [
-      e.id.substring(0, 12) + '...',
-      e.url.length > 40 ? e.url.substring(0, 37) + '...' : e.url,
-      e.application_name || e.applicationName || (e.application_id || e.applicationId || '').substring(0, 8) + '...',
-      formatCircuitState(e.circuit_state || e.circuitState),
-      (e.is_active ?? !e.isDisabled) ? logger.green('active') : logger.dimText('inactive'),
-      (e.success_rate ?? e.successRate) !== undefined ? `${((e.success_rate ?? e.successRate) * 100).toFixed(1)}%` : '-',
-    ])
+    endpoints.map((e) => {
+      const successRate = api.endpointSuccessRate(e);
+      return [
+        e.id.substring(0, 12) + '...',
+        e.url.length > 40 ? e.url.substring(0, 37) + '...' : e.url,
+        (e.applicationId || '').substring(0, 8) + '...',
+        formatCircuitState(e.circuitState),
+        !e.isDisabled ? logger.green('active') : logger.dimText('inactive'),
+        successRate !== undefined ? `${(successRate * 100).toFixed(1)}%` : '-',
+      ];
+    })
   );
 }
 
@@ -95,7 +98,7 @@ export async function endpointsCreateCommand(options: {
   try {
     if (!applicationId) {
       // Fetch applications for selection
-      const appsResult = await api.getWebhookApplications();
+      const appsResult = await api.listAllWebhookApplications();
       const apps = appsResult.data?.data ?? [];
       if (appsResult.error || !apps.length) {
         logger.error('No applications found. Create one first with "hookbase outbound applications create"');
@@ -171,9 +174,9 @@ export async function endpointsCreateCommand(options: {
     return;
   }
 
-  const resData = (result.data as any)?.data || result.data;
-  const endpoint = resData?.endpoint || resData;
-  const secret = resData?.secret || result.data?.secret;
+  // POST /webhook-endpoints answers { data: { ...endpoint, secret }, warning }.
+  const endpoint = result.data?.data;
+  const secret = endpoint?.secret;
 
   if (endpoint?.id) {
     logger.log('');
@@ -206,7 +209,7 @@ export async function endpointsGetCommand(
 
   spinner.stop();
 
-  const endpoint: any = (result.data as any)?.data || result.data?.endpoint;
+  const endpoint = result.data?.data;
 
   if (options.json || options.xml || options.yaml) {
     console.log(formatOutput(endpoint, options.xml, options.yaml));
@@ -218,27 +221,26 @@ export async function endpointsGetCommand(
     return;
   }
 
-  const isActive = endpoint.is_active ?? endpoint.isActive ?? !endpoint.isDisabled;
-  const timeoutSeconds = endpoint.timeoutSeconds ?? (endpoint.timeout_ms ? Math.round(endpoint.timeout_ms / 1000) : 30);
-  const rateLimitPerSecond = endpoint.rateLimitPerSecond ?? endpoint.rate_limit_per_second;
+  const isActive = !endpoint.isDisabled;
+  const timeoutSeconds = endpoint.timeoutSeconds ?? 30;
+  const rateLimitPerSecond = endpoint.rateLimitPerSecond;
 
   logger.log('');
   logger.log(logger.bold('Endpoint Details'));
   logger.log('');
   logger.log(`ID:            ${endpoint.id}`);
   logger.log(`URL:           ${endpoint.url}`);
-  logger.log(`Application:   ${endpoint.application_name || endpoint.applicationName || endpoint.application_id || endpoint.applicationId}`);
+  logger.log(`Application:   ${endpoint.applicationId}`);
   if (endpoint.description) logger.log(`Description:   ${endpoint.description}`);
   logger.log(`Status:        ${isActive ? logger.green('active') : logger.red('inactive')}`);
-  logger.log(`Circuit:       ${formatCircuitState(endpoint.circuit_state || endpoint.circuitState)}`);
+  logger.log(`Circuit:       ${formatCircuitState(endpoint.circuitState)}`);
   logger.log(`Timeout:       ${timeoutSeconds}s`);
-  const staticIp = endpoint.use_static_ip ?? (endpoint as any).useStaticIp;
-  logger.log(`Static IP:     ${staticIp === 1 || staticIp === true ? logger.green('enabled') : logger.dimText('disabled')}`);
+  logger.log(`Static IP:     ${endpoint.useStaticIp === true ? logger.green('enabled') : logger.dimText('disabled')}`);
   if (rateLimitPerSecond) logger.log(`Rate Limit:    ${rateLimitPerSecond}/sec`);
-  logger.log(`Messages:      ${endpoint.message_count ?? endpoint.messageCount ?? 0}`);
-  const sr = endpoint.success_rate ?? endpoint.successRate;
+  logger.log(`Messages:      ${endpoint.totalMessages ?? 0}`);
+  const sr = api.endpointSuccessRate(endpoint);
   logger.log(`Success Rate:  ${sr !== undefined ? `${(sr * 100).toFixed(1)}%` : 'N/A'}`);
-  logger.log(`Created:       ${endpoint.created_at || endpoint.createdAt}`);
+  logger.log(`Created:       ${endpoint.createdAt}`);
   logger.log('');
 }
 
@@ -292,7 +294,7 @@ export async function endpointsUpdateCommand(
   spinner.succeed('Endpoint updated');
 
   if (options.json || options.xml || options.yaml) {
-    const updated = (result.data as any)?.data || result.data?.endpoint;
+    const updated = result.data?.data;
     console.log(formatOutput(updated, options.xml, options.yaml));
   }
 }
@@ -354,40 +356,54 @@ export async function endpointsTestCommand(
     return;
   }
 
-  const data: any = (result.data as any)?.data || result.data;
+  const data = result.data;
 
   if (options.json || options.xml || options.yaml) {
     console.log(formatOutput(data, options.xml, options.yaml));
     return;
   }
 
+  // The outcome is nested: { success, testEvent, delivery: { responseStatus, responseTimeMs, errorMessage } }.
+  const delivery = data?.delivery;
+  const statusCode = delivery?.responseStatus ? String(delivery.responseStatus) : 'N/A';
+  const responseTime = delivery?.responseTimeMs != null ? `${delivery.responseTimeMs}ms` : 'N/A';
   if (data?.success) {
     spinner.succeed('Endpoint test successful');
-    logger.log('');
-    logger.log(`Status Code:   ${data.statusCode || data.status_code}`);
-    logger.log(`Response Time: ${data.duration ?? data.responseTime ?? 0}ms`);
   } else {
     spinner.fail('Endpoint test failed');
-    logger.log('');
-    logger.log(`Status Code:   ${data?.statusCode || data?.status_code || 'N/A'}`);
-    logger.log(`Response Time: ${data?.duration ?? data?.responseTime ?? 'N/A'}ms`);
-    if (data?.error) {
-      logger.log(`Error:         ${data.error}`);
-    }
+  }
+  logger.log('');
+  logger.log(`Status Code:   ${statusCode}`);
+  logger.log(`Response Time: ${responseTime}`);
+  if (!data?.success && delivery?.errorMessage) {
+    logger.log(`Error:         ${delivery.errorMessage}`);
   }
   logger.log('');
 }
 
 export async function endpointsRotateSecretCommand(
   endpointId: string,
-  options: { yes?: boolean; json?: boolean; xml?: boolean; yaml?: boolean }
+  options: { gracePeriod?: string; yes?: boolean; json?: boolean; xml?: boolean; yaml?: boolean }
 ): Promise<void> {
   requireAuth();
+
+  // rotateSecretSchema: gracePeriodSeconds 0-86400, default 3600 when omitted.
+  let gracePeriodSeconds: number | undefined;
+  if (options.gracePeriod !== undefined) {
+    gracePeriodSeconds = Number(options.gracePeriod);
+    if (!Number.isInteger(gracePeriodSeconds) || gracePeriodSeconds < 0 || gracePeriodSeconds > 86400) {
+      logger.error('--grace-period must be a whole number of seconds between 0 and 86400');
+      return;
+    }
+  }
+  const graceText = gracePeriodSeconds === 0
+    ? 'The old secret will stop being used immediately.'
+    : `The old secret stays valid for ${gracePeriodSeconds ?? 3600}s; deliveries are signed with both secrets until then.`;
 
   try {
     if (!options.yes) {
       const confirmed = await confirm({
-        message: `Are you sure you want to rotate the signing secret for endpoint ${endpointId}? The old secret will stop working immediately.`,
+        message: `Are you sure you want to rotate the signing secret for endpoint ${endpointId}? ${graceText}`,
         default: false,
       });
       if (!confirmed) {
@@ -405,7 +421,7 @@ export async function endpointsRotateSecretCommand(
   }
 
   const spinner = logger.spinner('Rotating secret...');
-  const result = await api.rotateWebhookEndpointSecret(endpointId);
+  const result = await api.rotateWebhookEndpointSecret(endpointId, { gracePeriodSeconds });
 
   if (result.error) {
     spinner.fail('Failed to rotate secret');
@@ -420,14 +436,18 @@ export async function endpointsRotateSecretCommand(
     return;
   }
 
-  const secretData = (result.data as any)?.data || result.data;
-  const newSecret = secretData?.secret;
+  // The rotate response is bare: { secret, previousSecretExpiresAt, secretVersion }.
+  const rotated = result.data;
+  const newSecret = rotated?.secret;
   if (newSecret) {
     logger.log('');
     logger.box('New Signing Secret', [
       logger.yellow('Save this secret - it will not be shown again:'),
       ``,
       logger.bold(newSecret),
+      ``,
+      `Version:                ${rotated.secretVersion}`,
+      `Old secret valid until: ${new Date(rotated.previousSecretExpiresAt).toLocaleString()}`,
     ].join('\n'));
     logger.log('');
     logger.warn('Update your webhook verification code with this new secret.');

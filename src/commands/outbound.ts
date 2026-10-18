@@ -27,6 +27,17 @@ function formatStatus(status: string): string {
   }
 }
 
+/** `--limit` as a positive integer, or null (after logging) when it isn't one. */
+function parseLimit(value: string | undefined, fallback = 50): number | null {
+  if (value === undefined) return fallback;
+  const n = Number(value);
+  if (!Number.isInteger(n) || n < 1) {
+    logger.error('--limit must be a positive whole number');
+    return null;
+  }
+  return n;
+}
+
 // ============================================================================
 // Messages Commands
 // ============================================================================
@@ -37,20 +48,28 @@ export async function outboundListCommand(options: {
   status?: string;
   eventType?: string;
   limit?: string;
+  cursor?: string;
   json?: boolean;
   xml?: boolean;
   yaml?: boolean;
 }): Promise<void> {
   requireAuth();
 
+  const limit = parseLimit(options.limit);
+  if (limit === null) return;
+
+  // The API caps a page at 100, so a larger --limit follows nextCursor across pages.
   const spinner = logger.spinner('Fetching messages...');
-  const result = await api.getWebhookMessages({
-    applicationId: options.app,
-    endpointId: options.endpoint,
-    status: options.status,
-    eventType: options.eventType,
-    limit: options.limit ? parseInt(options.limit, 10) : 50,
-  });
+  const result = await api.collectPages(
+    (page) => api.getWebhookMessages({
+      applicationId: options.app,
+      endpointId: options.endpoint,
+      status: options.status,
+      eventType: options.eventType,
+      ...page,
+    }),
+    { max: limit, cursor: options.cursor }
+  );
 
   if (result.error) {
     spinner.fail('Failed to fetch messages');
@@ -60,15 +79,14 @@ export async function outboundListCommand(options: {
 
   spinner.stop();
 
-  const raw = result.data as any;
-  const messages = raw?.data || raw?.messages || [];
-  const pagination = raw?.pagination || {};
+  const messages = result.data?.data ?? [];
+  const pagination = result.data?.pagination ?? { hasMore: false, nextCursor: null };
 
   if (options.json || options.xml || options.yaml) {
     console.log(formatOutput({
       messages,
-      total: pagination.total ?? raw?.total,
-      hasMore: pagination.hasMore ?? raw?.hasMore,
+      hasMore: pagination.hasMore,
+      nextCursor: pagination.nextCursor,
     }, options.xml, options.yaml));
     return;
   }
@@ -81,18 +99,18 @@ export async function outboundListCommand(options: {
 
   logger.table(
     ['ID', 'Event Type', 'Status', 'Attempts', 'Created'],
-    messages.map((m: any) => [
+    messages.map((m) => [
       m.id.substring(0, 12) + '...',
-      m.event_type || m.eventType,
+      m.eventType,
       formatStatus(m.status),
-      `${m.attempts ?? m.attempt_count ?? m.attemptCount ?? 0}/${m.max_attempts ?? m.maxAttempts ?? 5}`,
-      new Date(m.created_at || m.createdAt).toLocaleString(),
+      `${m.attempts ?? 0}/${m.maxAttempts ?? 5}`,
+      new Date(m.createdAt).toLocaleString(),
     ])
   );
 
-  if (pagination.hasMore ?? raw?.hasMore) {
+  if (pagination.hasMore && pagination.nextCursor) {
     logger.log('');
-    logger.dim(`Showing ${messages.length} messages. Use --limit to see more.`);
+    logger.dim(`Showing ${messages.length} messages. More available: add --cursor ${pagination.nextCursor}`);
   }
 }
 
@@ -113,7 +131,7 @@ export async function outboundGetCommand(
 
   spinner.stop();
 
-  const message: any = (result.data as any)?.data || result.data?.message;
+  const message = result.data?.data;
 
   if (options.json || options.xml || options.yaml) {
     console.log(formatOutput(message, options.xml, options.yaml));
@@ -129,27 +147,21 @@ export async function outboundGetCommand(
   logger.log(logger.bold('Message Details'));
   logger.log('');
   logger.log(`ID:            ${message.id}`);
-  logger.log(`Event Type:    ${message.event_type || message.eventType}`);
+  logger.log(`Event Type:    ${message.eventType}`);
   logger.log(`Status:        ${formatStatus(message.status)}`);
-  logger.log(`Attempts:      ${message.attempts ?? message.attempt_count ?? message.attemptCount ?? 0}/${message.max_attempts ?? message.maxAttempts ?? 5}`);
-  logger.log(`Application:   ${message.application_id || message.applicationId}`);
-  logger.log(`Endpoint:      ${message.endpoint_id || message.endpointId}`);
-  const respStatus = message.lastResponseStatus ?? message.last_response_status ?? message.response_status ?? message.responseStatus;
-  if (respStatus) {
-    logger.log(`Response:      ${respStatus}`);
+  logger.log(`Attempts:      ${message.attempts ?? 0}/${message.maxAttempts ?? 5}`);
+  logger.log(`Application:   ${message.applicationName ? `${message.applicationName} (${message.applicationId})` : message.applicationId}`);
+  logger.log(`Endpoint:      ${message.endpointUrl ? `${message.endpointUrl} (${message.endpointId})` : message.endpointId}`);
+  if (message.lastResponseStatus) {
+    logger.log(`Response:      ${message.lastResponseStatus}`);
   }
-  const errMsg = message.lastErrorMessage || message.last_error_message || message.error_message || message.errorMessage;
-  if (errMsg) {
-    logger.log(`Error:         ${logger.red(errMsg)}`);
+  if (message.lastErrorMessage) {
+    logger.log(`Error:         ${logger.red(message.lastErrorMessage)}`);
   }
-  if (message.next_retry_at || message.nextRetryAt || message.next_attempt_at || message.nextAttemptAt) {
-    logger.log(`Next Retry:    ${new Date(message.next_retry_at || message.nextRetryAt || message.next_attempt_at || message.nextAttemptAt).toLocaleString()}`);
+  if (message.completedAt) {
+    logger.log(`Completed:     ${new Date(message.completedAt).toLocaleString()}`);
   }
-  const completedAt = message.completed_at || message.completedAt || message.delivered_at || message.deliveredAt;
-  if (completedAt) {
-    logger.log(`Completed:     ${new Date(completedAt).toLocaleString()}`);
-  }
-  logger.log(`Created:       ${new Date(message.created_at || message.createdAt).toLocaleString()}`);
+  logger.log(`Created:       ${new Date(message.createdAt).toLocaleString()}`);
   logger.log('');
 
   if (message.payload) {
@@ -194,11 +206,10 @@ export async function outboundRetryCommand(
     return;
   }
 
-  spinner.succeed('Message queued for retry');
+  spinner.succeed(`Message queued for retry${result.data?.data?.newMessageId ? ` as ${result.data.data.newMessageId}` : ''}`);
 
   if (options.json || options.xml || options.yaml) {
-    const retried = (result.data as any)?.data || result.data?.message;
-    console.log(formatOutput(retried, options.xml, options.yaml));
+    console.log(formatOutput(result.data?.data, options.xml, options.yaml));
   }
 }
 
@@ -326,18 +337,21 @@ export async function dlqListCommand(options: {
   app?: string;
   endpoint?: string;
   limit?: string;
+  cursor?: string;
   json?: boolean;
   xml?: boolean;
   yaml?: boolean;
 }): Promise<void> {
   requireAuth();
 
+  const limit = parseLimit(options.limit);
+  if (limit === null) return;
+
   const spinner = logger.spinner('Fetching DLQ messages...');
-  const result = await api.getDlqMessages({
-    applicationId: options.app,
-    endpointId: options.endpoint,
-    limit: options.limit ? parseInt(options.limit, 10) : 50,
-  });
+  const result = await api.collectPages(
+    (page) => api.getDlqMessages({ applicationId: options.app, endpointId: options.endpoint, ...page }),
+    { max: limit, cursor: options.cursor }
+  );
 
   if (result.error) {
     spinner.fail('Failed to fetch DLQ messages');
@@ -347,15 +361,14 @@ export async function dlqListCommand(options: {
 
   spinner.stop();
 
-  const dlqRaw = result.data as any;
-  const messages = dlqRaw?.data || dlqRaw?.messages || [];
-  const dlqPagination = dlqRaw?.pagination || {};
+  const messages = result.data?.data ?? [];
+  const dlqPagination = result.data?.pagination ?? { hasMore: false, nextCursor: null };
 
   if (options.json || options.xml || options.yaml) {
     console.log(formatOutput({
       messages,
-      total: dlqPagination.total ?? dlqRaw?.total,
-      hasMore: dlqPagination.hasMore ?? dlqRaw?.hasMore,
+      hasMore: dlqPagination.hasMore,
+      nextCursor: dlqPagination.nextCursor,
     }, options.xml, options.yaml));
     return;
   }
@@ -367,19 +380,19 @@ export async function dlqListCommand(options: {
   }
 
   logger.table(
-    ['ID', 'Event Type', 'Reason', 'Attempts', 'Created'],
-    messages.map((m: any) => [
+    ['ID', 'Event Type', 'Reason', 'Attempts', 'Moved to DLQ'],
+    messages.map((m) => [
       m.id.substring(0, 12) + '...',
-      m.event_type || m.eventType,
-      m.dlqReason || m.dlq_reason || m.reason || m.lastErrorType || '-',
-      String(m.attempts ?? m.attempt_count ?? m.attemptCount ?? 0),
-      new Date(m.created_at || m.createdAt).toLocaleString(),
+      m.eventType,
+      m.dlqReason || m.lastErrorType || '-',
+      String(m.attempts ?? 0),
+      new Date(m.dlqMovedAt || m.createdAt).toLocaleString(),
     ])
   );
 
-  if (dlqPagination.hasMore ?? dlqRaw?.hasMore) {
+  if (dlqPagination.hasMore && dlqPagination.nextCursor) {
     logger.log('');
-    logger.dim(`Showing ${messages.length} messages. Use --limit to see more.`);
+    logger.dim(`Showing ${messages.length} messages. More available: add --cursor ${dlqPagination.nextCursor}`);
   }
 }
 
@@ -400,7 +413,7 @@ export async function dlqGetCommand(
 
   spinner.stop();
 
-  const message: any = (result.data as any)?.data || result.data?.message;
+  const message = result.data?.data;
 
   if (options.json || options.xml || options.yaml) {
     console.log(formatOutput(message, options.xml, options.yaml));
@@ -416,24 +429,20 @@ export async function dlqGetCommand(
   logger.log(logger.bold('DLQ Message Details'));
   logger.log('');
   logger.log(`ID:              ${message.id}`);
-  const originalId = message.original_message_id || message.originalMessageId;
-  if (originalId) {
-    logger.log(`Original Msg ID: ${originalId}`);
+  logger.log(`Event Type:      ${message.eventType}`);
+  logger.log(`Status:          ${formatStatus(message.status)}`);
+  // The detail route has no dlqReason (only the DLQ list does); lastErrorType is the closest signal.
+  logger.log(`Last Error Type: ${logger.red(message.lastErrorType || 'unknown')}`);
+  logger.log(`Attempts:        ${message.attempts ?? 0}/${message.maxAttempts ?? 5}`);
+  logger.log(`Application:     ${message.applicationId}`);
+  logger.log(`Endpoint:        ${message.endpointUrl ? `${message.endpointUrl} (${message.endpointId})` : message.endpointId}`);
+  if (message.lastErrorMessage) {
+    logger.log(`Error:           ${message.lastErrorMessage}`);
   }
-  logger.log(`Event Type:      ${message.event_type || message.eventType}`);
-  logger.log(`Reason:          ${logger.red(message.dlqReason || message.dlq_reason || message.lastErrorType || message.last_error_type || message.reason || 'unknown')}`);
-  logger.log(`Attempts:        ${message.attempts ?? message.attempt_count ?? message.attemptCount ?? 0}`);
-  logger.log(`Application:     ${message.application_id || message.applicationId}`);
-  logger.log(`Endpoint:        ${message.endpoint_id || message.endpointId}`);
-  const dlqErr = message.lastErrorMessage || message.last_error_message || message.error_message || message.errorMessage;
-  if (dlqErr) {
-    logger.log(`Error:           ${dlqErr}`);
+  if (message.lastResponseStatus) {
+    logger.log(`Last Response:   ${message.lastResponseStatus}`);
   }
-  const dlqRespStatus = message.lastResponseStatus ?? message.last_response_status ?? message.responseStatus;
-  if (dlqRespStatus) {
-    logger.log(`Last Response:   ${dlqRespStatus}`);
-  }
-  logger.log(`Created:         ${new Date(message.created_at || message.createdAt).toLocaleString()}`);
+  logger.log(`Created:         ${new Date(message.createdAt).toLocaleString()}`);
   logger.log('');
 
   if (message.payload) {
@@ -478,11 +487,10 @@ export async function dlqRetryCommand(
     return;
   }
 
-  spinner.succeed('DLQ message queued for retry');
+  spinner.succeed(`DLQ message queued for retry${result.data?.data?.newMessageId ? ` as ${result.data.data.newMessageId}` : ''}`);
 
   if (options.json || options.xml || options.yaml) {
-    const retried = (result.data as any)?.data || result.data?.message;
-    console.log(formatOutput(retried, options.xml, options.yaml));
+    console.log(formatOutput(result.data?.data, options.xml, options.yaml));
   }
 }
 
@@ -497,13 +505,15 @@ export async function dlqBulkRetryCommand(options: {
 }): Promise<void> {
   requireAuth();
 
-  // First, fetch DLQ messages
+  const limit = parseLimit(options.limit);
+  if (limit === null) return;
+
+  // First, fetch DLQ messages (across pages when --limit exceeds the API's 100-row page)
   const spinner = logger.spinner('Fetching DLQ messages...');
-  const result = await api.getDlqMessages({
-    applicationId: options.app,
-    endpointId: options.endpoint,
-    limit: options.limit ? parseInt(options.limit, 10) : 50,
-  });
+  const result = await api.collectPages(
+    (page) => api.getDlqMessages({ applicationId: options.app, endpointId: options.endpoint, ...page }),
+    { max: limit }
+  );
 
   if (result.error) {
     spinner.fail('Failed to fetch DLQ messages');
@@ -511,8 +521,7 @@ export async function dlqBulkRetryCommand(options: {
     return;
   }
 
-  const bulkRaw = result.data as any;
-  const messages = bulkRaw?.data || bulkRaw?.messages || [];
+  const messages = result.data?.data ?? [];
   spinner.stop();
 
   if (messages.length === 0) {
@@ -524,13 +533,13 @@ export async function dlqBulkRetryCommand(options: {
 
   try {
     if (options.yes) {
-      messageIds = messages.map((m: any) => m.id);
+      messageIds = messages.map((m) => m.id);
     } else {
       // Let user select which messages to retry
       messageIds = await checkbox({
         message: `Select messages to retry (${messages.length} found):`,
-        choices: messages.map((m: any) => ({
-          name: `${m.id.substring(0, 12)}... - ${m.event_type || m.eventType} (${m.reason})`,
+        choices: messages.map((m) => ({
+          name: `${m.id.substring(0, 12)}... - ${m.eventType} (${m.dlqReason || m.lastErrorType || 'unknown'})`,
           value: m.id,
           checked: true,
         })),
@@ -568,15 +577,16 @@ export async function dlqBulkRetryCommand(options: {
     return;
   }
 
-  retrySpinner.succeed(`Retried ${retryResult.data?.retried || 0} messages`);
+  retrySpinner.succeed(`Queued ${retryResult.data?.queued ?? 0} message(s) for retry`);
 
   if (options.json || options.xml || options.yaml) {
     console.log(formatOutput(retryResult.data, options.xml, options.yaml));
     return;
   }
 
-  if (retryResult.data?.failed && retryResult.data.failed > 0) {
-    logger.warn(`${retryResult.data.failed} message(s) failed to retry`);
+  // `skipped` = ids the API no longer found in the DLQ (already retried, deleted or archived).
+  if (retryResult.data?.skipped && retryResult.data.skipped > 0) {
+    logger.warn(`${retryResult.data.skipped} message(s) skipped (no longer in the DLQ)`);
   }
 }
 

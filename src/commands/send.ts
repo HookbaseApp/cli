@@ -19,6 +19,7 @@ export async function sendCommand(options: {
   payload?: string;
   file?: string;
   endpoints?: string;
+  idempotencyKey?: string;
   json?: boolean;
   xml?: boolean;
   yaml?: boolean;
@@ -33,9 +34,8 @@ export async function sendCommand(options: {
   try {
     // Get application
     if (!applicationId) {
-      const appsResult = await api.getWebhookApplications();
-      const appsRaw = appsResult.data as any;
-      const apps = appsRaw?.data || appsRaw?.applications || [];
+      const appsResult = await api.listAllWebhookApplications();
+      const apps = appsResult.data?.data ?? [];
       if (appsResult.error || !apps.length) {
         logger.error('No applications found. Create one first with "hookbase outbound applications create"');
         return;
@@ -43,7 +43,7 @@ export async function sendCommand(options: {
 
       applicationId = await select({
         message: 'Select application:',
-        choices: apps.map((a: any) => ({
+        choices: apps.map((a) => ({
           name: `${a.name} (${a.id})`,
           value: a.id,
         })),
@@ -95,7 +95,7 @@ export async function sendCommand(options: {
 
     // Get specific endpoints (optional)
     if (options.endpoints) {
-      endpointIds = options.endpoints.split(',').map(e => e.trim());
+      endpointIds = options.endpoints.split(',').map(e => e.trim()).filter(e => e.length > 0);
     }
 
   } catch (error) {
@@ -113,6 +113,7 @@ export async function sendCommand(options: {
     eventType: eventType!,
     payload,
     endpointIds,
+    idempotencyKey: options.idempotencyKey,
   });
 
   if (result.error) {
@@ -129,9 +130,9 @@ export async function sendCommand(options: {
   }
 
   // POST /send-event returns { data: { eventId, messagesQueued, endpoints:[{id,url}] } }
-  const sent: any = (result.data as any)?.data || result.data;
+  const sent = result.data?.data;
   if (sent) {
-    const endpointsHit: Array<{ id: string; url?: string }> = Array.isArray(sent.endpoints) ? sent.endpoints : [];
+    const endpointsHit = Array.isArray(sent.endpoints) ? sent.endpoints : [];
     const lines = [
       `Event ID:        ${sent.eventId || '-'}`,
       `Event Type:      ${eventType}`,

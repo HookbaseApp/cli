@@ -16,7 +16,7 @@ export async function applicationsListCommand(options: { json?: boolean; xml?: b
   requireAuth();
 
   const spinner = logger.spinner('Fetching applications...');
-  const result = await api.getWebhookApplications();
+  const result = await api.listAllWebhookApplications();
 
   if (result.error) {
     spinner.fail('Failed to fetch applications');

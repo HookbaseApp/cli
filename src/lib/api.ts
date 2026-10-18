@@ -41,7 +41,8 @@ function toOrgScopedPath(path: string, orgId: string): string | null {
 async function request<T>(
   method: string,
   path: string,
-  body?: Record<string, unknown>
+  body?: Record<string, unknown>,
+  extraHeaders?: Record<string, string>
 ): Promise<ApiResponse<T>> {
   const apiUrl = getApiUrl();
   const token = getAuthToken();
@@ -59,7 +60,7 @@ async function request<T>(
           status: 0,
         };
       }
-      return sessionRequest<T>(method, scopedPath, body);
+      return sessionRequest<T>(method, scopedPath, body, extraHeaders);
     }
 
     return {
@@ -69,6 +70,7 @@ async function request<T>(
   }
 
   const headers: Record<string, string> = {
+    ...extraHeaders,
     'Content-Type': 'application/json',
     'Authorization': `Bearer ${token}`,
   };
@@ -371,7 +373,8 @@ export async function refreshSession(): Promise<boolean> {
 export async function sessionRequest<T>(
   method: string,
   path: string,
-  body?: Record<string, unknown>
+  body?: Record<string, unknown>,
+  extraHeaders?: Record<string, string>
 ): Promise<ApiResponse<T>> {
   const apiUrl = getApiUrl();
   let token = getSessionAccessToken();
@@ -387,6 +390,7 @@ export async function sessionRequest<T>(
     return fetch(`${apiUrl}${path}`, {
       method,
       headers: {
+        ...extraHeaders,
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${bearerToken}`,
       },
@@ -2105,14 +2109,84 @@ export interface WebhookApplication {
   endpointCount?: number;
 }
 
-export async function getWebhookApplications(): Promise<
-  ApiResponse<{ data: WebhookApplication[]; pagination: { hasMore: boolean; nextCursor: string | null } }>
-> {
+// Every outbound list route (webhook-applications, webhook-endpoints, outbound-messages,
+// outbound-messages/dlq/messages) answers `{ data: [...], pagination: { hasMore, nextCursor } }`
+// with a server-side page cap of 100. The cursor is opaque: it goes back verbatim as `?cursor=`
+// and is never parsed, so a change to its internal format on the server can't break the CLI.
+export interface CursorPagination {
+  hasMore: boolean;
+  nextCursor: string | null;
+}
 
-  return request<{ data: WebhookApplication[]; pagination: { hasMore: boolean; nextCursor: string | null } }>(
+export interface CursorPage<T> {
+  data: T[];
+  pagination: CursorPagination;
+}
+
+export interface PageOptions {
+  limit?: number;
+  cursor?: string;
+}
+
+/** The most rows any outbound list route returns per request. */
+export const MAX_PAGE_SIZE = 100;
+
+function pageQuery(params: URLSearchParams, options?: PageOptions): string {
+  if (options?.limit) params.set('limit', String(options.limit));
+  if (options?.cursor) params.set('cursor', options.cursor);
+  const queryString = params.toString();
+  return queryString ? `?${queryString}` : '';
+}
+
+/**
+ * Follow `nextCursor` until `max` rows are collected (default: all of them) or the server reports
+ * no more. Pages are requested at min(100, rows still wanted), so the returned `nextCursor` always
+ * resumes exactly after the last row returned.
+ */
+export async function collectPages<T>(
+  fetchPage: (page: { limit: number; cursor?: string }) => Promise<ApiResponse<CursorPage<T>>>,
+  options: { max?: number; cursor?: string } = {}
+): Promise<ApiResponse<CursorPage<T>>> {
+  const max = options.max ?? Infinity;
+  const items: T[] = [];
+  let cursor = options.cursor;
+  let hasMore = false;
+  let status = 200;
+
+  while (items.length < max) {
+    const result = await fetchPage({ limit: Math.min(MAX_PAGE_SIZE, max - items.length), cursor });
+    if (result.error) {
+      return { error: result.error, status: result.status };
+    }
+    status = result.status;
+    items.push(...(result.data?.data ?? []));
+
+    const nextCursor = result.data?.pagination?.nextCursor ?? null;
+    hasMore = result.data?.pagination?.hasMore === true && nextCursor !== null;
+    if (!hasMore) break;
+    // A server that hands back the cursor it was given would loop forever; stop instead.
+    if (nextCursor === cursor) break;
+    cursor = nextCursor!;
+  }
+
+  return {
+    data: { data: items, pagination: { hasMore, nextCursor: hasMore ? cursor ?? null : null } },
+    status,
+  };
+}
+
+/** One page of GET /api/webhook-applications (server default 50, max 100). */
+export async function getWebhookApplications(options?: PageOptions): Promise<ApiResponse<CursorPage<WebhookApplication>>> {
+
+  return request<CursorPage<WebhookApplication>>(
     'GET',
-    `/api/webhook-applications`
+    `/api/webhook-applications${pageQuery(new URLSearchParams(), options)}`
   );
+}
+
+/** Every application, following the cursor past page one. */
+export async function listAllWebhookApplications(): Promise<ApiResponse<CursorPage<WebhookApplication>>> {
+  return collectPages((page) => getWebhookApplications(page));
 }
 
 export async function getWebhookApplication(appId: string): Promise<ApiResponse<{ data: WebhookApplication }>> {
@@ -2162,44 +2236,80 @@ export async function deleteWebhookApplication(appId: string): Promise<ApiRespon
 // Outbound Webhooks - Endpoints
 // ============================================================================
 
+// Mirrors formatEndpoint() in api/src/routes/webhook-endpoints.ts (camelCase, real booleans).
+// The old snake_case shape (is_active, success_rate, message_count, timeout_ms, ...) was never
+// sent by the API, so the list's Success Rate column always read "-".
 export interface WebhookEndpoint {
   id: string;
-  organization_id: string;
-  application_id: string;
-  application_name?: string;
+  applicationId: string;
   url: string;
-  description?: string;
-  secret?: string;
-  event_types?: string[];
-  headers?: Array<{ name: string; value: string }> | string;
-  rate_limit_per_minute?: number;
-  timeout_ms?: number;
-  is_active?: number;
-  circuit_state?: 'closed' | 'open' | 'half_open';
-  failure_count?: number;
-  message_count?: number;
-  success_rate?: number;
-  use_static_ip?: number;
-  created_at: string;
-  updated_at: string;
-  // API-native (camelCase) fields actually returned by the endpoint routes.
-  isDisabled?: boolean;
-  isActive?: boolean;
+  description?: string | null;
+  /** Masked: the first 12 characters plus "...". The full secret is only on create/rotate. */
+  secretPrefix?: string;
+  hasSecret?: boolean;
+  secretVersion?: number;
+  headers?: Array<{ name: string; value: string }>;
   timeoutSeconds?: number;
-  rateLimitPerSecond?: number;
-  circuitState?: 'closed' | 'open' | 'half_open';
+  isDisabled: boolean;
+  disabledAt?: string | null;
+  disabledReason?: string | null;
+  rateLimitPerSecond?: number | null;
+  successStatusCodes?: Array<number | string> | null;
+  backoffType?: string | null;
+  retryDelays?: number[] | null;
+  ipAllowlistNotes?: string | null;
   useStaticIp?: boolean;
+  circuitState?: 'closed' | 'open' | 'half_open';
+  circuitOpenedAt?: string | null;
+  circuitFailureCount?: number;
+  circuitFailureThreshold?: number;
+  circuitSuccessThreshold?: number;
+  circuitCooldownSeconds?: number;
+  totalMessages?: number;
+  totalSuccesses?: number;
+  totalFailures?: number;
+  avgResponseTimeMs?: number | null;
+  lastSuccessAt?: string | null;
+  lastFailureAt?: string | null;
+  lastResponseStatus?: number | null;
+  isVerified?: boolean;
+  verifiedAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  createdBy?: string | null;
+  apiKeyId?: string | null;
+  /** List responses only. */
+  subscriptionCount?: number;
+  /** Create response only: the plaintext signing secret. */
+  secret?: string;
 }
 
-export async function getWebhookEndpoints(appId?: string): Promise<ApiResponse<{ endpoints: WebhookEndpoint[] }>> {
-
-  const query = appId ? `?applicationId=${appId}` : '';
-  return request<{ endpoints: WebhookEndpoint[] }>('GET', `/api/webhook-endpoints${query}`);
+/** Success rate in [0,1] from the endpoint's counters, or undefined before its first message. */
+export function endpointSuccessRate(endpoint: Pick<WebhookEndpoint, 'totalMessages' | 'totalSuccesses'>): number | undefined {
+  const total = endpoint.totalMessages ?? 0;
+  if (total <= 0) return undefined;
+  return (endpoint.totalSuccesses ?? 0) / total;
 }
 
-export async function getWebhookEndpoint(endpointId: string): Promise<ApiResponse<{ endpoint: WebhookEndpoint }>> {
+/** One page of GET /api/webhook-endpoints (server default 50, max 100). */
+export async function getWebhookEndpoints(
+  appId?: string,
+  options?: PageOptions
+): Promise<ApiResponse<CursorPage<WebhookEndpoint>>> {
 
-  return request<{ endpoint: WebhookEndpoint }>('GET', `/api/webhook-endpoints/${endpointId}`);
+  const params = new URLSearchParams();
+  if (appId) params.set('applicationId', appId);
+  return request<CursorPage<WebhookEndpoint>>('GET', `/api/webhook-endpoints${pageQuery(params, options)}`);
+}
+
+/** Every endpoint (optionally of one application), following the cursor past page one. */
+export async function listAllWebhookEndpoints(appId?: string): Promise<ApiResponse<CursorPage<WebhookEndpoint>>> {
+  return collectPages((page) => getWebhookEndpoints(appId, page));
+}
+
+export async function getWebhookEndpoint(endpointId: string): Promise<ApiResponse<{ data: WebhookEndpoint }>> {
+
+  return request<{ data: WebhookEndpoint }>('GET', `/api/webhook-endpoints/${endpointId}`);
 }
 
 export async function createWebhookEndpoint(data: {
@@ -2211,9 +2321,9 @@ export async function createWebhookEndpoint(data: {
   rateLimitPerSecond?: number;
   timeoutSeconds?: number;
   useStaticIp?: boolean;
-}): Promise<ApiResponse<{ endpoint: WebhookEndpoint; secret: string }>> {
+}): Promise<ApiResponse<{ data: WebhookEndpoint & { secret: string }; warning?: string }>> {
 
-  return request<{ endpoint: WebhookEndpoint; secret: string }>('POST', `/api/webhook-endpoints`, {
+  return request<{ data: WebhookEndpoint & { secret: string }; warning?: string }>('POST', `/api/webhook-endpoints`, {
     applicationId: data.applicationId,
     url: data.url,
     description: data.description,
@@ -2237,7 +2347,7 @@ export async function updateWebhookEndpoint(
     isActive?: boolean;
     useStaticIp?: boolean;
   }
-): Promise<ApiResponse<{ endpoint: WebhookEndpoint }>> {
+): Promise<ApiResponse<{ data: WebhookEndpoint }>> {
 
   // The API update schema speaks `isDisabled`, not `isActive`. Translate so
   // `--active/--inactive` actually take effect instead of being silently dropped.
@@ -2253,7 +2363,7 @@ export async function updateWebhookEndpoint(
     body.isDisabled = !data.isActive;
   }
 
-  return request<{ endpoint: WebhookEndpoint }>('PATCH', `/api/webhook-endpoints/${endpointId}`, body);
+  return request<{ data: WebhookEndpoint }>('PATCH', `/api/webhook-endpoints/${endpointId}`, body);
 }
 
 export async function deleteWebhookEndpoint(endpointId: string): Promise<ApiResponse<{ success: boolean }>> {
@@ -2261,24 +2371,43 @@ export async function deleteWebhookEndpoint(endpointId: string): Promise<ApiResp
   return request<{ success: boolean }>('DELETE', `/api/webhook-endpoints/${endpointId}`);
 }
 
-export async function testWebhookEndpoint(endpointId: string): Promise<ApiResponse<{
+// POST /api/webhook-endpoints/:id/test (api/src/routes/webhook-endpoints.ts). The outcome is
+// nested under `delivery`; there is no top-level statusCode/responseTime/error.
+export interface EndpointTestResult {
   success: boolean;
-  statusCode: number;
-  responseTime: number;
-  error?: string;
-}>> {
-
-  return request<{ success: boolean; statusCode: number; responseTime: number; error?: string }>(
-    'POST',
-    `/api/webhook-endpoints/${endpointId}/test`
-  );
+  testEvent: { id: string; type: string; timestamp: string };
+  delivery: {
+    status: 'success' | 'failed';
+    responseStatus: number | null;
+    responseTimeMs: number | null;
+    responseBody: string;
+    errorMessage: string | null;
+  };
+  signature: { header: string; value: string; timestamp: number | string };
 }
 
-export async function rotateWebhookEndpointSecret(endpointId: string): Promise<ApiResponse<{ endpoint: WebhookEndpoint; secret: string }>> {
+export async function testWebhookEndpoint(endpointId: string): Promise<ApiResponse<EndpointTestResult>> {
 
-  return request<{ endpoint: WebhookEndpoint; secret: string }>(
+  return request<EndpointTestResult>('POST', `/api/webhook-endpoints/${endpointId}/test`);
+}
+
+// POST /api/webhook-endpoints/:id/rotate-secret -- body { gracePeriodSeconds? } (0-86400, server
+// default 3600). The response is bare, not wrapped in `data`.
+export interface RotateSecretResult {
+  secret: string;
+  previousSecretExpiresAt: string;
+  secretVersion: number;
+}
+
+export async function rotateWebhookEndpointSecret(
+  endpointId: string,
+  options?: { gracePeriodSeconds?: number }
+): Promise<ApiResponse<RotateSecretResult>> {
+
+  return request<RotateSecretResult>(
     'POST',
-    `/api/webhook-endpoints/${endpointId}/rotate-secret`
+    `/api/webhook-endpoints/${endpointId}/rotate-secret`,
+    options?.gracePeriodSeconds !== undefined ? { gracePeriodSeconds: options.gracePeriodSeconds } : {}
   );
 }
 
@@ -2300,76 +2429,127 @@ export async function replayFailedWebhookEndpointMessages(
 // Outbound Webhooks - Send Events
 // ============================================================================
 
+// outbound_messages.status. Open-ended on purpose: a status added server-side must still display.
+export type OutboundMessageStatus =
+  | 'pending'
+  | 'processing'
+  | 'success'
+  | 'failed'
+  | 'awaiting_retry'
+  | 'exhausted'
+  | 'dlq'
+  | (string & {});
+
+/** The values `messages list --status` accepts. */
+export const OUTBOUND_MESSAGE_STATUSES = [
+  'pending', 'processing', 'success', 'failed', 'awaiting_retry', 'exhausted', 'dlq',
+] as const;
+
+// Mirrors the list (GET /outbound-messages) and detail (GET /outbound-messages/:id) mappings in
+// api/src/routes/outbound-messages.ts. The detail-only fields are optional.
 export interface WebhookMessage {
   id: string;
-  organization_id: string;
-  application_id: string;
-  endpoint_id: string;
-  event_type: string;
-  payload: unknown;
-  status: 'pending' | 'processing' | 'delivered' | 'failed' | 'exhausted';
-  attempt_count: number;
-  max_attempts: number;
-  response_status?: number;
-  response_body?: string;
-  error_message?: string;
-  next_retry_at?: string;
-  delivered_at?: string;
-  created_at: string;
+  eventId: string;
+  eventType: string;
+  applicationId: string;
+  endpointId: string;
+  status: OutboundMessageStatus;
+  attempts: number;
+  maxAttempts: number;
+  lastResponseStatus: number | null;
+  lastErrorMessage: string | null;
+  createdAt: string;
+  completedAt: string | null;
+  endpointUrl?: string;
+  applicationName?: string;
+  // GET /:id only
+  subscriptionId?: string | null;
+  eventTypeId?: string | null;
+  lastErrorType?: string | null;
+  payloadKey?: string | null;
+  payloadSizeBytes?: number | null;
+  payloadHash?: string | null;
+  metadata?: unknown;
+  priority?: number | null;
+  endpointDescription?: string | null;
+  payload?: unknown;
+}
+
+// POST /api/send-event (api/src/routes/send-event.ts). `endpointIds` is the plural the API now
+// merges with `endpointId`; deployments that predate it strip the plural and fan out to every
+// subscribed endpoint, so a single target is ALSO sent as `endpointId`, which every deployment
+// honours. The idempotency key goes in the body (honoured everywhere) and as the Idempotency-Key
+// header (honoured by newer deployments; the body wins when both are set).
+export interface SendEventResult {
+  eventId: string;
+  messagesQueued: number;
+  endpoints: Array<{ id: string; url: string }>;
 }
 
 export async function sendWebhookEvent(data: {
-  applicationId: string;
+  applicationId?: string;
   eventType: string;
   payload: unknown;
   endpointIds?: string[];
-}): Promise<ApiResponse<{ message: WebhookMessage }>> {
+  idempotencyKey?: string;
+}): Promise<ApiResponse<{ data: SendEventResult }>> {
 
-  return request<{ message: WebhookMessage }>('POST', `/api/send-event`, {
+  const endpointIds = data.endpointIds?.filter((id) => id.length > 0);
+  const body: Record<string, unknown> = {
     applicationId: data.applicationId,
     eventType: data.eventType,
     payload: data.payload,
-    endpointIds: data.endpointIds,
-  });
+  };
+  if (endpointIds && endpointIds.length > 0) {
+    body.endpointIds = endpointIds;
+    if (endpointIds.length === 1) body.endpointId = endpointIds[0];
+  }
+  const headers: Record<string, string> = {};
+  if (data.idempotencyKey) {
+    body.idempotencyKey = data.idempotencyKey;
+    headers['Idempotency-Key'] = data.idempotencyKey;
+  }
+
+  return request<{ data: SendEventResult }>('POST', `/api/send-event`, body, headers);
 }
 
 // ============================================================================
 // Outbound Webhooks - Messages
 // ============================================================================
 
-export async function getWebhookMessages(options?: {
-  limit?: number;
-  offset?: number;
+/** One page of GET /api/outbound-messages (server default 50, max 100). */
+export async function getWebhookMessages(options?: PageOptions & {
   applicationId?: string;
   endpointId?: string;
   status?: string;
   eventType?: string;
-}): Promise<ApiResponse<{ messages: WebhookMessage[]; total: number; hasMore: boolean }>> {
+}): Promise<ApiResponse<CursorPage<WebhookMessage>>> {
 
   const params = new URLSearchParams();
-  if (options?.limit) params.set('limit', String(options.limit));
-  if (options?.offset) params.set('offset', String(options.offset));
   if (options?.applicationId) params.set('applicationId', options.applicationId);
   if (options?.endpointId) params.set('endpointId', options.endpointId);
   if (options?.status) params.set('status', options.status);
   if (options?.eventType) params.set('eventType', options.eventType);
 
-  const queryString = params.toString();
-  return request<{ messages: WebhookMessage[]; total: number; hasMore: boolean }>(
-    'GET',
-    `/api/outbound-messages${queryString ? `?${queryString}` : ''}`
-  );
+  return request<CursorPage<WebhookMessage>>('GET', `/api/outbound-messages${pageQuery(params, options)}`);
 }
 
-export async function getWebhookMessage(messageId: string): Promise<ApiResponse<{ message: WebhookMessage }>> {
+export async function getWebhookMessage(messageId: string): Promise<ApiResponse<{ data: WebhookMessage }>> {
 
-  return request<{ message: WebhookMessage }>('GET', `/api/outbound-messages/${messageId}`);
+  return request<{ data: WebhookMessage }>('GET', `/api/outbound-messages/${messageId}`);
 }
 
-export async function retryWebhookMessage(messageId: string): Promise<ApiResponse<{ message: WebhookMessage }>> {
+/** Response of POST /outbound-messages/:id/replay and POST /outbound-messages/dlq/:id/retry. */
+export interface MessageReplayResult {
+  originalMessageId: string;
+  newMessageId: string;
+  status: 'queued';
+}
+
+export async function retryWebhookMessage(messageId: string): Promise<ApiResponse<{ data: MessageReplayResult }>> {
 
   // The API exposes `/replay` (there is no `/retry` route for a single message).
-  return request<{ message: WebhookMessage }>('POST', `/api/outbound-messages/${messageId}/replay`);
+  return request<{ data: MessageReplayResult }>('POST', `/api/outbound-messages/${messageId}/replay`);
 }
 
 export interface OutboundMessageAttempt {
@@ -2431,68 +2611,92 @@ export async function getDlqStats(): Promise<ApiResponse<{ data: DlqStats }>> {
 // Outbound Webhooks - Dead Letter Queue (DLQ)
 // ============================================================================
 
+// Mirrors GET /outbound-messages/dlq/messages in api/src/routes/outbound-messages.ts.
 export interface DlqMessage {
   id: string;
-  organization_id: string;
-  application_id: string;
-  endpoint_id: string;
-  original_message_id: string;
-  event_type: string;
-  payload: unknown;
-  reason: string;
-  error_message?: string;
-  last_response_status?: number;
-  attempt_count: number;
-  created_at: string;
+  eventId: string;
+  eventType: string;
+  applicationId: string;
+  endpointId: string;
+  status: OutboundMessageStatus;
+  attempts: number;
+  maxAttempts: number;
+  lastResponseStatus: number | null;
+  lastErrorType: string | null;
+  lastErrorMessage: string | null;
+  dlqReason: string | null;
+  dlqMovedAt: string | null;
+  dlqRetryCount: number | null;
+  dlqLastRetryAt: string | null;
+  createdAt: string;
+  completedAt: string | null;
+  endpointUrl?: string;
+  applicationName?: string;
 }
 
-// DLQ messages are just outbound messages with status=dlq
-export async function getDlqMessages(options?: {
-  limit?: number;
-  offset?: number;
+/** One page of GET /api/outbound-messages/dlq/messages (server default 50, max 100). */
+export async function getDlqMessages(options?: PageOptions & {
   applicationId?: string;
   endpointId?: string;
-}): Promise<ApiResponse<{ messages: DlqMessage[]; total: number; hasMore: boolean }>> {
+}): Promise<ApiResponse<CursorPage<DlqMessage>>> {
 
   const params = new URLSearchParams();
-  if (options?.limit) params.set('limit', String(options.limit));
-  if (options?.offset) params.set('offset', String(options.offset));
   if (options?.applicationId) params.set('applicationId', options.applicationId);
   if (options?.endpointId) params.set('endpointId', options.endpointId);
 
   // Use the dedicated DLQ endpoint: it returns `dlqReason` / `lastError*`, which
   // the generic `?status=dlq` list selection does not include.
-  const queryString = params.toString();
-  return request<{ messages: DlqMessage[]; total: number; hasMore: boolean }>(
-    'GET',
-    `/api/outbound-messages/dlq/messages${queryString ? `?${queryString}` : ''}`
-  );
+  return request<CursorPage<DlqMessage>>('GET', `/api/outbound-messages/dlq/messages${pageQuery(params, options)}`);
 }
 
-export async function getDlqMessage(messageId: string): Promise<ApiResponse<{ message: DlqMessage }>> {
+// There is no single-item DLQ route; the generic message detail carries the payload and the
+// `last*` fields but not `dlqReason`.
+export async function getDlqMessage(messageId: string): Promise<ApiResponse<{ data: WebhookMessage }>> {
 
-  return request<{ message: DlqMessage }>('GET', `/api/outbound-messages/${messageId}`);
+  return request<{ data: WebhookMessage }>('GET', `/api/outbound-messages/${messageId}`);
 }
 
-export async function retryDlqMessage(messageId: string): Promise<ApiResponse<{ message: WebhookMessage }>> {
+// POST /dlq/:id/retry, not /:id/replay: only the DLQ route bumps the original's
+// dlq_retry_count / dlq_last_retry_at, and it 404s for a message that is no longer in the DLQ.
+export async function retryDlqMessage(messageId: string): Promise<ApiResponse<{ data: MessageReplayResult }>> {
 
-  return request<{ message: WebhookMessage }>('POST', `/api/outbound-messages/${messageId}/replay`);
+  return request<{ data: MessageReplayResult }>('POST', `/api/outbound-messages/dlq/${messageId}/retry`);
 }
 
-export async function bulkRetryDlqMessages(messageIds: string[]): Promise<ApiResponse<{ retried: number; failed: number }>> {
+/** Response of POST /outbound-messages/dlq/retry-bulk, summed over every 100-id chunk sent. */
+export interface DlqBulkRetryResult {
+  queued: number;
+  skipped: number;
+  messages: Array<{ originalMessageId: string; newMessageId: string }>;
+}
 
-  // Replay each message individually since there's no bulk endpoint
-  let retried = 0;
-  let failed = 0;
-  for (const id of messageIds) {
-    const result = await retryDlqMessage(id);
+// POST /dlq/retry-bulk takes at most 100 ids per call; larger selections go in chunks. A chunk with
+// no message still in the DLQ answers 404 "No valid DLQ messages found", which counts as skipped.
+export async function bulkRetryDlqMessages(messageIds: string[]): Promise<ApiResponse<DlqBulkRetryResult>> {
+
+  const total: DlqBulkRetryResult = { queued: 0, skipped: 0, messages: [] };
+  let status = 201;
+  for (let i = 0; i < messageIds.length; i += MAX_PAGE_SIZE) {
+    const chunk = messageIds.slice(i, i + MAX_PAGE_SIZE);
+    const result = await request<{ data: DlqBulkRetryResult }>(
+      'POST',
+      `/api/outbound-messages/dlq/retry-bulk`,
+      { messageIds: chunk }
+    );
     if (result.error) {
-      failed++;
-    } else {
-      retried++;
+      if (result.status === 404) {
+        total.skipped += chunk.length;
+        continue;
+      }
+      const done = total.queued > 0 ? ` (${total.queued} message(s) were already queued)` : '';
+      return { error: `${result.error}${done}`, status: result.status };
     }
+    status = result.status;
+    total.queued += result.data?.data?.queued ?? 0;
+    total.skipped += result.data?.data?.skipped ?? 0;
+    total.messages.push(...(result.data?.data?.messages ?? []));
   }
-  return { data: { retried, failed }, status: 200 };
+  return { data: total, status };
 }
 
 export async function deleteDlqMessage(messageId: string): Promise<ApiResponse<{ success: boolean }>> {
