@@ -3,6 +3,7 @@ import * as http from 'http';
 import * as https from 'https';
 import { URL } from 'url';
 import * as logger from './logger.js';
+import { bodyToBuffer, encodeBytes, withBinaryFlag, type BodyEncoding } from './tunnelBody.js';
 
 interface TunnelRequest {
   id: string;
@@ -10,6 +11,8 @@ interface TunnelRequest {
   url: string;
   headers: Record<string, string>;
   body: string | null;
+  // `base64` when the body is not valid UTF-8; only sent to a client that asked for `binary=1`.
+  bodyEncoding?: BodyEncoding;
 }
 
 interface TunnelResponse {
@@ -17,6 +20,7 @@ interface TunnelResponse {
   status: number;
   headers: Record<string, string>;
   body: string | null;
+  bodyEncoding?: BodyEncoding;
 }
 
 export interface OutboundResponse {
@@ -95,6 +99,8 @@ function globMatch(pattern: string, input: string): boolean {
 
 export class TunnelClient {
   private ws: WebSocket | null = null;
+  // True once the server's `hello` says it reads `bodyEncoding` on responses. Reset on every connect.
+  private binaryBodies = false;
   private options: TunnelOptions;
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 10;
@@ -118,7 +124,10 @@ export class TunnelClient {
       this.isClosing = false;
 
       try {
-        this.ws = new WebSocket(this.options.wsUrl);
+        // Ask for binary bodies; a server that understands answers with a `hello` frame, and an
+        // older one ignores the parameter. Every connection renegotiates from scratch.
+        this.binaryBodies = false;
+        this.ws = new WebSocket(withBinaryFlag(this.options.wsUrl));
 
         this.ws.on('open', () => {
           this.reconnectAttempts = 0;
@@ -186,6 +195,12 @@ export class TunnelClient {
 
       // Handle pong (response to our ping)
       if (message.type === 'pong') {
+        return;
+      }
+
+      // The server confirming it reads `bodyEncoding` on our responses.
+      if (message.type === 'hello') {
+        this.binaryBodies = Array.isArray(message.features) && message.features.includes('binary-bodies');
         return;
       }
 
@@ -302,7 +317,11 @@ export class TunnelClient {
           res.on('data', (chunk) => chunks.push(chunk));
 
           res.on('end', () => {
-            const body = Buffer.concat(chunks).toString('utf8');
+            const bytes = Buffer.concat(chunks);
+            // Without the server's hello this is the old lossy text path.
+            const { body, bodyEncoding } = this.binaryBodies
+              ? encodeBytes(bytes)
+              : { body: bytes.toString('utf8'), bodyEncoding: undefined };
             const headers: Record<string, string> = {};
 
             Object.entries(res.headers).forEach(([key, value]) => {
@@ -326,6 +345,7 @@ export class TunnelClient {
               status: res.statusCode || 500,
               headers,
               body,
+              ...(bodyEncoding ? { bodyEncoding } : {}),
             });
           });
         });
@@ -340,7 +360,7 @@ export class TunnelClient {
         });
 
         if (request.body) {
-          req.write(request.body);
+          req.write(bodyToBuffer(request.body, request.bodyEncoding));
         }
 
         req.end();
