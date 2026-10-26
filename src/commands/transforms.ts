@@ -5,6 +5,7 @@ import * as api from '../lib/api.js';
 import * as logger from '../lib/logger.js';
 import { loadFeatures, ensureFeature } from '../lib/advanced.js';
 
+import { loadTransformEngines, transformEngineChoices, inferTransformTypeFromFile, engineUnavailableMessage } from '../lib/transformEngines.js';
 import { requireAuth } from '../lib/requireAuth.js';
 import { formatOutput } from '../lib/output.js';
 
@@ -12,8 +13,6 @@ function isPromptCancelled(error: unknown): boolean {
   return error instanceof ExitPromptError ||
     (error instanceof Error && error.name === 'ExitPromptError');
 }
-
-const TRANSFORM_TYPES = ['jsonata', 'javascript', 'liquid', 'xslt'] as const;
 
 export async function transformsListCommand(options: { json?: boolean; xml?: boolean; yaml?: boolean }): Promise<void> {
   requireAuth();
@@ -56,7 +55,9 @@ export async function transformsCreateCommand(options: {
   if (options.file) {
     try { code = readFileSync(options.file, 'utf8'); }
     catch (e) { logger.error(`Could not read --file: ${(e as Error).message}`); return; }
+    if (!transformType) transformType = inferTransformTypeFromFile(options.file);
   }
+  const engines = await loadTransformEngines();
 
   try {
     if (!name) {
@@ -65,7 +66,7 @@ export async function transformsCreateCommand(options: {
     if (!transformType) {
       transformType = await select({
         message: 'Transform type:',
-        choices: TRANSFORM_TYPES.map((t) => ({ name: t, value: t })),
+        choices: transformEngineChoices(engines),
         default: 'jsonata',
       });
     }
@@ -77,8 +78,8 @@ export async function transformsCreateCommand(options: {
     throw error;
   }
 
-  if (!(TRANSFORM_TYPES as readonly string[]).includes(transformType!)) {
-    logger.error(`Invalid transform type "${transformType}" (valid: ${TRANSFORM_TYPES.join(', ')})`);
+  if (!engines.some((e) => e.type === transformType)) {
+    logger.error(`Invalid transform type "${transformType}" (valid: ${engines.map((e) => e.type).join(', ')})`);
     return;
   }
 
@@ -86,10 +87,10 @@ export async function transformsCreateCommand(options: {
   const result = await api.createTransform({
     name: name!,
     code: code!,
-    transformType: transformType as typeof TRANSFORM_TYPES[number],
+    transformType: transformType as api.TransformType,
     description: options.description,
   });
-  if (result.error) { spinner.fail('Failed to create transform'); logger.error(result.error); return; }
+  if (result.error) { spinner.fail('Failed to create transform'); logger.error(engineUnavailableMessage(result) ?? result.error); return; }
   spinner.succeed('Transform created');
   if (options.json || options.xml || options.yaml) { console.log(formatOutput(result.data?.transform, options.xml, options.yaml)); return; }
   const t = result.data?.transform;

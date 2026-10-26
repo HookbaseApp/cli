@@ -14,6 +14,8 @@ import {
 interface ApiResponse<T> {
   data?: T;
   error?: string;
+  /** Machine-readable error code from the API body, when present (e.g. TRANSFORM_ENGINE_UNAVAILABLE). */
+  code?: string;
   status: number;
 }
 
@@ -104,6 +106,7 @@ async function request<T>(
       }
       return {
         error: errorMsg,
+        code: typeof data.code === 'string' ? data.code : undefined,
         status: response.status,
       };
     }
@@ -440,7 +443,7 @@ export async function sessionRequest<T>(
       if (data.details) {
         errorMsg += ` - ${JSON.stringify(data.details)}`;
       }
-      return { error: errorMsg, status: response.status };
+      return { error: errorMsg, code: typeof data.code === 'string' ? data.code : undefined, status: response.status };
     }
 
     return { data: data as T, status: response.status };
@@ -1522,10 +1525,27 @@ export async function bulkReplayDeliveries(deliveryIds: string[]): Promise<ApiRe
 // Transforms
 // ============================================================================
 
+export type TransformType = 'jsonata' | 'javascript' | 'typescript' | 'liquid' | 'xslt' | 'jmespath' | 'jsonlogic' | 'jq';
+
+export interface TransformEngine {
+  type: string;
+  label: string;
+  description: string;
+  fileExtension: string;
+  starterCode: string;
+  aiGenerate: boolean;
+  /** False when the server cannot run this language (e.g. jq without transform isolation). */
+  available: boolean;
+}
+
+export async function getTransformEngines(): Promise<ApiResponse<{ engines: TransformEngine[]; contentFormats?: string[] }>> {
+  return request<{ engines: TransformEngine[]; contentFormats?: string[] }>('GET', `/api/transforms/engines`);
+}
+
 export interface Transform {
   id: string;
   name: string;
-  type: 'jsonata' | 'javascript' | 'liquid' | 'xslt';
+  type: TransformType;
   expression: string;
   input_format: 'json' | 'xml' | 'text';
   output_format: 'json' | 'xml' | 'text';
@@ -1547,7 +1567,7 @@ export async function getTransform(transformId: string): Promise<ApiResponse<{ t
 export async function createTransform(data: {
   name: string;
   code: string;
-  transformType?: 'jsonata' | 'javascript' | 'liquid' | 'xslt';
+  transformType?: TransformType;
   description?: string;
   inputFormat?: 'json' | 'xml' | 'text';
   outputFormat?: 'json' | 'xml' | 'text';

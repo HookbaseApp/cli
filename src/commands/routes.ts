@@ -1,6 +1,7 @@
 import { input, confirm, select, checkbox, number } from '@inquirer/prompts';
 import { ExitPromptError } from '@inquirer/core';
 import * as api from '../lib/api.js';
+import { loadTransformEngines, transformEngineChoices, engineUnavailableMessage } from '../lib/transformEngines.js';
 import * as logger from '../lib/logger.js';
 import { askAdvanced, gatedPrompt, ensureFeature, loadFeatures } from '../lib/advanced.js';
 
@@ -49,18 +50,13 @@ async function createTransformInline(): Promise<string | null> {
   const name = await input({ message: 'Transform name:', validate: (v) => v.length > 0 || 'Required' });
   const transformType = await select({
     message: 'Transform type:',
-    choices: [
-      { name: 'JSONata', value: 'jsonata' },
-      { name: 'JavaScript', value: 'javascript' },
-      { name: 'Liquid', value: 'liquid' },
-      { name: 'XSLT', value: 'xslt' },
-    ],
+    choices: transformEngineChoices(await loadTransformEngines()),
     default: 'jsonata',
-  }) as 'jsonata' | 'javascript' | 'liquid' | 'xslt';
+  }) as api.TransformType;
   const code = await input({ message: 'Transform code:', validate: (v) => v.length > 0 || 'Required' });
   const res = await api.createTransform({ name, code, transformType });
   if (res.error || !res.data?.transform) {
-    logger.error(`Transform not created: ${res.error || 'unknown error'}`);
+    logger.error(`Transform not created: ${engineUnavailableMessage(res) ?? (res.error || 'unknown error')}`);
     return null;
   }
   logger.dim(`  Created transform ${res.data.transform.id}`);
