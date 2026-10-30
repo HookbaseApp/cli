@@ -1328,31 +1328,35 @@ export async function disconnectTunnel(tunnelId: string): Promise<ApiResponse<{ 
   return request<{ success: boolean }>('POST', `/api/tunnels/${tunnelId}/disconnect`);
 }
 
+// camelCase is the API contract. The optional snake_case keys are what API versions before the
+// rename sent for request rows; read them only as a fallback.
 export interface TunnelRequest {
   id: string;
-  tunnel_id: string;
-  organization_id: string;
+  tunnelId?: string;
+  organizationId?: string;
   method: string;
   path: string;
-  status_code: number | null;
+  statusCode?: number | null;
   duration: number | null;
-  request_size: number | null;
-  response_size: number | null;
-  success: number;
-  error_message: string | null;
-  user_agent: string | null;
-  ip_address: string | null;
-  created_at: string;
+  requestSize?: number | null;
+  responseSize?: number | null;
+  success: boolean;
+  errorMessage?: string | null;
+  userAgent?: string | null;
+  ipAddress?: string | null;
+  createdAt?: string;
+  status_code?: number | null;
+  created_at?: string;
 }
 
 export interface TunnelRequestStats {
   total: number;
   successful: number;
   failed: number;
-  avg_duration: number | null;
-  max_duration: number | null;
-  total_request_bytes: number | null;
-  total_response_bytes: number | null;
+  avgDuration: number | null;
+  maxDuration: number | null;
+  totalRequestBytes: number | null;
+  totalResponseBytes: number | null;
 }
 
 export async function getTunnelRequests(tunnelId: string, options?: {
