@@ -513,7 +513,7 @@ function TunnelDetail({ tunnelId, tunnels, onBack, onRefresh }: {
                   <Text dimColor> Failed</Text>
                 </Box>
                 <Box borderStyle="round" borderColor="gray" paddingX={1}>
-                  <Text bold color="blue">{historyStats.avg_duration?.toFixed(0) || 0}ms</Text>
+                  <Text bold color="blue">{Number(historyStats.avgDuration ?? 0).toFixed(0)}ms</Text>
                   <Text dimColor> Avg</Text>
                 </Box>
               </Box>
@@ -536,7 +536,7 @@ function TunnelDetail({ tunnelId, tunnels, onBack, onRefresh }: {
                 historyRequests.slice(0, 12).map(req => (
                   <Box key={req.id}>
                     <Box width={12}>
-                      <Text dimColor>{new Date(req.created_at).toLocaleTimeString()}</Text>
+                      <Text dimColor>{new Date(req.createdAt ?? req.created_at ?? '').toLocaleTimeString()}</Text>
                     </Box>
                     <Box width={8}>
                       <Text color={getMethodColor(req.method)} bold>{req.method}</Text>
@@ -545,7 +545,7 @@ function TunnelDetail({ tunnelId, tunnels, onBack, onRefresh }: {
                       <Text>{req.path.slice(0, 26)}{req.path.length > 26 ? '..' : ''}</Text>
                     </Box>
                     <Box width={8}>
-                      <Text color={req.success ? 'green' : 'red'}>{req.status_code || '-'}</Text>
+                      <Text color={req.success ? 'green' : 'red'}>{(req.statusCode ?? req.status_code) || '-'}</Text>
                     </Box>
                     <Box width={10}>
                       <Text dimColor>{req.duration || 0}ms</Text>
