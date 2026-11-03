@@ -110,7 +110,7 @@ hookbase inbound routes circuit-status <id>   # Circuit breaker status (Pro+)
 
 ### Inbound: Transforms, Schemas, Filters, Notification Channels
 ```bash
-hookbase inbound transforms list              # List payload transforms (JSONata/JS)
+hookbase inbound transforms list              # List payload transforms (JSONata, JS/TS, Liquid, XSLT, JMESPath, JSON Logic, jq)
 hookbase inbound transforms create            # Create a transform (Transforms plan)
 
 hookbase inbound schemas list                 # List JSON Schema validators

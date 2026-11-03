@@ -484,7 +484,7 @@ export function registerDeliveriesCommands(parent: Command): Command {
 export function registerTransformsCommands(parent: Command): Command {
   const transforms = parent
     .command('transforms')
-    .description('Manage payload transforms (JSONata, JavaScript, …)');
+    .description('Manage payload transforms (JSONata, JavaScript, TypeScript, Liquid, XSLT, JMESPath, JSON Logic, jq)');
 
   transforms
     .command('list')
@@ -499,7 +499,7 @@ export function registerTransformsCommands(parent: Command): Command {
     .command('create')
     .description('Create a transform (Transforms plan)')
     .option('-n, --name <name>', 'Transform name')
-    .option('-t, --type <type>', 'Type: jsonata|javascript|liquid|xslt')
+    .option('-t, --type <type>', 'Type: jsonata|javascript|typescript|liquid|xslt|jmespath|jsonlogic|jq (inferred from --file extension when omitted)')
     .option('-c, --code <code>', 'Transform code (inline)')
     .option('-f, --file <path>', 'Read transform code from a file')
     .option('-d, --description <text>', 'Description')
