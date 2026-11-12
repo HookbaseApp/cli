@@ -657,21 +657,32 @@ interface OffsetPage {
   pagination?: { total?: number; page?: number; pageSize?: number };
 }
 
+/** What collectOffsetPages returns under `pagination`. `truncated` is set only when it stopped at
+ * MAX_OFFSET_PAGES with rows still left. */
+export interface CollectedPagination {
+  total: number;
+  page: number;
+  pageSize: number;
+  truncated?: boolean;
+}
+
 /**
  * Read every page of an offset-paginated list (`?page=N&pageSize=100`) and return the rows under
  * `key`, so name/slug lookups see the whole list and not just the first page. Stops when the
- * collected count reaches `pagination.total`, when a page comes back empty or short, or after
- * MAX_OFFSET_PAGES pages.
+ * collected count reaches `pagination.total`, or when a page comes back empty or shorter than the
+ * page size the server reports using (the requested 100 when it reports none). At MAX_OFFSET_PAGES
+ * with rows still left it stops, warns on stderr and sets `pagination.truncated`.
  */
 async function collectOffsetPages<K extends string, T>(
   path: string,
   key: K
-): Promise<ApiResponse<{ [P in K]: T[] } & { pagination: { total: number; page: number; pageSize: number } }>> {
+): Promise<ApiResponse<{ [P in K]: T[] } & { pagination: CollectedPagination }>> {
   const items: T[] = [];
   let total: number | undefined;
   let status = 200;
+  let done = false;
 
-  for (let page = 1; page <= MAX_OFFSET_PAGES; page++) {
+  for (let page = 1; page <= MAX_OFFSET_PAGES && !done; page++) {
     const sep = path.includes('?') ? '&' : '?';
     const result = await request<OffsetPage & Record<K, T[]>>(
       'GET',
@@ -683,18 +694,29 @@ async function collectOffsetPages<K extends string, T>(
     status = result.status;
     const rows = (result.data?.[key] ?? []) as T[];
     items.push(...rows);
-    const reported = result.data?.pagination?.total;
-    if (typeof reported === 'number') total = reported;
+    const reported = result.data?.pagination;
+    if (typeof reported?.total === 'number') total = reported.total;
+    // A server that pages smaller than asked still has more after a page of its own size.
+    const pageSize = typeof reported?.pageSize === 'number' && reported.pageSize > 0
+      ? reported.pageSize
+      : MAX_OFFSET_PAGE_SIZE;
 
-    if (rows.length === 0 || rows.length < MAX_OFFSET_PAGE_SIZE) break;
-    if (total !== undefined && items.length >= total) break;
+    done = rows.length === 0 || rows.length < pageSize || (total !== undefined && items.length >= total);
+  }
+
+  const truncated = !done;
+  if (truncated) {
+    process.stderr.write(
+      `Warning: ${path} has more than ${items.length} rows${total !== undefined ? ` (${total} reported)` : ''}; ` +
+      `only the first ${items.length} were read.\n`
+    );
   }
 
   return {
     data: {
       [key]: items,
-      pagination: { total: total ?? items.length, page: 1, pageSize: items.length },
-    } as { [P in K]: T[] } & { pagination: { total: number; page: number; pageSize: number } },
+      pagination: { total: total ?? items.length, page: 1, pageSize: items.length, ...(truncated ? { truncated } : {}) },
+    } as { [P in K]: T[] } & { pagination: CollectedPagination },
     status,
   };
 }
@@ -1185,9 +1207,10 @@ export async function updateDestination(
     batchSize?: number;
     batchWindowSeconds?: number;
   }
-): Promise<ApiResponse<{ destination: Destination }>> {
+): Promise<ApiResponse<{ success: boolean }>> {
 
-  return request<{ destination: Destination }>('PATCH', `/api/destinations/${destId}`, {
+  // PATCH /destinations/:id answers { success: true }, not the destination.
+  return request<{ success: boolean }>('PATCH', `/api/destinations/${destId}`, {
     name: data.name,
     url: data.url,
     method: data.method,
@@ -1370,9 +1393,10 @@ export async function updateRoute(
     isActive?: boolean;
     holdOnCircuitOpen?: boolean;
   }
-): Promise<ApiResponse<{ route: Route }>> {
+): Promise<ApiResponse<{ success: boolean }>> {
 
-  return request<{ route: Route }>('PATCH', `/api/routes/${routeId}`, {
+  // PATCH /routes/:id answers { success: true }, not the route.
+  return request<{ success: boolean }>('PATCH', `/api/routes/${routeId}`, {
     name: data.name,
     sourceId: data.sourceId,
     destinationId: data.destinationId,
@@ -1728,7 +1752,11 @@ export async function replayDelivery(
   );
 }
 
-/** `POST /deliveries/bulk-replay`: at most 100 ids; ids that are not found or not replayable are skipped. */
+/**
+ * `POST /deliveries/bulk-replay`: at most 100 ids. A delivery whose payload is gone or was never
+ * stored (transient) is `skipped` with a reason. An id that is not found is in neither `results` nor
+ * `skipped`, and when none are found the API answers 404 "No valid deliveries found".
+ */
 export interface BulkReplayResult {
   message: string;
   queued: number;
@@ -2482,7 +2510,13 @@ export async function deleteWebhookApplication(appId: string): Promise<ApiRespon
 export interface WebhookEndpoint {
   id: string;
   applicationId: string;
+  /** http, polling, or a provider kind (sqs, s3, ...). */
+  endpointType?: string;
   url: string;
+  /** Polling endpoints: where the consumer pulls from. */
+  pollUrl?: string | null;
+  /** Strictly ordered, one-at-a-time delivery. */
+  fifoEnabled?: boolean;
   description?: string | null;
   /** Masked: the first 12 characters plus "...". The full secret is only on create/rotate. */
   secretPrefix?: string;

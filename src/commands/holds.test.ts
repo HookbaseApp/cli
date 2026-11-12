@@ -162,6 +162,19 @@ describe('heldCount', () => {
     expect(text()).toContain('On Open:       hold messages until the circuit recovers');
   });
 
+  it.each([
+    ['a FIFO endpoint', { fifoEnabled: true, endpointType: 'http' }, 'n/a (FIFO endpoints never hold)'],
+    ['a polling endpoint', { fifoEnabled: false, endpointType: 'polling', pollUrl: 'https://api.example.test/poll/x' }, 'n/a (polling endpoints never hold)'],
+    ['an opted-out endpoint', { holdOnCircuitOpen: false }, 'dead-letter messages'],
+  ])('endpoint get says what really happens for %s', async (_label, fields, expected) => {
+    fetchMock.mockResolvedValueOnce(respond(200, { data: {
+      id: 'ep_1', applicationId: 'app_1', url: 'https://example.test', isDisabled: false, circuitState: 'closed',
+      holdOnCircuitOpen: true, heldCount: 0, heldCountCapped: false, createdAt: 'x', updatedAt: 'x', ...fields,
+    } }));
+    await endpoints.endpointsGetCommand('ep_1', {});
+    expect(text()).toContain(`On Open:       ${expected}`);
+  });
+
   it('route get shows heldCount, holdOnCircuitOpen=false, and no invented delivery count', async () => {
     fetchMock.mockResolvedValueOnce(respond(200, { route: {
       id: 'rt_1', name: 'R', sourceName: 'S', destinationName: 'D', priority: 0, isActive: true,
@@ -175,18 +188,32 @@ describe('heldCount', () => {
 });
 
 describe('--[no-]hold-on-circuit-open', () => {
+  // PATCH /routes/:id answers { success: true } (api routes.ts), not the route.
   it('route update sends the field only when a flag is given', async () => {
-    fetchMock.mockResolvedValue(respond(200, { route: { id: 'rt_1' } }));
+    fetchMock.mockResolvedValue(respond(200, { success: true }));
     await routes.routesUpdateCommand('rt_1', { holdOnCircuitOpen: false });
     await routes.routesUpdateCommand('rt_1', { name: 'x' });
     expect(call(0).body).toEqual({ holdOnCircuitOpen: false });
     expect(call(1).body).toEqual({ name: 'x' });
+    expect(out.filter((l) => l === 'Route updated')).toHaveLength(2);
   });
 
   it('route update with only the hold flag is a valid update', async () => {
-    fetchMock.mockResolvedValue(respond(200, { route: { id: 'rt_1' } }));
+    fetchMock.mockResolvedValue(respond(200, { success: true }));
     await routes.routesUpdateCommand('rt_1', { holdOnCircuitOpen: true });
     expect(call().body).toEqual({ holdOnCircuitOpen: true });
+    expect(text()).toContain('Route updated');
+  });
+
+  it('route update --json prints the route as it is after the update', async () => {
+    const after = { id: 'rt_1', name: 'R', holdOnCircuitOpen: false, heldCount: 0, heldCountCapped: false };
+    fetchMock
+      .mockResolvedValueOnce(respond(200, { success: true }))
+      .mockResolvedValueOnce(respond(200, { route: after }));
+    await routes.routesUpdateCommand('rt_1', { holdOnCircuitOpen: false, json: true });
+    expect(call(1).method).toBe('GET');
+    expect(call(1).url.pathname).toBe('/api/routes/rt_1');
+    expect(JSON.parse(logSpy.mock.calls[0][0] as string)).toEqual(after);
   });
 
   it('route create omits the field by default and sends false with --no-hold-on-circuit-open', async () => {

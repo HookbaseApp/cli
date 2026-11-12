@@ -261,6 +261,7 @@ function RouteDetail({ routeId, routes, onBack, onRefresh }: {
         <Box>
           <Box width={16}><Text dimColor>On Open:</Text></Box>
           <Text>{route.holdOnCircuitOpen === false ? 'dead-letter deliveries' : 'hold deliveries until the circuit recovers'}</Text>
+          {route.holdOnCircuitOpen !== false && <Text dimColor> (circuit breaker plans)</Text>}
         </Box>
         {(route.filterId || route.filter_id) && (
           <Box>

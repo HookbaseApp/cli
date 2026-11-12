@@ -389,7 +389,7 @@ export function registerRoutesCommands(parent: Command): Command {
     .option('--active', 'Set route as active')
     .option('--inactive', 'Set route as inactive')
     .option('--hold-on-circuit-open', 'While the circuit is open, hold deliveries until it recovers')
-    .option('--no-hold-on-circuit-open', 'While the circuit is open, dead-letter deliveries (rows already held are released by the recovery sweep)')
+    .option('--no-hold-on-circuit-open', 'While the circuit is open, dead-letter deliveries (deliveries already held are released, then dead-lettered if the circuit is still open)')
     .option('--json', 'Output as JSON')
     .option('--xml', 'Output as XML')
     .option('--yaml', 'Output as YAML')

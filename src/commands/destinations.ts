@@ -645,7 +645,9 @@ export async function destinationsUpdateCommand(
   spinner.succeed('Destination updated');
 
   if (options.json || options.xml || options.yaml) {
-    console.log(formatOutput(result.data?.destination, options.xml, options.yaml));
+    // PATCH answers { success: true }; print the updated destination, as `sources update` does.
+    const updated = await api.getDestination(destId);
+    console.log(formatOutput(updated.data?.destination ?? result.data, options.xml, options.yaml));
   }
 }
 

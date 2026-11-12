@@ -380,7 +380,15 @@ function CreateDestination({ onBack, onCreated }: {
   const [error, setError] = useState<string | null>(null);
   const [createdDest, setCreatedDest] = useState<api.Destination | null>(null);
 
+  // An HTTP destination's signing secret is in the create reply only, so the done screen waits for
+  // a key instead of returning to the list on a timer.
+  const hasSecretToShow = (d: api.Destination | null) => !!d?.signingSecret;
+
   useInput((input, key) => {
+    if (step === 'done' && hasSecretToShow(createdDest) && (key.return || key.escape)) {
+      onBack();
+      return;
+    }
     if (key.escape && step !== 'creating') {
       onBack();
     }
@@ -461,12 +469,17 @@ function CreateDestination({ onBack, onCreated }: {
         setError(result.error);
         setStep(isWarehouse ? WAREHOUSE_FIELDS[destType][0] : 'staticIp');
       } else {
-        setCreatedDest(result.data?.destination || null);
+        const created = result.data?.destination || null;
+        setCreatedDest(created);
         setStep('done');
-        setTimeout(() => {
+        if (hasSecretToShow(created)) {
           onCreated();
-          onBack();
-        }, 1500);
+        } else {
+          setTimeout(() => {
+            onCreated();
+            onBack();
+          }, 1500);
+        }
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create destination');
@@ -615,6 +628,16 @@ function CreateDestination({ onBack, onCreated }: {
             <Box>
               <Text dimColor>Type: </Text>
               <Text>{destType.toUpperCase()}</Text>
+            </Box>
+            {createdDest.signingSecret && (
+              <Box flexDirection="column" marginTop={1}>
+                <Text color="yellow">Signing secret — shown once, save it now:</Text>
+                <Text bold>{createdDest.signingSecret}</Text>
+                <Text dimColor>Verify deliveries from this destination with it. Later: hookbase destinations reveal-secret {createdDest.id}</Text>
+              </Box>
+            )}
+            <Box marginTop={1}>
+              <Text dimColor>{hasSecretToShow(createdDest) ? 'Press Enter to return to the list' : 'Returning to list...'}</Text>
             </Box>
           </Box>
         )}

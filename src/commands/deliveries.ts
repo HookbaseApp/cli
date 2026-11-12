@@ -236,7 +236,8 @@ export function replayErrorMessage(result: { error?: string; code?: string; stat
     case 'HEADERS_OVERRIDE_TOO_LARGE':
       return 'At most 50 --header values are allowed.';
   }
-  if (result.status === 404) return 'Delivery not found.';
+  // A 404 can be the delivery or its event ("Event not found"): say what the API said.
+  if (result.status === 404) return result.error ?? 'Not found';
   if (result.status === 403 && /events:send/.test(result.error ?? '')) {
     return `${result.error}. Replaying into a bridge destination, or editing what one receives, also needs the events:send permission.`;
   }
@@ -417,5 +418,12 @@ export async function deliveriesBulkReplayCommand(options: {
     for (const r of result.data.results ?? []) {
       if (r.status === 'skipped') logger.dim(`  ${r.originalId}: ${r.reason || 'skipped'}`);
     }
+  }
+  // Ids the API did not find are in neither count (e.g. deleted since the list was read).
+  const answered = new Set((result.data?.results ?? []).map((r) => r.originalId));
+  const missing = selectedIds.filter((id) => !answered.has(id));
+  if (result.data?.results && missing.length > 0) {
+    logger.log(`Not found: ${logger.yellow(String(missing.length))}`);
+    for (const id of missing) logger.dim(`  ${id}`);
   }
 }

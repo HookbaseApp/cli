@@ -559,8 +559,9 @@ export async function routesGetCommand(
   if (route.filter_id || route.filterId) logger.log(`Filter:      ${route.filter_id || route.filterId}`);
   if (route.transform_id || route.transformId) logger.log(`Transform:   ${route.transform_id || route.transformId}`);
   if (route.circuitState) logger.log(`Circuit:     ${formatCircuit(route.circuitState)}`);
-  // The API stores true by default, so only an explicit false dead-letters.
-  logger.log(`On Open:     ${route.holdOnCircuitOpen === false ? 'dead-letter deliveries' : 'hold deliveries until the circuit recovers'}`);
+  // The API stores true by default, so only an explicit false dead-letters. Routes have no FIFO or
+  // polling mode; inbound holds need a plan with the circuit breaker (Pro, Business).
+  logger.log(`On Open:     ${route.holdOnCircuitOpen === false ? 'dead-letter deliveries' : `hold deliveries until the circuit recovers ${logger.dimText('(circuit breaker plans)')}`}`);
   if (route.heldCount !== undefined) {
     const held = api.formatHeldCount(route);
     logger.log(`Held:        ${route.heldCount > 0 ? logger.cyan(held) : held}`);
@@ -615,7 +616,9 @@ export async function routesUpdateCommand(
   spinner.succeed('Route updated');
 
   if (options.json || options.xml || options.yaml) {
-    console.log(formatOutput(result.data?.route, options.xml, options.yaml));
+    // PATCH answers { success: true }; print the updated route, as `sources update` does.
+    const updated = await api.getRoute(routeId);
+    console.log(formatOutput(updated.data?.route ?? result.data, options.xml, options.yaml));
   }
 }
 

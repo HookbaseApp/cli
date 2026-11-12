@@ -1,8 +1,8 @@
-import { describe, it, expect } from 'vitest';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { describe, it, expect, afterEach } from 'vitest';
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { parseJsonField, readJsonArg, isJsonObject } from './parseJson.js';
+import { parseJsonField, readJsonArg, isJsonObject, MAX_JSON_FILE_BYTES } from './parseJson.js';
 
 describe('parseJsonField', () => {
   it('parses a valid JSON string', () => {
@@ -64,6 +64,64 @@ describe('readJsonArg', () => {
     expect(!bad.ok && bad.error).toMatch(/^--patch: invalid JSON/);
     const missing = readJsonArg('@/definitely/not/here.json', '--payload');
     expect(!missing.ok && missing.error).toMatch(/^--payload: cannot read \/definitely\/not\/here\.json/);
+  });
+
+  // V8 quotes ~10 characters around a bad token; for a credentials file that is part of a secret.
+  it.each([
+    ['an unquoted value', '{"accessKeyId":"AKIAEXAMPLE","secretAccessKey":wJalrXUtnFEMIK7MDENG}', 'syntax error'],
+    ['a trailing comma', '{\n  "secretAccessKey": "wJalrXUtnFEMIK7MDENG",\n}', 'at line 3, column 1'],
+    ['a missing comma', '{"secretAccessKey": "wJalrXUtnFEMIK7MDENG" "region": "us-east-1"}', 'at line 1, column 44'],
+    ['a truncated file', '{"secretAccessKey": "wJalrXUtnFEMIK7MDENG"', 'at line 1, column 43'],
+  ])('a malformed @file with %s reports where, not what', (_label, content, location) => {
+    const dir = mkdtempSync(join(tmpdir(), 'hb-json-'));
+    const file = join(dir, 'creds.json');
+    writeFileSync(file, content);
+    const result = readJsonArg(`@${file}`, '--config');
+    expect(result.ok).toBe(false);
+    const error = !result.ok ? result.error : '';
+    expect(error).toBe(`--config: invalid JSON in ${file} (${location})`);
+    for (const fragment of ['wJal', 'MDENG', 'AKIA', 'ccessKey', 'region', 'us-east']) {
+      expect(error).not.toContain(fragment);
+    }
+  });
+
+  it('inline JSON errors carry no input either', () => {
+    const result = readJsonArg('{"token": sk_live_abcdef}', '--payload');
+    expect(!result.ok && result.error).toBe('--payload: invalid JSON (syntax error)');
+  });
+
+  it('refuses a file over the size limit without reading it', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'hb-json-'));
+    const file = join(dir, 'big.json');
+    writeFileSync(file, `"${'x'.repeat(MAX_JSON_FILE_BYTES)}"`);
+    const result = readJsonArg(`@${file}`, '--payload');
+    expect(!result.ok && result.error).toMatch(/^--payload: .*big\.json is \d+ bytes; the limit is 1048576 \(1 MB\)$/);
+  });
+
+  it('accepts a file at the size limit', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'hb-json-'));
+    const file = join(dir, 'max.json');
+    writeFileSync(file, `"${'x'.repeat(MAX_JSON_FILE_BYTES - 2)}"`);
+    expect(readJsonArg(`@${file}`, '--payload').ok).toBe(true);
+  });
+
+  describe('~ expansion', () => {
+    const home = process.env.HOME;
+    afterEach(() => { process.env.HOME = home; });
+
+    it('expands @~/path to the home directory', () => {
+      const fakeHome = mkdtempSync(join(tmpdir(), 'hb-home-'));
+      mkdirSync(join(fakeHome, 'cfg'));
+      writeFileSync(join(fakeHome, 'cfg', 'bridge.json'), '{"eventType":"a.b"}');
+      process.env.HOME = fakeHome;
+      expect(readJsonArg('@~/cfg/bridge.json', '--config')).toEqual({ ok: true, value: { eventType: 'a.b' } });
+    });
+
+    it('names the path as typed when it cannot be read', () => {
+      process.env.HOME = mkdtempSync(join(tmpdir(), 'hb-home-'));
+      const result = readJsonArg('@~/missing.json', '--config');
+      expect(!result.ok && result.error).toBe('--config: cannot read ~/missing.json (ENOENT)');
+    });
   });
 });
 

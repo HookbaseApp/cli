@@ -256,10 +256,25 @@ describe('destinations update (bridge)', () => {
   it('applies bridge flags over the stored config and switches source cleanly', async () => {
     fetchMock
       .mockResolvedValueOnce(respond(200, { destination: { id: 'dst_b', type: 'bridge', config: { eventTypeSource: 'field', eventTypeField: 'type', eventTypePrefix: 'stripe.', applicationId: 'app-1' } } }))
-      .mockResolvedValueOnce(respond(200, { destination: { id: 'dst_b' } }));
+      // PATCH /destinations/:id answers { success: true } (api destinations.ts), not the destination.
+      .mockResolvedValueOnce(respond(200, { success: true }));
     await destinations.destinationsUpdateCommand('dst_b', { eventType: 'order.created', application: false });
     expect(call(1).method).toBe('PATCH');
     expect(call(1).body).toEqual({ config: { eventTypeSource: 'fixed', eventType: 'order.created', applicationId: null } });
+    expect(text()).toContain('Destination updated');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('--json prints the destination as it is after the update, not undefined', async () => {
+    const after = { id: 'dst_1', name: 'Renamed', type: 'http', hasSigningSecret: true };
+    fetchMock
+      .mockResolvedValueOnce(respond(200, { success: true }))
+      .mockResolvedValueOnce(respond(200, { destination: after }));
+    await destinations.destinationsUpdateCommand('dst_1', { name: 'Renamed', json: true });
+    expect(call(0).method).toBe('PATCH');
+    expect(call(1).method).toBe('GET');
+    expect(call(1).url.pathname).toBe('/api/destinations/dst_1');
+    expect(JSON.parse(logSpy.mock.calls[0][0] as string)).toEqual(after);
   });
 
   it('refuses bridge flags on a non-bridge destination', async () => {

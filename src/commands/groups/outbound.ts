@@ -152,7 +152,7 @@ export function registerEndpointsCommands(parent: Command): Command {
     .option('--static-ip', 'Enable static IP delivery')
     .option('--no-static-ip', 'Disable static IP delivery')
     .option('--hold-on-circuit-open', 'While the circuit is open, hold messages until it recovers')
-    .option('--no-hold-on-circuit-open', 'While the circuit is open, dead-letter messages (messages already held are released by the recovery sweep)')
+    .option('--no-hold-on-circuit-open', 'While the circuit is open, dead-letter messages (messages already held are released, then dead-lettered if the circuit is still open)')
     .option('--json', 'Output as JSON')
     .option('--xml', 'Output as XML')
     .option('--yaml', 'Output as YAML')

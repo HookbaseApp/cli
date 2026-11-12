@@ -157,6 +157,16 @@ describe('deliveries replay', () => {
     expect(text()).toContain(expected);
   });
 
+  it.each([
+    ['Event not found'],
+    ['Delivery not found'],
+  ])('a 404 without a code shows the API message (%s)', async (error) => {
+    fetchMock.mockResolvedValueOnce(respond(404, { error }));
+    await deliveries.deliveriesReplayCommand('dlv_1', { yes: true });
+    expect(text()).toContain(error);
+    if (error === 'Event not found') expect(text()).not.toContain('Delivery not found');
+  });
+
   it('explains the events:send gate on a bridge replay', async () => {
     fetchMock.mockResolvedValueOnce(respond(403, { error: 'Permission denied: events:send', reason: 'no matching allow' }));
     await deliveries.deliveriesReplayCommand('dlv_1', { yes: true, destination: 'bridge' });
@@ -184,6 +194,20 @@ describe('deliveries bulk-replay', () => {
     expect(text()).toContain('Queued:  1');
     expect(text()).toContain('Skipped: 1');
     expect(text()).toContain('d2: Transient event - payload not stored');
+    expect(text()).not.toContain('Not found:');
+  });
+
+  it('lists ids the API did not find, which are in neither queued nor skipped', async () => {
+    fetchMock
+      .mockResolvedValueOnce(respond(200, { deliveries: [{ id: 'd1', status: 'failed' }, { id: 'gone', status: 'failed' }], limit: 50, offset: 0 }))
+      .mockResolvedValueOnce(respond(200, {
+        message: '1 deliveries queued for replay, 0 skipped', queued: 1, skipped: 0,
+        results: [{ originalId: 'd1', newId: 'n1', status: 'queued' }],
+      }));
+    await deliveries.deliveriesBulkReplayCommand({ yes: true });
+    expect(text()).toContain('Queued:  1');
+    expect(text()).toContain('Not found: 1');
+    expect(text()).toContain('  gone');
   });
 });
 

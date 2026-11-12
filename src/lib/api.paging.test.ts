@@ -99,11 +99,44 @@ describe('offset-paginated lists return every page', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it('is bounded when a server keeps returning full pages', async () => {
+  it('is bounded when a server keeps returning full pages, and says so on stderr', async () => {
+    const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
     fetchMock.mockImplementation(async () => json({ sources: rows(100, 's'), pagination: { total: 1_000_000 } }));
     const result = await api.getSources();
     expect(fetchMock).toHaveBeenCalledTimes(api.MAX_OFFSET_PAGES);
     expect(result.data!.sources).toHaveLength(api.MAX_OFFSET_PAGES * 100);
+    expect(result.data!.pagination.truncated).toBe(true);
+    expect(stderr).toHaveBeenCalledWith(expect.stringContaining('/api/sources has more than 5000 rows (1000000 reported); only the first 5000 were read.'));
+    stderr.mockRestore();
+  });
+
+  it('keeps paging when the server uses a smaller page size than asked for', async () => {
+    const all = rows(120, 'f');
+    fetchMock.mockImplementation(async (url: string) => {
+      const page = Number(new URL(url).searchParams.get('page'));
+      return json({ filters: all.slice((page - 1) * 50, page * 50), pagination: { total: all.length, page, pageSize: 50 } });
+    });
+    const result = await api.getFilters();
+    expect(result.data!.filters).toHaveLength(120);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('a smaller server page size still ends on a short page when there is no total', async () => {
+    fetchMock
+      .mockResolvedValueOnce(json({ routes: rows(50, 'r'), pagination: { pageSize: 50 } }))
+      .mockResolvedValueOnce(json({ routes: rows(10, 'r2'), pagination: { pageSize: 50 } }));
+    const result = await api.getRoutes();
+    expect(result.data!.routes).toHaveLength(60);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('a complete read is not marked truncated and writes nothing to stderr', async () => {
+    const stderr = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    serve('transforms', rows(250, 't'));
+    const result = await api.getTransforms();
+    expect(result.data!.pagination).not.toHaveProperty('truncated');
+    expect(stderr).not.toHaveBeenCalled();
+    stderr.mockRestore();
   });
 
   it('returns the error when a later page fails', async () => {

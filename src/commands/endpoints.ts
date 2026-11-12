@@ -195,6 +195,16 @@ export async function endpointsCreateCommand(options: {
   }
 }
 
+/**
+ * What happens to a message while the circuit is open. The API reports holdOnCircuitOpen true
+ * unless it was turned off, but FIFO and polling endpoints never hold whatever it says.
+ */
+export function endpointOnOpen(endpoint: Pick<api.WebhookEndpoint, 'holdOnCircuitOpen' | 'fifoEnabled' | 'endpointType'>): string {
+  if (endpoint.endpointType === 'polling') return 'n/a (polling endpoints never hold)';
+  if (endpoint.fifoEnabled === true) return 'n/a (FIFO endpoints never hold)';
+  return endpoint.holdOnCircuitOpen === false ? 'dead-letter messages' : 'hold messages until the circuit recovers';
+}
+
 export async function endpointsGetCommand(
   endpointId: string,
   options: { json?: boolean; xml?: boolean; yaml?: boolean }
@@ -237,8 +247,7 @@ export async function endpointsGetCommand(
   if (endpoint.description) logger.log(`Description:   ${endpoint.description}`);
   logger.log(`Status:        ${isActive ? logger.green('active') : logger.red('inactive')}`);
   logger.log(`Circuit:       ${formatCircuitState(endpoint.circuitState)}`);
-  // The API reports true unless it was turned off. FIFO and polling endpoints never hold.
-  logger.log(`On Open:       ${endpoint.holdOnCircuitOpen === false ? 'dead-letter messages' : 'hold messages until the circuit recovers'}`);
+  logger.log(`On Open:       ${endpointOnOpen(endpoint)}`);
   if (endpoint.heldCount !== undefined) {
     const held = api.formatHeldCount(endpoint);
     logger.log(`Held:          ${endpoint.heldCount > 0 ? logger.cyan(held) : held}`);

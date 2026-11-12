@@ -6,6 +6,7 @@ import * as logger from '../lib/logger.js';
 
 import { requireAuth } from '../lib/requireAuth.js';
 import { formatOutput } from '../lib/output.js';
+import { jsonErrorLocation } from '../lib/parseJson.js';
 
 /** Helper to check if an error is a prompt cancellation (Ctrl+C) */
 function isPromptCancelled(error: unknown): boolean {
@@ -61,11 +62,19 @@ export async function sendCommand(options: {
     // Get payload
     if (options.file) {
       // Read from file
+      let fileContent: string;
       try {
-        const fileContent = fs.readFileSync(options.file, 'utf-8');
+        fileContent = fs.readFileSync(options.file, 'utf-8');
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException | undefined)?.code;
+        logger.error(`Failed to read ${options.file}${code ? ` (${code})` : ''}`);
+        return;
+      }
+      try {
         payload = JSON.parse(fileContent);
       } catch (error) {
-        logger.error(`Failed to read or parse file: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        // Only where it broke: V8's message quotes part of the file.
+        logger.error(`Invalid JSON in ${options.file} (${jsonErrorLocation(error, fileContent)})`);
         return;
       }
     } else if (options.payload) {
