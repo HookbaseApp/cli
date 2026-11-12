@@ -62,7 +62,7 @@ function RouteList({ routes, onSelect, onCreate }: {
           <Box width={22}><Text bold dimColor>Destination</Text></Box>
           <Box width={10}><Text bold dimColor>Priority</Text></Box>
           <Box width={10}><Text bold dimColor>Status</Text></Box>
-          <Box width={12}><Text bold dimColor>Deliveries</Text></Box>
+          <Box width={12}><Text bold dimColor>Circuit</Text></Box>
         </Box>
 
         {routes.length === 0 && (
@@ -90,7 +90,8 @@ function RouteList({ routes, onSelect, onCreate }: {
                 const itemActive = (item.isActive ?? item.is_active) === true || (item.isActive ?? item.is_active) === 1;
                 const sourceName = item.sourceName || item.source_name || '-';
                 const destName = item.destinationName || item.destination_name || '-';
-                const deliveryCount = item.deliveryCount ?? item.delivery_count ?? 0;
+                // GET /routes carries no delivery count; show the circuit state instead.
+                const circuit = (item as { circuitState?: string }).circuitState;
                 return (
                   <>
                     <Box width={24}>
@@ -113,7 +114,9 @@ function RouteList({ routes, onSelect, onCreate }: {
                       </Text>
                     </Box>
                     <Box width={12}>
-                      <Text dimColor>{deliveryCount}</Text>
+                      <Text color={circuit === 'open' ? 'red' : circuit === 'half_open' ? 'yellow' : circuit === 'closed' ? 'green' : undefined} dimColor={!circuit}>
+                        {circuit ?? '-'}
+                      </Text>
                     </Box>
                   </>
                 );
@@ -256,8 +259,8 @@ function RouteDetail({ routeId, routes, onBack, onRefresh }: {
           </Text>
         </Box>
         <Box>
-          <Box width={16}><Text dimColor>Deliveries:</Text></Box>
-          <Text>{route.deliveryCount ?? route.delivery_count ?? 0}</Text>
+          <Box width={16}><Text dimColor>On Open:</Text></Box>
+          <Text>{route.holdOnCircuitOpen === false ? 'dead-letter deliveries' : 'hold deliveries until the circuit recovers'}</Text>
         </Box>
         {(route.filterId || route.filter_id) && (
           <Box>
