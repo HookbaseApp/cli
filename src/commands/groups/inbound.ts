@@ -20,6 +20,8 @@ import {
   destinationsUpdateCommand,
   destinationsDeleteCommand,
   destinationsTestCommand,
+  destinationsRevealSecretCommand,
+  destinationsRotateSecretCommand,
 } from '../destinations.js';
 import {
   routesListCommand,
@@ -237,8 +239,14 @@ export function registerDestinationsCommands(parent: Command): Command {
     .option('--throttle-unit <unit>', 'Rate unit: second|minute|hour, default minute — with --throttle-mode rate')
     .option('--throttle-concurrency <n>', 'Max in-flight requests — with --throttle-mode concurrency')
     .option('--throttle-queue-limit <n>', 'Queue depth backpressure threshold (optional, non-off modes)')
-    .option('--type <type>', 'Destination type: http|s3|r2|gcs|azure_blob|sqs|eventbridge|servicebus|pubsub|oci_queue (warehouse/queue types are Pro+)')
-    .option('--config <json>', 'JSON config object for warehouse/queue types')
+    .option('--type <type>', 'Destination type: http|s3|r2|gcs|azure_blob|sqs|eventbridge|servicebus|pubsub|oci_queue|bridge (warehouse/queue types are Pro+; bridge publishes inbound events as outbound events)')
+    .option('--config <json|@file>', 'JSON config object for warehouse/queue/bridge types')
+    .option('--event-type-source <source>', 'Bridge: fixed|field (implied by --event-type or --event-type-field)')
+    .option('--event-type <name>', 'Bridge: publish every event as this outbound event type (must exist and be enabled)')
+    .option('--event-type-field <path>', 'Bridge: read the event type from this payload field (dot path, e.g. data.type)')
+    .option('--event-type-prefix <prefix>', 'Bridge: prefix for a field-derived event type (e.g. stripe.)')
+    .option('--application <id>', 'Bridge: publish only to this outbound application\'s endpoints')
+    .option('--allow-unverified-sources', 'Bridge: also publish events whose sender the source did not verify')
     .option('--batch-size <n>', 'Batch size for warehouse/queue types (1-1000)')
     .option('--batch-window <s>', 'Batch window in seconds (0-300)')
     .option('--field-mapping <json>', 'JSON array of field mappings for warehouse/queue types')
@@ -269,6 +277,15 @@ export function registerDestinationsCommands(parent: Command): Command {
     .option('--inactive', 'Set destination as inactive')
     .option('--static-ip', 'Enable static IP delivery')
     .option('--no-static-ip', 'Disable static IP delivery')
+    .option('--config <json|@file>', 'Replace the config (warehouse/queue/bridge types)')
+    .option('--event-type-source <source>', 'Bridge: fixed|field')
+    .option('--event-type <name>', 'Bridge: fixed outbound event type')
+    .option('--event-type-field <path>', 'Bridge: payload field to read the event type from')
+    .option('--event-type-prefix <prefix>', 'Bridge: prefix for a field-derived event type')
+    .option('--application <id>', 'Bridge: publish only to this outbound application\'s endpoints')
+    .option('--no-application', 'Bridge: publish to every subscribed endpoint again')
+    .option('--allow-unverified-sources', 'Bridge: also publish events from unverified senders')
+    .option('--no-allow-unverified-sources', 'Bridge: publish only events from verified senders')
     .option('--json', 'Output as JSON')
     .option('--xml', 'Output as XML')
     .option('--yaml', 'Output as YAML')
@@ -286,11 +303,30 @@ export function registerDestinationsCommands(parent: Command): Command {
 
   destinations
     .command('test <destination>')
-    .description('Test a destination with a sample webhook (accepts ID or slug)')
+    .description('Test a destination with a sample webhook; a bridge gets a dry run (accepts ID or slug)')
+    .option('--payload <json|@file>', 'Bridge: sample payload (a JSON object) to resolve the event type from')
     .option('--json', 'Output as JSON')
     .option('--xml', 'Output as XML')
     .option('--yaml', 'Output as YAML')
     .action(destinationsTestCommand);
+
+  destinations
+    .command('reveal-secret <destination>')
+    .description('Show the signing secret of an HTTP destination (accepts ID or slug)')
+    .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
+    .action(destinationsRevealSecretCommand);
+
+  destinations
+    .command('rotate-secret <destination>')
+    .description('Issue a new signing secret for an HTTP destination (accepts ID or slug)')
+    .option('-g, --grace-period <seconds>', 'Keep signing with the old secret too for this long (0-86400, default 3600)')
+    .option('-y, --yes', 'Skip confirmation')
+    .option('--json', 'Output as JSON')
+    .option('--xml', 'Output as XML')
+    .option('--yaml', 'Output as YAML')
+    .action(destinationsRotateSecretCommand);
 
   return destinations;
 }

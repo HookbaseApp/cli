@@ -1003,6 +1003,31 @@ export async function getProviderEvents(providerId: string): Promise<ApiResponse
 // Destinations
 // ============================================================================
 
+/** Every destination type `POST /destinations` accepts (api/src/routes/destinations.ts DESTINATION_TYPES). */
+export const DESTINATION_TYPES = [
+  'http', 'sqs', 'eventbridge', 'servicebus', 'pubsub', 'oci_queue',
+  's3', 'r2', 'gcs', 'azure_blob', 'bridge',
+] as const;
+export type DestinationType = (typeof DESTINATION_TYPES)[number];
+
+/**
+ * A bridge destination's config (api/src/types/warehouse.ts bridgeConfigSchema, strict). The event
+ * type is fixed, or read from a payload field and optionally prefixed.
+ */
+export interface BridgeConfig {
+  eventTypeSource: 'fixed' | 'field';
+  /** Required when eventTypeSource is fixed; must be an enabled event type. */
+  eventType?: string;
+  /** Required when eventTypeSource is field: a dot path of at most 5 segments. */
+  eventTypeField?: string;
+  /** Only with eventTypeSource field: lowercase letters, digits and dots. */
+  eventTypePrefix?: string;
+  /** Publish only to this outbound application's endpoints. Unset: every subscribed endpoint. */
+  applicationId?: string | null;
+  /** Also publish events whose sender the source did not verify. Default false. */
+  allowUnverifiedSources?: boolean;
+}
+
 export interface Destination {
   id: string;
   name: string;
@@ -1027,13 +1052,43 @@ export interface Destination {
   failure_count?: number;
   route_count?: number;
   created_at?: string;
-  // Warehouse destination fields
-  type?: 'http' | 's3' | 'r2' | 'gcs' | 'azure_blob';
-  config?: Record<string, unknown> | string;
+  // Warehouse, queue and bridge destination fields
+  type?: DestinationType;
+  /** Warehouse/queue: credentials redacted. Bridge: a BridgeConfig. */
+  config?: Record<string, unknown> | string | null;
   batch_size?: number;
   batch_window_seconds?: number;
   field_mapping?: string;
   use_static_ip?: number;
+  /** Whether deliveries are signed (HTTP destinations). The secret is only behind reveal-secret. */
+  hasSigningSecret?: boolean;
+  /** Create response only, HTTP destinations only: the signing secret, shown once. */
+  signingSecret?: string | null;
+}
+
+/** `GET /destinations/:id/reveal-secret` and `POST /destinations/:id/rotate-secret`. */
+export interface DestinationSigningSecret {
+  signingSecret: string;
+  /** While the previous secret still signs (after a rotation with a grace period); null otherwise. */
+  previousSecretExpiresAt: string | null;
+}
+
+/**
+ * `POST /destinations/:id/test`. HTTP and warehouse tests send a request and report
+ * status/latencyMs/responseBody; a bridge test is a dry run that resolves the event type from a
+ * sample payload and counts the subscribed endpoints, publishing nothing; queue types return
+ * success false with an explanation.
+ */
+export interface DestinationTestResult {
+  success: boolean;
+  status?: number;
+  latencyMs?: number;
+  responseBody?: string;
+  error?: string;
+  dryRun?: boolean;
+  eventType?: string | null;
+  eventTypeExists?: boolean;
+  matchingEndpoints?: number;
 }
 
 export async function getDestinations(): Promise<ApiResponse<{ destinations: Destination[] }>> {
@@ -1064,7 +1119,7 @@ export async function createDestination(data: {
   } | null;
   mockMode?: boolean;
   useStaticIp?: boolean;
-  type?: 'http' | 'sqs' | 'eventbridge' | 'servicebus' | 'pubsub' | 'oci_queue' | 's3' | 'r2' | 'gcs' | 'azure_blob';
+  type?: DestinationType;
   config?: Record<string, unknown>;
   fieldMapping?: Array<{ source: string; target: string; type: string; default?: string }>;
   batchSize?: number;
@@ -1114,6 +1169,8 @@ export async function updateDestination(
     mockMode?: boolean;
     isActive?: boolean;
     useStaticIp?: boolean;
+    /** Replaces the stored config. A bridge's is checked as a whole (strict schema). */
+    config?: Record<string, unknown> | null;
     fieldMapping?: Array<{ source: string; target: string; type: string; default?: string }>;
     batchSize?: number;
     batchWindowSeconds?: number;
@@ -1131,6 +1188,7 @@ export async function updateDestination(
     throttle: data.throttle,
     isActive: data.isActive,
     useStaticIp: data.useStaticIp,
+    config: data.config,
     fieldMapping: data.fieldMapping,
     batchSize: data.batchSize,
     batchWindowSeconds: data.batchWindowSeconds,
@@ -1142,17 +1200,36 @@ export async function deleteDestination(destId: string): Promise<ApiResponse<{ s
   return request<{ success: boolean }>('DELETE', `/api/destinations/${destId}`);
 }
 
-export async function testDestination(destId: string): Promise<ApiResponse<{
-  success: boolean;
-  statusCode: number;
-  responseTime: number;
-  responseBody?: string;
-  error?: string;
-}>> {
+/**
+ * Test a destination. `payload` is the sample a bridge dry run resolves the event type from (it must
+ * be a JSON object); HTTP, warehouse and queue tests ignore it and send Hookbase's own test payload.
+ */
+export async function testDestination(destId: string, payload?: unknown): Promise<ApiResponse<DestinationTestResult>> {
 
-  return request<{ success: boolean; statusCode: number; responseTime: number; responseBody?: string; error?: string }>(
+  return request<DestinationTestResult>(
     'POST',
-    `/api/destinations/${destId}/test`
+    `/api/destinations/${destId}/test`,
+    payload !== undefined ? { payload } : undefined
+  );
+}
+
+/** The current signing secret (member+, write scope). HTTP destinations only. */
+export async function revealDestinationSecret(destId: string): Promise<ApiResponse<DestinationSigningSecret>> {
+  return request<DestinationSigningSecret>('GET', `/api/destinations/${destId}/reveal-secret`);
+}
+
+/**
+ * Issue a new signing secret. During `gracePeriodSeconds` (0-86400, server default 3600) deliveries
+ * carry both signatures; 0 drops the old secret at once.
+ */
+export async function rotateDestinationSecret(
+  destId: string,
+  gracePeriodSeconds?: number
+): Promise<ApiResponse<DestinationSigningSecret>> {
+  return request<DestinationSigningSecret>(
+    'POST',
+    `/api/destinations/${destId}/rotate-secret`,
+    gracePeriodSeconds !== undefined ? { gracePeriodSeconds } : {}
   );
 }
 

@@ -3,7 +3,10 @@ import { ExitPromptError } from '@inquirer/core';
 import * as api from '../lib/api.js';
 import * as logger from '../lib/logger.js';
 import { askAdvanced, gatedPrompt, ensureFeature, loadFeatures, featureEnabled } from '../lib/advanced.js';
-import { parseJsonField } from '../lib/parseJson.js';
+import { readJsonArg, isJsonObject, parseJsonField } from '../lib/parseJson.js';
+import {
+  WAREHOUSE_TYPES, QUEUE_TYPES, anyBridgeFlag, buildBridgeConfig, describeDestinationConfig, type BridgeFlags,
+} from '../lib/destinationConfig.js';
 
 import { requireAuth } from '../lib/requireAuth.js';
 import { formatOutput } from '../lib/output.js';
@@ -14,11 +17,9 @@ function isPromptCancelled(error: unknown): boolean {
     (error instanceof Error && error.name === 'ExitPromptError');
 }
 
-const WAREHOUSE_TYPES = ['s3', 'r2', 'gcs', 'azure_blob'] as const;
-const QUEUE_TYPES = ['sqs', 'eventbridge', 'servicebus', 'pubsub', 'oci_queue'] as const;
-type DestType = 'http' | typeof WAREHOUSE_TYPES[number] | typeof QUEUE_TYPES[number];
+type DestType = api.DestinationType;
 
-/** Which plan feature a non-HTTP destination type requires (null for HTTP). */
+/** Which plan feature a destination type requires (null for HTTP and bridge, which every plan has). */
 function destTypeFeature(type: string): { key: string; label: string } | null {
   if ((WAREHOUSE_TYPES as readonly string[]).includes(type)) {
     return { key: 'warehouse_destinations', label: 'Warehouse destinations' };
@@ -44,6 +45,25 @@ function parseHeaderFlags(items?: string[]): Record<string, string> | undefined 
     if (key) headers[key] = value;
   }
   return Object.keys(headers).length > 0 ? headers : undefined;
+}
+
+/** Read a --config value (inline JSON or @file); logs and returns null when it is not a JSON object. */
+function readConfigFlag(raw: string): Record<string, unknown> | null {
+  const parsed = readJsonArg(raw, '--config');
+  if (!parsed.ok) { logger.error(parsed.error); return null; }
+  if (!isJsonObject(parsed.value)) { logger.error('--config must be a JSON object'); return null; }
+  return parsed.value;
+}
+
+/** Parse 0..86400 for --grace-period; null (after logging) when invalid. */
+export function parseGracePeriod(raw: string | undefined): number | undefined | null {
+  if (raw === undefined) return undefined;
+  const n = Number(raw.trim());
+  if (!/^\d+$/.test(raw.trim()) || !Number.isInteger(n) || n < 0 || n > 86400) {
+    logger.error('--grace-period must be a whole number of seconds from 0 to 86400');
+    return null;
+  }
+  return n;
 }
 
 /** Parse a JSON flag value; on error, log and return undefined. */
@@ -87,13 +107,19 @@ export async function destinationsListCommand(options: { json?: boolean; xml?: b
   }
 
   logger.table(
-    ['ID', 'Name', 'Slug', 'URL', 'Method', 'Status', 'Deliveries'],
+    ['ID', 'Name', 'Slug', 'Type', 'URL / Target', 'Method', 'Status', 'Deliveries'],
     destinations.map((d: any) => [
       d.id,
       d.name,
       d.slug || '-',
-      (() => { const u = d.url || ''; return u.length > 40 ? u.slice(0, 37) + '...' : (u || '-'); })(),
-      d.method || 'POST',
+      d.type || 'http',
+      (() => {
+        const type = d.type || 'http';
+        // Non-HTTP destinations have no URL: show the first config row (bucket, queue, event type).
+        const u = type === 'http' ? (d.url || '') : (describeDestinationConfig(type, d.config)[0]?.[1] ?? '');
+        return u.length > 40 ? u.slice(0, 37) + '...' : (u || '-');
+      })(),
+      (d.type || 'http') === 'http' ? (d.method || 'POST') : '-',
       (d.is_active ?? d.isActive ?? !d.isDisabled) ? logger.green('active') : logger.dimText('inactive'),
       String(d.delivery_count ?? d.deliveryCount ?? 0),
     ])
@@ -222,12 +248,41 @@ export async function destinationsCreateCommand(options: {
   batchWindow?: string;
   fieldMapping?: string;
   staticIp?: boolean;
+  eventTypeSource?: string;
+  eventType?: string;
+  eventTypeField?: string;
+  eventTypePrefix?: string;
+  application?: string;
+  allowUnverifiedSources?: boolean;
   yes?: boolean;
   json?: boolean;
   xml?: boolean;
   yaml?: boolean;
 }): Promise<void> {
   requireAuth();
+
+  if (options.type !== undefined && !(api.DESTINATION_TYPES as readonly string[]).includes(options.type)) {
+    logger.error(`Invalid --type "${options.type}" (use ${api.DESTINATION_TYPES.join('|')})`);
+    return;
+  }
+  const bridgeFlags: BridgeFlags = {
+    eventTypeSource: options.eventTypeSource,
+    eventType: options.eventType,
+    eventTypeField: options.eventTypeField,
+    eventTypePrefix: options.eventTypePrefix,
+    application: options.application,
+    allowUnverifiedSources: options.allowUnverifiedSources,
+  };
+  if (anyBridgeFlag(bridgeFlags) && options.type !== 'bridge') {
+    logger.error('The --event-type*, --application and --allow-unverified-sources flags need --type bridge');
+    return;
+  }
+  let flagConfig: Record<string, unknown> | undefined;
+  if (options.config !== undefined) {
+    const cfg = readConfigFlag(options.config);
+    if (!cfg) return;
+    flagConfig = cfg;
+  }
 
   let name = options.name;
   let url = options.url;
@@ -263,13 +318,14 @@ export async function destinationsCreateCommand(options: {
   // Feature-gated flags — validate against the plan up front.
   const gatedFlagUsed =
     options.throttleMode !== undefined || options.staticIp === true ||
-    (options.type !== undefined && options.type !== 'http');
+    (options.type !== undefined && destTypeFeature(options.type) !== null);
   const anyAdvancedFlag = gatedFlagUsed || options.staticIp === false ||
     !!flagHeaders || options.authType !== undefined || options.timeout !== undefined ||
     options.batchSize !== undefined || options.batchWindow !== undefined ||
     options.fieldMapping !== undefined || options.config !== undefined ||
     options.throttleRate !== undefined || options.throttleUnit !== undefined ||
-    options.throttleConcurrency !== undefined || options.throttleQueueLimit !== undefined;
+    options.throttleConcurrency !== undefined || options.throttleQueueLimit !== undefined ||
+    options.type !== undefined || anyBridgeFlag(bridgeFlags);
 
   if (options.staticIp === false) dest.useStaticIp = false; // --no-static-ip (ungated: turning it OFF)
 
@@ -312,24 +368,32 @@ export async function destinationsCreateCommand(options: {
       if (!ensureFeature('static_ip', 'Static IP delivery')) return;
       dest.useStaticIp = true;
     }
-    if (options.type !== undefined && options.type !== 'http') {
-      const feat = destTypeFeature(options.type);
-      if (!feat) { logger.error(`Invalid --type "${options.type}"`); return; }
-      if (!ensureFeature(feat.key, feat.label)) return;
-      dest.type = options.type as DestType;
-      const cfg = parseJsonFlag(options.config, 'config');
-      if (cfg) dest.config = cfg;
-    }
+    const feat = options.type !== undefined ? destTypeFeature(options.type) : null;
+    if (feat && !ensureFeature(feat.key, feat.label)) return;
   }
+
+  if (options.type === 'bridge') {
+    // A bridge publishes outbound events (any plan); it has no URL, headers, auth or static IP.
+    const built = buildBridgeConfig(flagConfig, bridgeFlags);
+    if (!built.ok) { logger.error(built.error); return; }
+    dest.type = 'bridge';
+    dest.config = built.config as unknown as Record<string, unknown>;
+  } else if (options.type !== undefined && options.type !== 'http') {
+    dest.type = options.type as DestType;
+    if (flagConfig) dest.config = flagConfig;
+  }
+  const isHttp = !dest.type || dest.type === 'http';
 
   // Interactive mode - wrapped in try-catch to handle Ctrl+C gracefully
   try {
-    if (!name || !url) {
+    if (!name || (isHttp && !url)) {
       name = name || await input({
         message: 'Destination name:',
         validate: (value) => value.length > 0 || 'Name is required',
       });
+    }
 
+    if (isHttp && (!url || !options.name)) {
       url = url || await input({
         message: 'Destination URL:',
         validate: (value) => {
@@ -361,7 +425,7 @@ export async function destinationsCreateCommand(options: {
 
     if (!options.yes && !options.name) {
       const confirmed = await confirm({
-        message: `Create destination "${name}" pointing to ${url}?`,
+        message: isHttp ? `Create destination "${name}" pointing to ${url}?` : `Create ${dest.type} destination "${name}"?`,
         default: true,
       });
       if (!confirmed) {
@@ -379,8 +443,10 @@ export async function destinationsCreateCommand(options: {
   }
 
   dest.name = name!;
-  dest.url = url!;
-  dest.method = method || 'POST';
+  if (isHttp) {
+    dest.url = url!;
+    dest.method = method || 'POST';
+  }
 
   const spinner = logger.spinner('Creating destination...');
   const result = await api.createDestination(dest);
@@ -400,13 +466,26 @@ export async function destinationsCreateCommand(options: {
 
   const created = result.data?.destination;
   if (created) {
-    logger.log('');
-    logger.box('Destination Created', [
+    const type = created.type || 'http';
+    const lines = [
       `ID:     ${created.id}`,
       `Name:   ${created.name}`,
-      `URL:    ${created.url}`,
-      `Method: ${created.method}`,
-    ].join('\n'));
+      `Type:   ${type}`,
+    ];
+    if (type === 'http') {
+      lines.push(`URL:    ${created.url}`, `Method: ${created.method}`);
+    } else {
+      for (const [label, value] of describeDestinationConfig(type, created.config)) {
+        lines.push(`${(label + ':').padEnd(7)} ${value}`);
+      }
+    }
+    logger.log('');
+    logger.box('Destination Created', lines.join('\n'));
+    if (created.signingSecret) {
+      logger.log('');
+      logger.log(`Signing secret (shown once): ${logger.bold(created.signingSecret)}`);
+      logger.dim('Every delivery is signed with it. Store it now; later use "hookbase destinations reveal-secret ' + created.id + '".');
+    }
   }
 }
 
@@ -439,42 +518,44 @@ export async function destinationsGetCommand(
     return;
   }
 
+  const d = dest as any;
+  const destType: string = dest.type || d.destinationType || 'http';
+  const isHttp = destType === 'http';
+
   logger.log('');
   logger.log(logger.bold('Destination Details'));
   logger.log('');
   logger.log(`ID:          ${dest.id}`);
   logger.log(`Name:        ${dest.name}`);
   logger.log(`Slug:        ${dest.slug}`);
-  logger.log(`URL:         ${dest.url}`);
-  logger.log(`Method:      ${dest.method}`);
-  logger.log(`Auth Type:   ${dest.auth_type ?? (dest as any).authType ?? '-'}`);
-  logger.log(`Status:      ${(dest.is_active ?? (dest as any).isActive ?? !(dest as any).isDisabled) ? logger.green('active') : logger.red('inactive')}`);
-  const staticIp = dest.use_static_ip ?? (dest as any).useStaticIp;
-  logger.log(`Static IP:   ${staticIp === 1 || staticIp === true ? logger.green('enabled') : logger.dimText('disabled')}`);
-  logger.log(`Timeout:     ${dest.timeout_ms ?? (dest as any).timeoutMs ?? 30000}ms`);
-  logger.log(`Deliveries:  ${dest.delivery_count ?? (dest as any).deliveryCount ?? 0}`);
-  logger.log(`  Delivered: ${dest.success_count ?? (dest as any).successCount ?? 0}`);
-  logger.log(`  Failed:    ${dest.failure_count ?? (dest as any).failureCount ?? 0}`);
-  logger.log(`Routes:      ${dest.route_count ?? (dest as any).routeCount ?? 0}`);
+  logger.log(`Type:        ${destType}`);
+  if (isHttp) {
+    logger.log(`URL:         ${dest.url}`);
+    logger.log(`Method:      ${dest.method}`);
+    logger.log(`Auth Type:   ${dest.auth_type ?? d.authType ?? '-'}`);
+    logger.log(`Signing:     ${dest.hasSigningSecret
+      ? logger.green('signed') + logger.dimText(' (hookbase destinations reveal-secret ' + (dest.slug || dest.id) + ')')
+      : logger.dimText('no signing secret (rotate-secret issues one)')}`);
+  } else {
+    for (const [label, value] of describeDestinationConfig(destType, dest.config)) {
+      logger.log(`${(label + ':').padEnd(12)} ${value}`);
+    }
+  }
+  logger.log(`Status:      ${(dest.is_active ?? d.isActive ?? !d.isDisabled) ? logger.green('active') : logger.red('inactive')}`);
+  if (isHttp) {
+    const staticIp = dest.use_static_ip ?? d.useStaticIp;
+    logger.log(`Static IP:   ${staticIp === 1 || staticIp === true ? logger.green('enabled') : logger.dimText('disabled')}`);
+    logger.log(`Timeout:     ${dest.timeout_ms ?? d.timeoutMs ?? 30000}ms`);
+  }
+  logger.log(`Deliveries:  ${dest.delivery_count ?? d.deliveryCount ?? 0}`);
+  logger.log(`  Delivered: ${dest.success_count ?? d.successCount ?? 0}`);
+  logger.log(`  Failed:    ${dest.failure_count ?? d.failureCount ?? 0}`);
+  logger.log(`Routes:      ${dest.route_count ?? d.routeCount ?? 0}`);
   if (dest.headers && Object.keys(dest.headers).length > 0) {
     logger.log(`Headers:`);
     for (const [key, value] of Object.entries(dest.headers)) {
       logger.log(`  ${key}: ${value}`);
     }
-  }
-
-  const destType = dest.type || (dest as any).destinationType || 'http';
-  if (destType !== 'http') {
-    const cfg = parseJsonField(dest.config, {} as Record<string, unknown>) as any;
-    logger.log(`Bucket:      ${cfg.bucket || '-'}`);
-    if (cfg.region) {
-      logger.log(`Region:      ${cfg.region}`);
-    }
-    if (cfg.prefix) {
-      logger.log(`Prefix:      ${cfg.prefix}`);
-    }
-    logger.log(`File Format: ${cfg.fileFormat || 'jsonl'}`);
-    logger.log(`Partition:   ${cfg.partitionBy || 'date'}`);
   }
 
   logger.log('');
@@ -490,6 +571,13 @@ export async function destinationsUpdateCommand(
     inactive?: boolean;
     staticIp?: boolean;
     noStaticIp?: boolean;
+    config?: string;
+    eventTypeSource?: string;
+    eventType?: string;
+    eventTypeField?: string;
+    eventTypePrefix?: string;
+    application?: string | false;
+    allowUnverifiedSources?: boolean;
     json?: boolean;
     xml?: boolean;
     yaml?: boolean;
@@ -506,8 +594,42 @@ export async function destinationsUpdateCommand(
   if (options.inactive) updateData.isActive = false;
   if (options.staticIp !== undefined) updateData.useStaticIp = options.staticIp;
 
+  let flagConfig: Record<string, unknown> | undefined;
+  if (options.config !== undefined) {
+    const cfg = readConfigFlag(options.config);
+    if (!cfg) return;
+    flagConfig = cfg;
+  }
+  const bridgeFlags: BridgeFlags = {
+    eventTypeSource: options.eventTypeSource,
+    eventType: options.eventType,
+    eventTypeField: options.eventTypeField,
+    eventTypePrefix: options.eventTypePrefix,
+    application: options.application,
+    allowUnverifiedSources: options.allowUnverifiedSources,
+  };
+  if (anyBridgeFlag(bridgeFlags)) {
+    // The API replaces a bridge's config as a whole, so the flags are applied on top of the stored
+    // config (or --config, when given).
+    const current = await api.getDestination(destId);
+    if (current.error || !current.data?.destination) {
+      logger.error(current.error || 'Destination not found');
+      return;
+    }
+    if (current.data.destination.type !== 'bridge') {
+      logger.error(`The --event-type*, --application and --allow-unverified-sources flags apply only to bridge destinations (this one is ${current.data.destination.type || 'http'})`);
+      return;
+    }
+    const base = flagConfig ?? parseJsonField(current.data.destination.config, {} as Record<string, unknown>);
+    const built = buildBridgeConfig(base, bridgeFlags);
+    if (!built.ok) { logger.error(built.error); return; }
+    updateData.config = built.config as unknown as Record<string, unknown>;
+  } else if (flagConfig) {
+    updateData.config = flagConfig;
+  }
+
   if (Object.keys(updateData).length === 0) {
-    logger.error('No updates specified. Use --name, --url, --method, --active, --inactive, --static-ip, or --no-static-ip');
+    logger.error('No updates specified. Use --name, --url, --method, --active, --inactive, --static-ip, --no-static-ip, --config, or the bridge flags');
     return;
   }
 
@@ -571,12 +693,20 @@ export async function destinationsDeleteCommand(
 
 export async function destinationsTestCommand(
   destId: string,
-  options: { json?: boolean; xml?: boolean; yaml?: boolean }
+  options: { payload?: string; json?: boolean; xml?: boolean; yaml?: boolean }
 ): Promise<void> {
   requireAuth();
 
+  let payload: unknown;
+  if (options.payload !== undefined) {
+    const parsed = readJsonArg(options.payload, '--payload');
+    if (!parsed.ok) { logger.error(parsed.error); return; }
+    if (!isJsonObject(parsed.value)) { logger.error('--payload must be a JSON object'); return; }
+    payload = parsed.value;
+  }
+
   const spinner = logger.spinner('Testing destination...');
-  const result = await api.testDestination(destId);
+  const result = await api.testDestination(destId, payload);
 
   if (result.error) {
     spinner.fail('Test failed');
@@ -584,29 +714,149 @@ export async function destinationsTestCommand(
     return;
   }
 
-  const raw = result.data as any;
-  const testResult = (raw?.data && typeof raw.data === 'object' ? raw.data : raw) as any;
+  const testResult = result.data;
 
   if (options.json || options.xml || options.yaml) {
+    spinner.stop();
     console.log(formatOutput(testResult, options.xml, options.yaml));
     return;
   }
 
-  const statusCode = testResult?.statusCode ?? testResult?.status_code ?? 0;
-  const responseTime = testResult?.duration ?? testResult?.responseTime ?? testResult?.response_time ?? 0;
+  if (!testResult) {
+    spinner.fail('Test failed');
+    return;
+  }
 
-  if (testResult?.success) {
+  if (testResult.dryRun) {
+    // Bridge: nothing was published. Report what would have been.
+    if (testResult.success) spinner.succeed('Dry run: the bridge would publish this event');
+    else spinner.fail('Dry run: the bridge would not publish this event');
+    logger.log('');
+    logger.log(`Event Type:    ${testResult.eventType ?? logger.red('none')}`);
+    if (testResult.eventType) {
+      logger.log(`Type Enabled:  ${testResult.eventTypeExists ? logger.green('yes') : logger.red('no (create or enable it under outbound event types)')}`);
+    }
+    logger.log(`Endpoints:     ${testResult.matchingEndpoints ?? 0} subscribed`);
+    if (testResult.error) logger.log(`Reason:        ${logger.red(testResult.error)}`);
+    logger.log('');
+    logger.dim(payload === undefined
+      ? 'Used Hookbase\'s test payload. Pass --payload to resolve the event type from your own sample.'
+      : 'Nothing was published or charged.');
+    return;
+  }
+
+  const statusCode = testResult.status ?? 0;
+  const latency = testResult.latencyMs;
+
+  if (testResult.success) {
     spinner.succeed('Test successful');
     logger.log('');
     logger.log(`Status Code:   ${logger.green(String(statusCode))}`);
-    logger.log(`Response Time: ${responseTime}ms`);
+    logger.log(`Response Time: ${latency ?? 0}ms`);
   } else {
     spinner.fail('Test failed');
     logger.log('');
     logger.log(`Status Code:   ${logger.red(statusCode > 0 ? String(statusCode) : 'N/A')}`);
-    logger.log(`Response Time: ${responseTime || 'N/A'}ms`);
-    if (testResult?.error) {
+    logger.log(`Response Time: ${latency !== undefined ? `${latency}ms` : 'N/A'}`);
+    if (testResult.error) {
       logger.log(`Error:         ${testResult.error}`);
     }
   }
+  if (testResult.responseBody) {
+    logger.log('');
+    logger.log(logger.bold('Response Body:'));
+    logger.log(testResult.responseBody);
+  }
+  if (payload !== undefined) {
+    logger.log('');
+    logger.dim('--payload is only used by bridge dry runs; this test sent Hookbase\'s own test payload.');
+  }
+}
+
+function printSigningSecret(data: api.DestinationSigningSecret, heading: string): void {
+  logger.log('');
+  logger.log(`${heading}: ${logger.bold(data.signingSecret)}`);
+  if (data.previousSecretExpiresAt) {
+    logger.log(`Previous secret also signs until ${new Date(data.previousSecretExpiresAt).toLocaleString()} ${logger.dimText(`(${data.previousSecretExpiresAt})`)}`);
+  } else {
+    logger.dim('No previous secret is in use.');
+  }
+}
+
+export async function destinationsRevealSecretCommand(
+  destId: string,
+  options: { json?: boolean; xml?: boolean; yaml?: boolean }
+): Promise<void> {
+  requireAuth();
+
+  const spinner = logger.spinner('Fetching signing secret...');
+  const result = await api.revealDestinationSecret(destId);
+
+  if (result.error || !result.data) {
+    spinner.fail('Failed to reveal signing secret');
+    logger.error(result.error || 'No secret returned');
+    return;
+  }
+
+  spinner.stop();
+
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput(result.data, options.xml, options.yaml));
+    return;
+  }
+
+  printSigningSecret(result.data, 'Signing secret');
+}
+
+export async function destinationsRotateSecretCommand(
+  destId: string,
+  options: { gracePeriod?: string; yes?: boolean; json?: boolean; xml?: boolean; yaml?: boolean }
+): Promise<void> {
+  requireAuth();
+
+  const gracePeriodSeconds = parseGracePeriod(options.gracePeriod);
+  if (gracePeriodSeconds === null) return;
+
+  try {
+    if (!options.yes) {
+      const window = gracePeriodSeconds === undefined
+        ? 'for 1 hour (the default; set --grace-period to change it)'
+        : gracePeriodSeconds === 0 ? null : `for ${gracePeriodSeconds} seconds`;
+      const confirmed = await confirm({
+        message: window
+          ? `Rotate the signing secret for ${destId}? Deliveries carry both signatures ${window}.`
+          : `Rotate the signing secret for ${destId}? The old secret stops signing immediately.`,
+        default: false,
+      });
+      if (!confirmed) {
+        logger.info('Cancelled');
+        return;
+      }
+    }
+  } catch (error) {
+    if (isPromptCancelled(error)) {
+      logger.log('');
+      logger.info('Cancelled');
+      return;
+    }
+    throw error;
+  }
+
+  const spinner = logger.spinner('Rotating signing secret...');
+  const result = await api.rotateDestinationSecret(destId, gracePeriodSeconds);
+
+  if (result.error || !result.data) {
+    spinner.fail('Failed to rotate signing secret');
+    logger.error(result.error || 'No secret returned');
+    return;
+  }
+
+  spinner.succeed('Signing secret rotated');
+
+  if (options.json || options.xml || options.yaml) {
+    console.log(formatOutput(result.data, options.xml, options.yaml));
+    return;
+  }
+
+  printSigningSecret(result.data, 'New signing secret');
 }
