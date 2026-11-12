@@ -129,7 +129,7 @@ export async function sendCommand(options: {
     return;
   }
 
-  // POST /send-event returns { data: { eventId, messagesQueued, endpoints:[{id,url}] } }
+  // POST /send-event returns { data: { eventId, messagesQueued, endpoints:[{id,url}], messagesHeld? } }
   const sent = result.data?.data;
   if (sent) {
     const endpointsHit = Array.isArray(sent.endpoints) ? sent.endpoints : [];
@@ -138,6 +138,10 @@ export async function sendCommand(options: {
       `Event Type:      ${eventType}`,
       `Messages Queued: ${sent.messagesQueued ?? endpointsHit.length}`,
     ];
+    // Of those, held because the endpoint's circuit is open; absent when none were.
+    if (sent.messagesHeld) {
+      lines.push(`Messages Held:   ${sent.messagesHeld} ${logger.dimText("(endpoint circuit open; delivered when it recovers)")}`);
+    }
     if (endpointsHit.length > 0) {
       lines.push('', 'Endpoints:');
       for (const ep of endpointsHit) {

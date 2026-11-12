@@ -78,6 +78,8 @@ export async function endpointsCreateCommand(options: {
   rateLimit?: string;
   staticIp?: boolean;
   noStaticIp?: boolean;
+  /** --hold-on-circuit-open / --no-hold-on-circuit-open; undefined keeps the API default (hold). */
+  holdOnCircuitOpen?: boolean;
   yes?: boolean;
   json?: boolean;
   xml?: boolean;
@@ -159,6 +161,7 @@ export async function endpointsCreateCommand(options: {
     timeoutSeconds: options.timeout ? parseInt(options.timeout, 10) : undefined,
     rateLimitPerSecond: options.rateLimit ? parseInt(options.rateLimit, 10) : undefined,
     useStaticIp: options.staticIp,
+    holdOnCircuitOpen: options.holdOnCircuitOpen,
   });
 
   if (result.error) {
@@ -234,6 +237,12 @@ export async function endpointsGetCommand(
   if (endpoint.description) logger.log(`Description:   ${endpoint.description}`);
   logger.log(`Status:        ${isActive ? logger.green('active') : logger.red('inactive')}`);
   logger.log(`Circuit:       ${formatCircuitState(endpoint.circuitState)}`);
+  // The API reports true unless it was turned off. FIFO and polling endpoints never hold.
+  logger.log(`On Open:       ${endpoint.holdOnCircuitOpen === false ? 'dead-letter messages' : 'hold messages until the circuit recovers'}`);
+  if (endpoint.heldCount !== undefined) {
+    const held = api.formatHeldCount(endpoint);
+    logger.log(`Held:          ${endpoint.heldCount > 0 ? logger.cyan(held) : held}`);
+  }
   logger.log(`Timeout:       ${timeoutSeconds}s`);
   logger.log(`Static IP:     ${endpoint.useStaticIp === true ? logger.green('enabled') : logger.dimText('disabled')}`);
   if (rateLimitPerSecond) logger.log(`Rate Limit:    ${rateLimitPerSecond}/sec`);
@@ -256,6 +265,7 @@ export async function endpointsUpdateCommand(
     inactive?: boolean;
     staticIp?: boolean;
     noStaticIp?: boolean;
+    holdOnCircuitOpen?: boolean;
     json?: boolean;
     xml?: boolean;
     yaml?: boolean;
@@ -276,9 +286,10 @@ export async function endpointsUpdateCommand(
   if (options.active) updateData.isActive = true;
   if (options.inactive) updateData.isActive = false;
   if (options.staticIp !== undefined) updateData.useStaticIp = options.staticIp;
+  if (options.holdOnCircuitOpen !== undefined) updateData.holdOnCircuitOpen = options.holdOnCircuitOpen;
 
   if (Object.keys(updateData).length === 0) {
-    logger.error('No updates specified. Use --url, --description, --timeout, --rate-limit, --active, --inactive, --static-ip, or --no-static-ip');
+    logger.error('No updates specified. Use --url, --description, --timeout, --rate-limit, --active, --inactive, --[no-]static-ip, or --[no-]hold-on-circuit-open');
     return;
   }
 

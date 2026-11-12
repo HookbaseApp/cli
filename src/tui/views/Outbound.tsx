@@ -794,7 +794,10 @@ export function OutboundView({ subView, onNavigate, onRefresh: _onRefresh }: Out
       case 'delivered': return <Text color="green">{status}</Text>;
       case 'pending': return <Text color="yellow">{status}</Text>;
       case 'awaiting_retry': return <Text color="yellow">{status}</Text>;
+      case 'awaiting_pull': return <Text color="yellow">{status}</Text>;
+      case 'fifo_waiting': return <Text color="yellow">{status}</Text>;
       case 'processing': return <Text color="cyan">{status}</Text>;
+      case 'held': return <Text color="cyan">{status}</Text>;
       case 'failed': return <Text color="red">{status}</Text>;
       case 'exhausted': return <Text color="red">{status}</Text>;
       case 'dlq': return <Text color="red">{status}</Text>;
@@ -912,6 +915,9 @@ export function OutboundView({ subView, onNavigate, onRefresh: _onRefresh }: Out
             )}
             {errorMsg && (
               <Box><Box width={16}><Text dimColor>Error:</Text></Box><Text color="red">{errorMsg}</Text></Box>
+            )}
+            {m.holdExpiresAt && (
+              <Box><Box width={16}><Text dimColor>Held Until:</Text></Box><Text color="cyan">{new Date(m.holdExpiresAt).toLocaleString()}</Text></Box>
             )}
             {completedAt && (
               <Box><Box width={16}><Text dimColor>Completed:</Text></Box><Text color={m.status === 'success' ? 'green' : undefined}>{new Date(completedAt).toLocaleString()}</Text></Box>

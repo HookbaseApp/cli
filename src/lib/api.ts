@@ -637,6 +637,13 @@ export interface Source {
   transient_mode?: number;
   allowedMethods?: string[];
   allowed_methods?: string[];
+  /** The provider-catalog entry the source was created for (0142), or null. Set on create only. */
+  catalogProvider?: string | null;
+  /** Arrays since API #131 (they were JSON strings before). */
+  ipAllowlist?: string[];
+  ipDenylist?: string[];
+  encryptFields?: string[];
+  maskFields?: string[];
   created_at?: string;
 }
 
@@ -727,6 +734,8 @@ export async function createSource(
     dedupCustomHeader?: string;
     transientMode?: boolean;
     allowedMethods?: string[];
+    /** Provider-catalog entry id (e.g. salesforce). Create-only; the API 400s an unknown id. */
+    catalogProvider?: string;
   }
 ): Promise<ApiResponse<{ source: Source }>> {
 
@@ -749,6 +758,7 @@ export async function createSource(
     dedupCustomHeader: options?.dedupCustomHeader,
     transientMode: options?.transientMode,
     allowedMethods: options?.allowedMethods,
+    catalogProvider: options?.catalogProvider,
   };
 
   // Only include provider if it's a valid value (not empty)
@@ -1261,6 +1271,22 @@ export interface Route {
   deliveryCount?: number;
   created_at?: string;
   createdAt?: string;
+  /** While the route's circuit is open, keep deliveries as `held` until it recovers (true, the
+   * default) or dead-letter them (false). Migration 0134. */
+  holdOnCircuitOpen?: boolean;
+  /** GET /routes/:id only: held deliveries, counted to HELD_COUNT_CAP. */
+  heldCount?: number;
+  /** True when there are more held deliveries than heldCount says. */
+  heldCountCapped?: boolean;
+}
+
+/** The API stops counting held rows here (api/src/utils/holds.ts HELD_COUNT_CAP). */
+export const HELD_COUNT_CAP = 10_000;
+
+/** heldCount for display: "10000+" when the API capped the count. */
+export function formatHeldCount(target: { heldCount?: number; heldCountCapped?: boolean }): string {
+  const n = target.heldCount ?? 0;
+  return target.heldCountCapped ? `${n}+` : String(n);
 }
 
 export interface FilterCondition {
@@ -1301,6 +1327,8 @@ export async function createRoute(data: {
   notifyOnRecovery?: boolean;
   notifyEmails?: string;
   failureThreshold?: number;
+  /** Omit to keep the API default (true). */
+  holdOnCircuitOpen?: boolean;
 }): Promise<ApiResponse<{ route: Route }>> {
 
   return request<{ route: Route }>('POST', `/api/routes`, {
@@ -1324,6 +1352,7 @@ export async function createRoute(data: {
     notifyOnRecovery: data.notifyOnRecovery,
     notifyEmails: data.notifyEmails,
     failureThreshold: data.failureThreshold,
+    holdOnCircuitOpen: data.holdOnCircuitOpen,
   });
 }
 
@@ -1339,6 +1368,7 @@ export async function updateRoute(
     schemaId?: string;
     priority?: number;
     isActive?: boolean;
+    holdOnCircuitOpen?: boolean;
   }
 ): Promise<ApiResponse<{ route: Route }>> {
 
@@ -1352,6 +1382,7 @@ export async function updateRoute(
     schemaId: data.schemaId,
     priority: data.priority,
     isActive: data.isActive,
+    holdOnCircuitOpen: data.holdOnCircuitOpen,
   });
 }
 
@@ -2474,6 +2505,12 @@ export interface WebhookEndpoint {
   circuitFailureThreshold?: number;
   circuitSuccessThreshold?: number;
   circuitCooldownSeconds?: number;
+  /** While the circuit is open, keep messages as `held` until it recovers (true, the default) or
+   * dead-letter them (false). FIFO and polling endpoints never hold. Migration 0134. */
+  holdOnCircuitOpen?: boolean;
+  /** GET /webhook-endpoints/:id only: held messages, counted to HELD_COUNT_CAP. */
+  heldCount?: number;
+  heldCountCapped?: boolean;
   totalMessages?: number;
   totalSuccesses?: number;
   totalFailures?: number;
@@ -2530,6 +2567,8 @@ export async function createWebhookEndpoint(data: {
   rateLimitPerSecond?: number;
   timeoutSeconds?: number;
   useStaticIp?: boolean;
+  /** Omit to keep the API default (true). */
+  holdOnCircuitOpen?: boolean;
 }): Promise<ApiResponse<{ data: WebhookEndpoint & { secret: string }; warning?: string }>> {
 
   return request<{ data: WebhookEndpoint & { secret: string }; warning?: string }>('POST', `/api/webhook-endpoints`, {
@@ -2541,6 +2580,7 @@ export async function createWebhookEndpoint(data: {
     rateLimitPerSecond: data.rateLimitPerSecond,
     timeoutSeconds: data.timeoutSeconds,
     useStaticIp: data.useStaticIp,
+    holdOnCircuitOpen: data.holdOnCircuitOpen,
   });
 }
 
@@ -2555,6 +2595,7 @@ export async function updateWebhookEndpoint(
     timeoutSeconds?: number;
     isActive?: boolean;
     useStaticIp?: boolean;
+    holdOnCircuitOpen?: boolean;
   }
 ): Promise<ApiResponse<{ data: WebhookEndpoint }>> {
 
@@ -2567,6 +2608,7 @@ export async function updateWebhookEndpoint(
     rateLimitPerSecond: data.rateLimitPerSecond,
     timeoutSeconds: data.timeoutSeconds,
     useStaticIp: data.useStaticIp,
+    holdOnCircuitOpen: data.holdOnCircuitOpen,
   };
   if (data.isActive !== undefined) {
     body.isDisabled = !data.isActive;
@@ -2645,13 +2687,18 @@ export type OutboundMessageStatus =
   | 'success'
   | 'failed'
   | 'awaiting_retry'
+  | 'awaiting_pull'
+  | 'fifo_waiting'
+  | 'held'
   | 'exhausted'
   | 'dlq'
   | (string & {});
 
-/** The values `messages list --status` accepts. */
+/** The values `messages list --status` accepts. awaiting_pull: on a polling endpoint, waiting for
+ * the consumer to pull it (0115). fifo_waiting: queued behind an earlier message on a FIFO endpoint
+ * (0116). held: waiting while the endpoint's circuit is open (0134). */
 export const OUTBOUND_MESSAGE_STATUSES = [
-  'pending', 'processing', 'success', 'failed', 'awaiting_retry', 'exhausted', 'dlq',
+  'pending', 'processing', 'success', 'failed', 'awaiting_retry', 'awaiting_pull', 'fifo_waiting', 'held', 'exhausted', 'dlq',
 ] as const;
 
 // Mirrors the list (GET /outbound-messages) and detail (GET /outbound-messages/:id) mappings in
@@ -2667,6 +2714,8 @@ export interface WebhookMessage {
   maxAttempts: number;
   lastResponseStatus: number | null;
   lastErrorMessage: string | null;
+  /** When a held message's hold ends; null for any other status. */
+  holdExpiresAt?: string | null;
   createdAt: string;
   completedAt: string | null;
   endpointUrl?: string;
@@ -2681,6 +2730,11 @@ export interface WebhookMessage {
   metadata?: unknown;
   priority?: number | null;
   endpointDescription?: string | null;
+  traceId?: string | null;
+  eventVersion?: string | null;
+  deliveredEventVersion?: string | null;
+  /** The inbound event and delivery a bridge destination published this event from, or null. */
+  bridge?: { inboundEventId: string; deliveryId: string | null; hop: number | null } | null;
   payload?: unknown;
 }
 
@@ -2693,6 +2747,9 @@ export interface SendEventResult {
   eventId: string;
   messagesQueued: number;
   endpoints: Array<{ id: string; url: string }>;
+  /** Of messagesQueued, those held because their endpoint's circuit is open. Absent when none were. */
+  messagesHeld?: number;
+  eventVersion?: string;
 }
 
 export async function sendWebhookEvent(data: {
@@ -2794,6 +2851,7 @@ export interface OutboundStatsSummary {
   success: number;
   failed: number;
   awaitingRetry: number;
+  held: number;
   exhausted: number;
   dlq: number;
   total: number;

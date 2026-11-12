@@ -250,6 +250,15 @@ async function runRouteAdvancedWizard(
   }, undefined);
 }
 
+function formatCircuit(state?: string): string {
+  switch (state) {
+    case 'closed': return logger.green('closed');
+    case 'open': return logger.red('open');
+    case 'half_open': return logger.yellow('half_open');
+    default: return logger.dimText('-');
+  }
+}
+
 export async function routesListCommand(options: { json?: boolean; xml?: boolean; yaml?: boolean }): Promise<void> {
   requireAuth();
 
@@ -278,7 +287,8 @@ export async function routesListCommand(options: { json?: boolean; xml?: boolean
   }
 
   logger.table(
-    ['ID', 'Name', 'Source', 'Destination', 'Priority', 'Status', 'Deliveries'],
+    // GET /routes carries no delivery count (the old Deliveries column always read 0); show the circuit.
+    ['ID', 'Name', 'Source', 'Destination', 'Priority', 'Status', 'Circuit'],
     routes.map((r: any) => [
       r.id || '-',
       r.name || '-',
@@ -286,7 +296,7 @@ export async function routesListCommand(options: { json?: boolean; xml?: boolean
       r.destination_name || r.destinationName || r.destination_id || r.destinationId || '-',
       String(r.priority ?? 0),
       (r.is_active ?? r.isActive) ? logger.green('active') : logger.dimText('inactive'),
-      String(r.delivery_count ?? r.deliveryCount ?? 0),
+      formatCircuit(r.circuitState),
     ])
   );
 }
@@ -377,6 +387,8 @@ export async function routesCreateCommand(options: {
   circuitFailures?: string;
   notifyEmails?: string;
   notifyChannel?: string[];
+  /** --hold-on-circuit-open / --no-hold-on-circuit-open; undefined keeps the API default (hold). */
+  holdOnCircuitOpen?: boolean;
   yes?: boolean;
   json?: boolean;
   xml?: boolean;
@@ -425,7 +437,7 @@ export async function routesCreateCommand(options: {
       if (!rid) { logger.error(`Destination "${destinationId}" not found`); return; }
       destinationId = rid;
     } else {
-      destinationId = await select({ message: 'Select destination:', choices: destinations.map((d) => ({ name: `${d.name} (${d.url})`, value: d.id })) });
+      destinationId = await select({ message: 'Select destination:', choices: destinations.map((d) => ({ name: `${d.name} (${d.url || d.type || d.slug})`, value: d.id })) });
     }
 
     // Basic-path priority prompt (interactive only, no --priority given).
@@ -466,6 +478,7 @@ export async function routesCreateCommand(options: {
   routeData.sourceId = sourceId!;
   routeData.destinationId = destinationId!;
   routeData.priority = priority;
+  if (options.holdOnCircuitOpen !== undefined) routeData.holdOnCircuitOpen = options.holdOnCircuitOpen;
 
   const spinner = logger.spinner('Creating route...');
   const result = await api.createRoute(routeData);
@@ -545,7 +558,16 @@ export async function routesGetCommand(
   logger.log(`Status:      ${(route.is_active ?? route.isActive) ? logger.green('active') : logger.red('inactive')}`);
   if (route.filter_id || route.filterId) logger.log(`Filter:      ${route.filter_id || route.filterId}`);
   if (route.transform_id || route.transformId) logger.log(`Transform:   ${route.transform_id || route.transformId}`);
-  logger.log(`Deliveries:  ${route.delivery_count ?? route.deliveryCount ?? 0}`);
+  if (route.circuitState) logger.log(`Circuit:     ${formatCircuit(route.circuitState)}`);
+  // The API stores true by default, so only an explicit false dead-letters.
+  logger.log(`On Open:     ${route.holdOnCircuitOpen === false ? 'dead-letter deliveries' : 'hold deliveries until the circuit recovers'}`);
+  if (route.heldCount !== undefined) {
+    const held = api.formatHeldCount(route);
+    logger.log(`Held:        ${route.heldCount > 0 ? logger.cyan(held) : held}`);
+  }
+  // GET /routes/:id has no delivery count; only show one when a server sends it.
+  const deliveryCount = route.delivery_count ?? route.deliveryCount;
+  if (deliveryCount !== undefined) logger.log(`Deliveries:  ${deliveryCount}`);
   logger.log('');
 }
 
@@ -558,6 +580,7 @@ export async function routesUpdateCommand(
     priority?: string;
     active?: boolean;
     inactive?: boolean;
+    holdOnCircuitOpen?: boolean;
     json?: boolean;
     xml?: boolean;
     yaml?: boolean;
@@ -573,9 +596,10 @@ export async function routesUpdateCommand(
   if (options.priority) updateData.priority = parseInt(options.priority, 10);
   if (options.active) updateData.isActive = true;
   if (options.inactive) updateData.isActive = false;
+  if (options.holdOnCircuitOpen !== undefined) updateData.holdOnCircuitOpen = options.holdOnCircuitOpen;
 
   if (Object.keys(updateData).length === 0) {
-    logger.error('No updates specified. Use --name, --source, --destination, --priority, --active, or --inactive');
+    logger.error('No updates specified. Use --name, --source, --destination, --priority, --active, --inactive, or --[no-]hold-on-circuit-open');
     return;
   }
 

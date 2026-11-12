@@ -51,6 +51,16 @@ describe('source secret wiring', () => {
     expect(body).not.toHaveProperty('signing_secret');
   });
 
+  it('createSource sends catalogProvider only when given', async () => {
+    const api = await import('./api.js');
+    respond({ source: { id: 's1' } });
+    respond({ source: { id: 's2' } });
+    await api.createSource('n', 'n', 'custom', { catalogProvider: 'salesforce' });
+    await api.createSource('n', 'n', 'github');
+    expect(call(0).body).toMatchObject({ provider: 'custom', catalogProvider: 'salesforce' });
+    expect(call(1).body).not.toHaveProperty('catalogProvider');
+  });
+
   it('updateSource sends signingSecret (null clears) and verifyToken', async () => {
     const api = await import('./api.js');
     respond({ success: true });
