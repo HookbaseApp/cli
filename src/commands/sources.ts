@@ -325,6 +325,7 @@ export async function sourcesCreateCommand(options: {
   dedupWindow?: string;
   signingSecret?: string;
   verifyToken?: string;
+  catalogProvider?: string;
   yes?: boolean;
   json?: boolean;
   xml?: boolean;
@@ -345,6 +346,13 @@ export async function sourcesCreateCommand(options: {
     return;
   }
   const secretProvided = signingSecret !== undefined;
+
+  // Catalog entry ids are lowercase with hyphens (e.g. microsoft-teams); the API refuses unknown ones.
+  const catalogProvider = options.catalogProvider?.trim();
+  if (catalogProvider !== undefined && !/^[a-z0-9][a-z0-9-]*$/.test(catalogProvider)) {
+    logger.error(`Invalid --catalog-provider "${options.catalogProvider}": use a provider-catalog id such as salesforce or microsoft-teams`);
+    return;
+  }
 
   // Advanced config assembled from flags and/or the interactive wizard.
   const adv: NonNullable<Parameters<typeof api.createSource>[3]> = {};
@@ -472,6 +480,7 @@ export async function sourcesCreateCommand(options: {
   const spinner = logger.spinner('Creating source...');
   if (signingSecret !== undefined) adv.signingSecret = signingSecret;
   if (options.verifyToken !== undefined) adv.verifyToken = options.verifyToken;
+  if (catalogProvider) adv.catalogProvider = catalogProvider;
   const result = await api.createSource(name!, slug!, provider, adv);
 
   if (result.error) {
@@ -498,6 +507,7 @@ export async function sourcesCreateCommand(options: {
       `Name:     ${source.name}`,
       `Slug:     ${source.slug}`,
       `Provider: ${source.provider || 'none'}`,
+      ...(source.catalogProvider ? [`Catalog:  ${source.catalogProvider}`] : []),
       `Methods:  ${(source.allowedMethods ?? source.allowed_methods ?? []).length > 0 ? (source.allowedMethods ?? source.allowed_methods ?? []).join(', ') : 'Any'}`,
       ``,
       `Ingest URL:`,
@@ -549,6 +559,7 @@ export async function sourcesGetCommand(
   logger.log(`Name:        ${source.name}`);
   logger.log(`Slug:        ${source.slug}`);
   logger.log(`Provider:    ${source.provider || 'none'}`);
+  if (source.catalogProvider) logger.log(`Catalog:     ${source.catalogProvider}`);
   logger.log(`Secret:      ${secretDetail(source)}`);
   logger.log(`Status:      ${(source.isActive || source.is_active) ? logger.green('active') : logger.red('inactive')}`);
   const detailMethods = source.allowedMethods ?? source.allowed_methods ?? [];

@@ -122,6 +122,25 @@ describe('sources create (non-interactive)', () => {
     expect(text()).toContain('pending-verification notion');
   });
 
+  it('passes --catalog-provider and shows it in the result', async () => {
+    api.createSource.mockResolvedValue({ status: 200, data: { source: { id: 's1', slug: 'sf', provider: 'custom', catalogProvider: 'salesforce', signingSecret: 'gen' } } });
+    await sources.sourcesCreateCommand({ name: 'sf', provider: 'custom', catalogProvider: ' salesforce ' });
+    expect(api.createSource).toHaveBeenCalledWith('sf', 'sf', 'custom', expect.objectContaining({ catalogProvider: 'salesforce' }));
+    expect(text()).toContain('Catalog:  salesforce');
+  });
+
+  it('rejects a malformed --catalog-provider before calling the API', async () => {
+    await sources.sourcesCreateCommand({ name: 'sf', provider: 'custom', catalogProvider: 'Sales Force' });
+    expect(api.createSource).not.toHaveBeenCalled();
+    expect(text()).toContain('Invalid --catalog-provider');
+  });
+
+  it('get shows catalogProvider when set', async () => {
+    api.getSource.mockResolvedValue({ status: 200, data: { source: { id: 's1', name: 'sf', slug: 'sf', provider: 'custom', catalogProvider: 'microsoft-teams', isActive: true } } });
+    await sources.sourcesGetCommand('sf', {});
+    expect(text()).toContain('Catalog:     microsoft-teams');
+  });
+
   it('accepts any provider string', async () => {
     api.createSource.mockResolvedValue({ status: 200, data: { source: { id: 's1', slug: 'g', provider: 'grafana-hmac' } } });
     await sources.sourcesCreateCommand({ name: 'g', provider: 'grafana-hmac' });

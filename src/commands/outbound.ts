@@ -12,14 +12,21 @@ function isPromptCancelled(error: unknown): boolean {
     (error instanceof Error && error.name === 'ExitPromptError');
 }
 
-function formatStatus(status: string): string {
+/** Colour for an outbound message status (api.OUTBOUND_MESSAGE_STATUSES). */
+export function formatStatus(status: string): string {
   switch (status) {
     // Outbound messages use `success`; `delivered` kept for forward-compat.
     case 'success': return logger.green('success');
     case 'delivered': return logger.green('delivered');
     case 'pending': return logger.yellow('pending');
     case 'awaiting_retry': return logger.yellow('awaiting_retry');
+    // Polling endpoint: waiting for the consumer to pull it.
+    case 'awaiting_pull': return logger.yellow('awaiting_pull');
+    // FIFO endpoint: queued behind an earlier message.
+    case 'fifo_waiting': return logger.yellow('fifo_waiting');
     case 'processing': return logger.cyan('processing');
+    // Waiting while the endpoint's circuit is open; released when it recovers.
+    case 'held': return logger.cyan('held');
     case 'failed': return logger.red('failed');
     case 'exhausted': return logger.red('exhausted');
     case 'dlq': return logger.red('dlq');
@@ -157,6 +164,16 @@ export async function outboundGetCommand(
   }
   if (message.lastErrorMessage) {
     logger.log(`Error:         ${logger.red(message.lastErrorMessage)}`);
+  }
+  if (message.holdExpiresAt) {
+    logger.log(`Held Until:    ${new Date(message.holdExpiresAt).toLocaleString()} ${logger.dimText('(dead-lettered then if the circuit is still open)')}`);
+  }
+  if (message.bridge) {
+    const hop = message.bridge.hop !== null && message.bridge.hop !== undefined ? ` (hop ${message.bridge.hop})` : '';
+    logger.log(`Bridged From:  inbound event ${message.bridge.inboundEventId}${hop}`);
+    if (message.bridge.deliveryId) {
+      logger.log(`               delivery ${message.bridge.deliveryId} ${logger.dimText(`(hookbase deliveries get ${message.bridge.deliveryId})`)}`);
+    }
   }
   if (message.completedAt) {
     logger.log(`Completed:     ${new Date(message.completedAt).toLocaleString()}`);
@@ -297,8 +314,15 @@ export async function outboundStatsCommand(options: { json?: boolean; xml?: bool
   logger.log(`Success:         ${logger.green(String(stats.success))}`);
   logger.log(`Failed:          ${logger.red(String(stats.failed))}`);
   logger.log(`Awaiting Retry:  ${logger.yellow(String(stats.awaitingRetry))}`);
+  logger.log(`Held:            ${logger.cyan(String(stats.held ?? 0))}`);
   logger.log(`Exhausted:       ${logger.red(String(stats.exhausted))}`);
   logger.log(`DLQ:             ${logger.red(String(stats.dlq))}`);
+  // The summary has no bucket for awaiting_pull (polling) or fifo_waiting (FIFO), but total counts them.
+  const named = stats.pending + stats.processing + stats.success + stats.failed + stats.awaitingRetry +
+    (stats.held ?? 0) + stats.exhausted + stats.dlq;
+  if (stats.total > named) {
+    logger.log(`Other:           ${stats.total - named} ${logger.dimText('(awaiting_pull / fifo_waiting)')}`);
+  }
   logger.log(`Total:           ${stats.total}`);
   logger.log('');
 

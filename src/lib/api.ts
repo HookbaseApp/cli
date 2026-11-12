@@ -637,7 +637,88 @@ export interface Source {
   transient_mode?: number;
   allowedMethods?: string[];
   allowed_methods?: string[];
+  /** The provider-catalog entry the source was created for (0142), or null. Set on create only. */
+  catalogProvider?: string | null;
+  /** Arrays since API #131 (they were JSON strings before). */
+  ipAllowlist?: string[];
+  ipDenylist?: string[];
+  encryptFields?: string[];
+  maskFields?: string[];
   created_at?: string;
+}
+
+/** Offset-paginated list routes (sources, destinations, routes, transforms, filters) cap
+ * `pageSize` at 100 and default it to 20. */
+export const MAX_OFFSET_PAGE_SIZE = 100;
+/** 50 pages x 100 rows: far beyond any plan limit, but finite if a server never stops. */
+export const MAX_OFFSET_PAGES = 50;
+
+interface OffsetPage {
+  pagination?: { total?: number; page?: number; pageSize?: number };
+}
+
+/** What collectOffsetPages returns under `pagination`. `truncated` is set only when it stopped at
+ * MAX_OFFSET_PAGES with rows still left. */
+export interface CollectedPagination {
+  total: number;
+  page: number;
+  pageSize: number;
+  truncated?: boolean;
+}
+
+/**
+ * Read every page of an offset-paginated list (`?page=N&pageSize=100`) and return the rows under
+ * `key`, so name/slug lookups see the whole list and not just the first page. Stops when the
+ * collected count reaches `pagination.total`, or when a page comes back empty or shorter than the
+ * page size the server reports using (the requested 100 when it reports none). At MAX_OFFSET_PAGES
+ * with rows still left it stops, warns on stderr and sets `pagination.truncated`.
+ */
+async function collectOffsetPages<K extends string, T>(
+  path: string,
+  key: K
+): Promise<ApiResponse<{ [P in K]: T[] } & { pagination: CollectedPagination }>> {
+  const items: T[] = [];
+  let total: number | undefined;
+  let status = 200;
+  let done = false;
+
+  for (let page = 1; page <= MAX_OFFSET_PAGES && !done; page++) {
+    const sep = path.includes('?') ? '&' : '?';
+    const result = await request<OffsetPage & Record<K, T[]>>(
+      'GET',
+      `${path}${sep}page=${page}&pageSize=${MAX_OFFSET_PAGE_SIZE}`
+    );
+    if (result.error) {
+      return { error: result.error, code: result.code, status: result.status };
+    }
+    status = result.status;
+    const rows = (result.data?.[key] ?? []) as T[];
+    items.push(...rows);
+    const reported = result.data?.pagination;
+    if (typeof reported?.total === 'number') total = reported.total;
+    // A server that pages smaller than asked still has more after a page of its own size.
+    const pageSize = typeof reported?.pageSize === 'number' && reported.pageSize > 0
+      ? reported.pageSize
+      : MAX_OFFSET_PAGE_SIZE;
+
+    done = rows.length === 0 || rows.length < pageSize || (total !== undefined && items.length >= total);
+  }
+
+  const truncated = !done;
+  if (truncated) {
+    process.stderr.write(
+      `Warning: ${path} has more than ${items.length} rows${total !== undefined ? ` (${total} reported)` : ''}; ` +
+      `only the first ${items.length} were read.\n`
+    );
+  }
+
+  return {
+    data: {
+      [key]: items,
+      pagination: { total: total ?? items.length, page: 1, pageSize: items.length, ...(truncated ? { truncated } : {}) },
+    } as { [P in K]: T[] } & { pagination: CollectedPagination },
+    status,
+  };
 }
 
 /** HTTP verbs an ingest endpoint can be restricted to. OPTIONS is excluded: CORS preflight is
@@ -645,8 +726,7 @@ export interface Source {
 export type IngestMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD';
 
 export async function getSources(): Promise<ApiResponse<{ sources: Source[] }>> {
-
-  return request<{ sources: Source[] }>('GET', `/api/sources?pageSize=100`);
+  return collectOffsetPages<'sources', Source>('/api/sources', 'sources');
 }
 
 export async function getSource(sourceId: string): Promise<ApiResponse<{ source: Source }>> {
@@ -676,6 +756,8 @@ export async function createSource(
     dedupCustomHeader?: string;
     transientMode?: boolean;
     allowedMethods?: string[];
+    /** Provider-catalog entry id (e.g. salesforce). Create-only; the API 400s an unknown id. */
+    catalogProvider?: string;
   }
 ): Promise<ApiResponse<{ source: Source }>> {
 
@@ -698,6 +780,7 @@ export async function createSource(
     dedupCustomHeader: options?.dedupCustomHeader,
     transientMode: options?.transientMode,
     allowedMethods: options?.allowedMethods,
+    catalogProvider: options?.catalogProvider,
   };
 
   // Only include provider if it's a valid value (not empty)
@@ -952,6 +1035,31 @@ export async function getProviderEvents(providerId: string): Promise<ApiResponse
 // Destinations
 // ============================================================================
 
+/** Every destination type `POST /destinations` accepts (api/src/routes/destinations.ts DESTINATION_TYPES). */
+export const DESTINATION_TYPES = [
+  'http', 'sqs', 'eventbridge', 'servicebus', 'pubsub', 'oci_queue',
+  's3', 'r2', 'gcs', 'azure_blob', 'bridge',
+] as const;
+export type DestinationType = (typeof DESTINATION_TYPES)[number];
+
+/**
+ * A bridge destination's config (api/src/types/warehouse.ts bridgeConfigSchema, strict). The event
+ * type is fixed, or read from a payload field and optionally prefixed.
+ */
+export interface BridgeConfig {
+  eventTypeSource: 'fixed' | 'field';
+  /** Required when eventTypeSource is fixed; must be an enabled event type. */
+  eventType?: string;
+  /** Required when eventTypeSource is field: a dot path of at most 5 segments. */
+  eventTypeField?: string;
+  /** Only with eventTypeSource field: lowercase letters, digits and dots. */
+  eventTypePrefix?: string;
+  /** Publish only to this outbound application's endpoints. Unset: every subscribed endpoint. */
+  applicationId?: string | null;
+  /** Also publish events whose sender the source did not verify. Default false. */
+  allowUnverifiedSources?: boolean;
+}
+
 export interface Destination {
   id: string;
   name: string;
@@ -976,18 +1084,47 @@ export interface Destination {
   failure_count?: number;
   route_count?: number;
   created_at?: string;
-  // Warehouse destination fields
-  type?: 'http' | 's3' | 'r2' | 'gcs' | 'azure_blob';
-  config?: Record<string, unknown> | string;
+  // Warehouse, queue and bridge destination fields
+  type?: DestinationType;
+  /** Warehouse/queue: credentials redacted. Bridge: a BridgeConfig. */
+  config?: Record<string, unknown> | string | null;
   batch_size?: number;
   batch_window_seconds?: number;
   field_mapping?: string;
   use_static_ip?: number;
+  /** Whether deliveries are signed (HTTP destinations). The secret is only behind reveal-secret. */
+  hasSigningSecret?: boolean;
+  /** Create response only, HTTP destinations only: the signing secret, shown once. */
+  signingSecret?: string | null;
+}
+
+/** `GET /destinations/:id/reveal-secret` and `POST /destinations/:id/rotate-secret`. */
+export interface DestinationSigningSecret {
+  signingSecret: string;
+  /** While the previous secret still signs (after a rotation with a grace period); null otherwise. */
+  previousSecretExpiresAt: string | null;
+}
+
+/**
+ * `POST /destinations/:id/test`. HTTP and warehouse tests send a request and report
+ * status/latencyMs/responseBody; a bridge test is a dry run that resolves the event type from a
+ * sample payload and counts the subscribed endpoints, publishing nothing; queue types return
+ * success false with an explanation.
+ */
+export interface DestinationTestResult {
+  success: boolean;
+  status?: number;
+  latencyMs?: number;
+  responseBody?: string;
+  error?: string;
+  dryRun?: boolean;
+  eventType?: string | null;
+  eventTypeExists?: boolean;
+  matchingEndpoints?: number;
 }
 
 export async function getDestinations(): Promise<ApiResponse<{ destinations: Destination[] }>> {
-
-  return request<{ destinations: Destination[] }>('GET', `/api/destinations?pageSize=100`);
+  return collectOffsetPages<'destinations', Destination>('/api/destinations', 'destinations');
 }
 
 export async function getDestination(destId: string): Promise<ApiResponse<{ destination: Destination }>> {
@@ -1014,7 +1151,7 @@ export async function createDestination(data: {
   } | null;
   mockMode?: boolean;
   useStaticIp?: boolean;
-  type?: 'http' | 'sqs' | 'eventbridge' | 'servicebus' | 'pubsub' | 'oci_queue' | 's3' | 'r2' | 'gcs' | 'azure_blob';
+  type?: DestinationType;
   config?: Record<string, unknown>;
   fieldMapping?: Array<{ source: string; target: string; type: string; default?: string }>;
   batchSize?: number;
@@ -1064,13 +1201,16 @@ export async function updateDestination(
     mockMode?: boolean;
     isActive?: boolean;
     useStaticIp?: boolean;
+    /** Replaces the stored config. A bridge's is checked as a whole (strict schema). */
+    config?: Record<string, unknown> | null;
     fieldMapping?: Array<{ source: string; target: string; type: string; default?: string }>;
     batchSize?: number;
     batchWindowSeconds?: number;
   }
-): Promise<ApiResponse<{ destination: Destination }>> {
+): Promise<ApiResponse<{ success: boolean }>> {
 
-  return request<{ destination: Destination }>('PATCH', `/api/destinations/${destId}`, {
+  // PATCH /destinations/:id answers { success: true }, not the destination.
+  return request<{ success: boolean }>('PATCH', `/api/destinations/${destId}`, {
     name: data.name,
     url: data.url,
     method: data.method,
@@ -1081,6 +1221,7 @@ export async function updateDestination(
     throttle: data.throttle,
     isActive: data.isActive,
     useStaticIp: data.useStaticIp,
+    config: data.config,
     fieldMapping: data.fieldMapping,
     batchSize: data.batchSize,
     batchWindowSeconds: data.batchWindowSeconds,
@@ -1092,17 +1233,36 @@ export async function deleteDestination(destId: string): Promise<ApiResponse<{ s
   return request<{ success: boolean }>('DELETE', `/api/destinations/${destId}`);
 }
 
-export async function testDestination(destId: string): Promise<ApiResponse<{
-  success: boolean;
-  statusCode: number;
-  responseTime: number;
-  responseBody?: string;
-  error?: string;
-}>> {
+/**
+ * Test a destination. `payload` is the sample a bridge dry run resolves the event type from (it must
+ * be a JSON object); HTTP, warehouse and queue tests ignore it and send Hookbase's own test payload.
+ */
+export async function testDestination(destId: string, payload?: unknown): Promise<ApiResponse<DestinationTestResult>> {
 
-  return request<{ success: boolean; statusCode: number; responseTime: number; responseBody?: string; error?: string }>(
+  return request<DestinationTestResult>(
     'POST',
-    `/api/destinations/${destId}/test`
+    `/api/destinations/${destId}/test`,
+    payload !== undefined ? { payload } : undefined
+  );
+}
+
+/** The current signing secret (member+, write scope). HTTP destinations only. */
+export async function revealDestinationSecret(destId: string): Promise<ApiResponse<DestinationSigningSecret>> {
+  return request<DestinationSigningSecret>('GET', `/api/destinations/${destId}/reveal-secret`);
+}
+
+/**
+ * Issue a new signing secret. During `gracePeriodSeconds` (0-86400, server default 3600) deliveries
+ * carry both signatures; 0 drops the old secret at once.
+ */
+export async function rotateDestinationSecret(
+  destId: string,
+  gracePeriodSeconds?: number
+): Promise<ApiResponse<DestinationSigningSecret>> {
+  return request<DestinationSigningSecret>(
+    'POST',
+    `/api/destinations/${destId}/rotate-secret`,
+    gracePeriodSeconds !== undefined ? { gracePeriodSeconds } : {}
   );
 }
 
@@ -1134,6 +1294,22 @@ export interface Route {
   deliveryCount?: number;
   created_at?: string;
   createdAt?: string;
+  /** While the route's circuit is open, keep deliveries as `held` until it recovers (true, the
+   * default) or dead-letter them (false). Migration 0134. */
+  holdOnCircuitOpen?: boolean;
+  /** GET /routes/:id only: held deliveries, counted to HELD_COUNT_CAP. */
+  heldCount?: number;
+  /** True when there are more held deliveries than heldCount says. */
+  heldCountCapped?: boolean;
+}
+
+/** The API stops counting held rows here (api/src/utils/holds.ts HELD_COUNT_CAP). */
+export const HELD_COUNT_CAP = 10_000;
+
+/** heldCount for display: "10000+" when the API capped the count. */
+export function formatHeldCount(target: { heldCount?: number; heldCountCapped?: boolean }): string {
+  const n = target.heldCount ?? 0;
+  return target.heldCountCapped ? `${n}+` : String(n);
 }
 
 export interface FilterCondition {
@@ -1143,8 +1319,7 @@ export interface FilterCondition {
 }
 
 export async function getRoutes(): Promise<ApiResponse<{ routes: Route[] }>> {
-
-  return request<{ routes: Route[] }>('GET', `/api/routes?pageSize=100`);
+  return collectOffsetPages<'routes', Route>('/api/routes', 'routes');
 }
 
 export async function getRoute(routeId: string): Promise<ApiResponse<{ route: Route }>> {
@@ -1175,6 +1350,8 @@ export async function createRoute(data: {
   notifyOnRecovery?: boolean;
   notifyEmails?: string;
   failureThreshold?: number;
+  /** Omit to keep the API default (true). */
+  holdOnCircuitOpen?: boolean;
 }): Promise<ApiResponse<{ route: Route }>> {
 
   return request<{ route: Route }>('POST', `/api/routes`, {
@@ -1198,6 +1375,7 @@ export async function createRoute(data: {
     notifyOnRecovery: data.notifyOnRecovery,
     notifyEmails: data.notifyEmails,
     failureThreshold: data.failureThreshold,
+    holdOnCircuitOpen: data.holdOnCircuitOpen,
   });
 }
 
@@ -1213,10 +1391,12 @@ export async function updateRoute(
     schemaId?: string;
     priority?: number;
     isActive?: boolean;
+    holdOnCircuitOpen?: boolean;
   }
-): Promise<ApiResponse<{ route: Route }>> {
+): Promise<ApiResponse<{ success: boolean }>> {
 
-  return request<{ route: Route }>('PATCH', `/api/routes/${routeId}`, {
+  // PATCH /routes/:id answers { success: true }, not the route.
+  return request<{ success: boolean }>('PATCH', `/api/routes/${routeId}`, {
     name: data.name,
     sourceId: data.sourceId,
     destinationId: data.destinationId,
@@ -1226,6 +1406,7 @@ export async function updateRoute(
     schemaId: data.schemaId,
     priority: data.priority,
     isActive: data.isActive,
+    holdOnCircuitOpen: data.holdOnCircuitOpen,
   });
 }
 
@@ -1465,23 +1646,39 @@ export async function getEvent(eventId: string): Promise<ApiResponse<EventDetail
 // Deliveries
 // ============================================================================
 
+/** Inbound delivery statuses (deliveries.status CHECK, api migrations through 0134). */
+export const DELIVERY_STATUSES = [
+  'pending', 'delivered', 'failed', 'failed_over', 'schema_failed', 'throttled', 'awaiting_retry', 'held',
+] as const;
+export type DeliveryStatus = (typeof DELIVERY_STATUSES)[number];
+
+/** The camelCase row `GET /deliveries` and `GET /deliveries/:id` return. */
 export interface Delivery {
   id: string;
-  event_id: string;
-  route_id: string;
-  destination_id: string;
-  destination_name?: string;
-  route_name?: string;
-  status: 'pending' | 'delivered' | 'failed' | 'failed_over' | 'schema_failed' | 'retrying';
-  attempt_count: number;
-  max_attempts: number;
-  response_status?: number;
-  response_time_ms?: number;
-  response_body?: string;
-  error_message?: string;
-  next_retry_at?: string;
-  completed_at?: string;
-  created_at: string;
+  organizationId?: string;
+  eventId: string;
+  routeId: string;
+  destinationId: string;
+  destinationName?: string | null;
+  /** Detail only. */
+  destinationUrl?: string | null;
+  /** List only. */
+  eventType?: string | null;
+  // Open-ended so a status added server-side still type-checks; known values: DELIVERY_STATUSES.
+  status: DeliveryStatus | (string & {});
+  attemptCount: number;
+  maxAttempts: number;
+  /** When the next retry runs. Null while held. */
+  nextRetryAt?: string | null;
+  /** Set only while `held`: when the hold gives up and the delivery fails. */
+  holdExpiresAt?: string | null;
+  responseStatus?: number | null;
+  responseBody?: string | null;
+  latencyMs?: number | null;
+  errorMessage?: string | null;
+  deliveredAt?: string | null;
+  createdAt: string;
+  updatedAt?: string | null;
 }
 
 export async function getDeliveries(options?: {
@@ -1491,7 +1688,7 @@ export async function getDeliveries(options?: {
   routeId?: string;
   destinationId?: string;
   status?: string;
-}): Promise<ApiResponse<{ deliveries: Delivery[]; total: number; hasMore: boolean }>> {
+}): Promise<ApiResponse<{ deliveries: Delivery[]; limit: number; offset: number }>> {
 
   const params = new URLSearchParams();
   if (options?.limit) params.set('limit', String(options.limit));
@@ -1502,7 +1699,7 @@ export async function getDeliveries(options?: {
   if (options?.status) params.set('status', options.status);
 
   const queryString = params.toString();
-  return request<{ deliveries: Delivery[]; total: number; hasMore: boolean }>(
+  return request<{ deliveries: Delivery[]; limit: number; offset: number }>(
     'GET',
     `/api/deliveries${queryString ? `?${queryString}` : ''}`
   );
@@ -1513,14 +1710,63 @@ export async function getDelivery(deliveryId: string): Promise<ApiResponse<{ del
   return request<{ delivery: Delivery }>('GET', `/api/deliveries/${deliveryId}`);
 }
 
-export async function replayDelivery(deliveryId: string): Promise<ApiResponse<{ delivery: Delivery }>> {
-
-  return request<{ delivery: Delivery }>('POST', `/api/deliveries/${deliveryId}/replay`);
+/** One-shot edits for `POST /deliveries/:id/replay`. All optional; none of them change the route. */
+export interface ReplayDeliveryOptions {
+  /** Replaces the stored payload for this replay. Exclusive with payloadPatch. */
+  modifiedPayload?: unknown;
+  /** RFC 7386 merge patch applied server-side to the stored payload. Exclusive with modifiedPayload. */
+  payloadPatch?: Record<string, unknown>;
+  /** Destination id or slug (same org) to send this replay to instead. */
+  destinationOverride?: string;
+  /** Outbound headers to add or replace for this replay (max 50). */
+  headersOverride?: Record<string, string>;
 }
 
-export async function bulkReplayDeliveries(deliveryIds: string[]): Promise<ApiResponse<{ replayed: number; failed: number }>> {
+/** The flat envelope `POST /deliveries/:id/replay` returns. */
+export interface ReplayDeliveryResult {
+  deliveryId: string;
+  message: string;
+  modified: boolean;
+  destinationOverridden: boolean;
+  transformOverridden: boolean;
+  transformPersisted: boolean;
+  headersOverridden: boolean;
+  targetDestinationId: string;
+}
 
-  return request<{ replayed: number; failed: number }>('POST', `/api/deliveries/bulk-replay`, {
+export async function replayDelivery(
+  deliveryId: string,
+  options: ReplayDeliveryOptions = {}
+): Promise<ApiResponse<ReplayDeliveryResult>> {
+  const body: Record<string, unknown> = {};
+  if (options.modifiedPayload !== undefined) body.modifiedPayload = options.modifiedPayload;
+  if (options.payloadPatch !== undefined) body.payloadPatch = options.payloadPatch;
+  if (options.destinationOverride) body.destinationOverride = options.destinationOverride;
+  if (options.headersOverride && Object.keys(options.headersOverride).length > 0) {
+    body.headersOverride = options.headersOverride;
+  }
+  return request<ReplayDeliveryResult>(
+    'POST',
+    `/api/deliveries/${deliveryId}/replay`,
+    Object.keys(body).length > 0 ? body : undefined
+  );
+}
+
+/**
+ * `POST /deliveries/bulk-replay`: at most 100 ids. A delivery whose payload is gone or was never
+ * stored (transient) is `skipped` with a reason. An id that is not found is in neither `results` nor
+ * `skipped`, and when none are found the API answers 404 "No valid deliveries found".
+ */
+export interface BulkReplayResult {
+  message: string;
+  queued: number;
+  skipped: number;
+  results: Array<{ originalId: string; newId?: string; status: 'queued' | 'skipped'; reason?: string }>;
+}
+
+export async function bulkReplayDeliveries(deliveryIds: string[]): Promise<ApiResponse<BulkReplayResult>> {
+
+  return request<BulkReplayResult>('POST', `/api/deliveries/bulk-replay`, {
     deliveryIds,
   });
 }
@@ -1559,8 +1805,7 @@ export interface Transform {
 }
 
 export async function getTransforms(): Promise<ApiResponse<{ transforms: Transform[] }>> {
-
-  return request<{ transforms: Transform[] }>('GET', `/api/transforms`);
+  return collectOffsetPages<'transforms', Transform>('/api/transforms', 'transforms');
 }
 
 export async function getTransform(transformId: string): Promise<ApiResponse<{ transform: Transform }>> {
@@ -1634,8 +1879,7 @@ export interface Filter {
 }
 
 export async function getFilters(): Promise<ApiResponse<{ filters: Filter[] }>> {
-
-  return request<{ filters: Filter[] }>('GET', `/api/filters`);
+  return collectOffsetPages<'filters', Filter>('/api/filters', 'filters');
 }
 
 export async function getFilter(filterId: string): Promise<ApiResponse<{ filter: Filter }>> {
@@ -2266,7 +2510,13 @@ export async function deleteWebhookApplication(appId: string): Promise<ApiRespon
 export interface WebhookEndpoint {
   id: string;
   applicationId: string;
+  /** http, polling, or a provider kind (sqs, s3, ...). */
+  endpointType?: string;
   url: string;
+  /** Polling endpoints: where the consumer pulls from. */
+  pollUrl?: string | null;
+  /** Strictly ordered, one-at-a-time delivery. */
+  fifoEnabled?: boolean;
   description?: string | null;
   /** Masked: the first 12 characters plus "...". The full secret is only on create/rotate. */
   secretPrefix?: string;
@@ -2289,6 +2539,12 @@ export interface WebhookEndpoint {
   circuitFailureThreshold?: number;
   circuitSuccessThreshold?: number;
   circuitCooldownSeconds?: number;
+  /** While the circuit is open, keep messages as `held` until it recovers (true, the default) or
+   * dead-letter them (false). FIFO and polling endpoints never hold. Migration 0134. */
+  holdOnCircuitOpen?: boolean;
+  /** GET /webhook-endpoints/:id only: held messages, counted to HELD_COUNT_CAP. */
+  heldCount?: number;
+  heldCountCapped?: boolean;
   totalMessages?: number;
   totalSuccesses?: number;
   totalFailures?: number;
@@ -2345,6 +2601,8 @@ export async function createWebhookEndpoint(data: {
   rateLimitPerSecond?: number;
   timeoutSeconds?: number;
   useStaticIp?: boolean;
+  /** Omit to keep the API default (true). */
+  holdOnCircuitOpen?: boolean;
 }): Promise<ApiResponse<{ data: WebhookEndpoint & { secret: string }; warning?: string }>> {
 
   return request<{ data: WebhookEndpoint & { secret: string }; warning?: string }>('POST', `/api/webhook-endpoints`, {
@@ -2356,6 +2614,7 @@ export async function createWebhookEndpoint(data: {
     rateLimitPerSecond: data.rateLimitPerSecond,
     timeoutSeconds: data.timeoutSeconds,
     useStaticIp: data.useStaticIp,
+    holdOnCircuitOpen: data.holdOnCircuitOpen,
   });
 }
 
@@ -2370,6 +2629,7 @@ export async function updateWebhookEndpoint(
     timeoutSeconds?: number;
     isActive?: boolean;
     useStaticIp?: boolean;
+    holdOnCircuitOpen?: boolean;
   }
 ): Promise<ApiResponse<{ data: WebhookEndpoint }>> {
 
@@ -2382,6 +2642,7 @@ export async function updateWebhookEndpoint(
     rateLimitPerSecond: data.rateLimitPerSecond,
     timeoutSeconds: data.timeoutSeconds,
     useStaticIp: data.useStaticIp,
+    holdOnCircuitOpen: data.holdOnCircuitOpen,
   };
   if (data.isActive !== undefined) {
     body.isDisabled = !data.isActive;
@@ -2460,13 +2721,18 @@ export type OutboundMessageStatus =
   | 'success'
   | 'failed'
   | 'awaiting_retry'
+  | 'awaiting_pull'
+  | 'fifo_waiting'
+  | 'held'
   | 'exhausted'
   | 'dlq'
   | (string & {});
 
-/** The values `messages list --status` accepts. */
+/** The values `messages list --status` accepts. awaiting_pull: on a polling endpoint, waiting for
+ * the consumer to pull it (0115). fifo_waiting: queued behind an earlier message on a FIFO endpoint
+ * (0116). held: waiting while the endpoint's circuit is open (0134). */
 export const OUTBOUND_MESSAGE_STATUSES = [
-  'pending', 'processing', 'success', 'failed', 'awaiting_retry', 'exhausted', 'dlq',
+  'pending', 'processing', 'success', 'failed', 'awaiting_retry', 'awaiting_pull', 'fifo_waiting', 'held', 'exhausted', 'dlq',
 ] as const;
 
 // Mirrors the list (GET /outbound-messages) and detail (GET /outbound-messages/:id) mappings in
@@ -2482,6 +2748,8 @@ export interface WebhookMessage {
   maxAttempts: number;
   lastResponseStatus: number | null;
   lastErrorMessage: string | null;
+  /** When a held message's hold ends; null for any other status. */
+  holdExpiresAt?: string | null;
   createdAt: string;
   completedAt: string | null;
   endpointUrl?: string;
@@ -2496,6 +2764,11 @@ export interface WebhookMessage {
   metadata?: unknown;
   priority?: number | null;
   endpointDescription?: string | null;
+  traceId?: string | null;
+  eventVersion?: string | null;
+  deliveredEventVersion?: string | null;
+  /** The inbound event and delivery a bridge destination published this event from, or null. */
+  bridge?: { inboundEventId: string; deliveryId: string | null; hop: number | null } | null;
   payload?: unknown;
 }
 
@@ -2508,6 +2781,9 @@ export interface SendEventResult {
   eventId: string;
   messagesQueued: number;
   endpoints: Array<{ id: string; url: string }>;
+  /** Of messagesQueued, those held because their endpoint's circuit is open. Absent when none were. */
+  messagesHeld?: number;
+  eventVersion?: string;
 }
 
 export async function sendWebhookEvent(data: {
@@ -2609,6 +2885,7 @@ export interface OutboundStatsSummary {
   success: number;
   failed: number;
   awaitingRetry: number;
+  held: number;
   exhausted: number;
   dlq: number;
   total: number;

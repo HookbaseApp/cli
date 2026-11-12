@@ -6,6 +6,7 @@ import * as logger from '../lib/logger.js';
 
 import { requireAuth } from '../lib/requireAuth.js';
 import { formatOutput } from '../lib/output.js';
+import { jsonErrorLocation } from '../lib/parseJson.js';
 
 /** Helper to check if an error is a prompt cancellation (Ctrl+C) */
 function isPromptCancelled(error: unknown): boolean {
@@ -61,11 +62,19 @@ export async function sendCommand(options: {
     // Get payload
     if (options.file) {
       // Read from file
+      let fileContent: string;
       try {
-        const fileContent = fs.readFileSync(options.file, 'utf-8');
+        fileContent = fs.readFileSync(options.file, 'utf-8');
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException | undefined)?.code;
+        logger.error(`Failed to read ${options.file}${code ? ` (${code})` : ''}`);
+        return;
+      }
+      try {
         payload = JSON.parse(fileContent);
       } catch (error) {
-        logger.error(`Failed to read or parse file: ${error instanceof Error ? error.message : 'Unknown error'}`);
+        // Only where it broke: V8's message quotes part of the file.
+        logger.error(`Invalid JSON in ${options.file} (${jsonErrorLocation(error, fileContent)})`);
         return;
       }
     } else if (options.payload) {
@@ -129,7 +138,7 @@ export async function sendCommand(options: {
     return;
   }
 
-  // POST /send-event returns { data: { eventId, messagesQueued, endpoints:[{id,url}] } }
+  // POST /send-event returns { data: { eventId, messagesQueued, endpoints:[{id,url}], messagesHeld? } }
   const sent = result.data?.data;
   if (sent) {
     const endpointsHit = Array.isArray(sent.endpoints) ? sent.endpoints : [];
@@ -138,6 +147,10 @@ export async function sendCommand(options: {
       `Event Type:      ${eventType}`,
       `Messages Queued: ${sent.messagesQueued ?? endpointsHit.length}`,
     ];
+    // Of those, held because the endpoint's circuit is open; absent when none were.
+    if (sent.messagesHeld) {
+      lines.push(`Messages Held:   ${sent.messagesHeld} ${logger.dimText("(endpoint circuit open; delivered when it recovers)")}`);
+    }
     if (endpointsHit.length > 0) {
       lines.push('', 'Endpoints:');
       for (const ep of endpointsHit) {

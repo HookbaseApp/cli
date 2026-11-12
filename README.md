@@ -98,13 +98,22 @@ hookbase inbound sources list                 # List webhook sources
 hookbase inbound sources create               # Create a new source
 hookbase inbound sources get <slug>           # Get source details (ID or slug)
 hookbase inbound sources rotate-secret <slug> # Rotate a source's signing secret
+hookbase inbound sources create -n sf -p custom --catalog-provider salesforce
 
 hookbase inbound destinations list            # List destinations
-hookbase inbound destinations create          # Create a destination
+hookbase inbound destinations create          # Create a destination (prints its signing secret once)
 hookbase inbound destinations test <slug>     # Send a sample webhook to test it
+hookbase inbound destinations reveal-secret <slug>
+hookbase inbound destinations rotate-secret <slug> --grace-period 3600
+
+# Bridge: publish a route's deliveries as outbound events
+hookbase inbound destinations create -n stripe-bridge --type bridge \
+  --event-type-field type --event-type-prefix stripe.
+hookbase inbound destinations test stripe-bridge --payload '{"type":"invoice.paid"}'   # dry run
 
 hookbase inbound routes list                  # List routes
 hookbase inbound routes create                # Create a route
+hookbase inbound routes update <id> --no-hold-on-circuit-open   # dead-letter instead of holding
 hookbase inbound routes circuit-status <id>   # Circuit breaker status (Pro+)
 ```
 
@@ -129,6 +138,8 @@ hookbase events list              # List recent events (alias: hookbase logs)
 hookbase events follow            # Stream live events
 hookbase deliveries list          # List deliveries
 hookbase deliveries replay <id>   # Replay a failed delivery
+hookbase deliveries replay <id> --patch '{"order":{"total":100}}' --header X-Debug=1
+hookbase deliveries replay <id> --payload @fixed.json --destination backup
 hookbase deliveries bulk-replay --status failed
 hookbase stream                   # Stream live events/deliveries in real time (SSE)
 ```

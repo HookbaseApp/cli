@@ -5,6 +5,7 @@ import { parseJsonField } from '../lib/parseJson.js';
 import { requireAuth } from '../lib/requireAuth.js';
 import { formatOutput } from '../lib/output.js';
 import { buildStreamRequest, streamForever, printInboundFrame } from '../lib/sseStream.js';
+import { formatStatus as formatDeliveryStatus } from './deliveries.js';
 
 function formatDate(dateStr: string): string {
   const date = new Date(dateStr);
@@ -27,6 +28,8 @@ function formatStatus(status?: string): string {
       return logger.yellow('partial');
     case 'no_routes':
       return logger.dimText('no routes');
+    case 'duplicate':
+      return logger.dimText('duplicate');
     default:
       return logger.dimText(status || 'unknown');
   }
@@ -163,9 +166,9 @@ export async function eventsGetCommand(
       deliveries.map((d: any) => [
         d.id,
         d.destination_name || d.destinationName || d.destination_id || d.destinationId || '-',
-        d.status === 'delivered' ? logger.green(d.status) : (d.status === 'failed' || d.status === 'failed_over' || d.status === 'schema_failed') ? logger.red(d.status) : logger.yellow(d.status),
+        formatDeliveryStatus(d.status),
         (d.response_status ?? d.responseStatus) ? String(d.response_status ?? d.responseStatus) : '-',
-        (d.response_time_ms ?? d.responseTimeMs) ? `${d.response_time_ms ?? d.responseTimeMs}ms` : '-',
+        (d.latencyMs ?? d.response_time_ms ?? d.responseTimeMs) ? `${d.latencyMs ?? d.response_time_ms ?? d.responseTimeMs}ms` : '-',
       ])
     );
   }

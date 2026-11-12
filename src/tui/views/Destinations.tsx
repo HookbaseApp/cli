@@ -3,7 +3,7 @@ import { Box, Text, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 import SelectInput from 'ink-select-input';
 import * as api from '../../lib/api.js';
-import { parseJsonField } from '../../lib/parseJson.js';
+import { describeDestinationConfig } from '../../lib/destinationConfig.js';
 
 interface DestinationsViewProps {
   destinations: api.Destination[];
@@ -105,8 +105,7 @@ function DestinationList({ destinations, onSelect, onCreate }: {
                     {(() => {
                       const destType = (item as any).type || (item as any).destinationType || 'http';
                       if (destType !== 'http') {
-                        const cfg = parseJsonField((item as any).config, {} as Record<string, unknown>) as any;
-                        const display = `${cfg.bucket || '?'}${cfg.prefix ? '/' + cfg.prefix : ''}`;
+                        const display = describeDestinationConfig(destType, (item as any).config)[0]?.[1] ?? '?';
                         return <Text color="blue">{display.slice(0, 38)}{display.length > 38 ? '…' : ''}</Text>;
                       }
                       return <Text color="blue">{item.url.slice(0, 38)}{item.url.length > 38 ? '…' : ''}</Text>;
@@ -133,7 +132,7 @@ function DestinationDetail({ destId, destinations, onBack, onRefresh }: {
 }) {
   const dest = destinations.find(d => d.id === destId);
   const [testing, setTesting] = useState(false);
-  const [testResult, setTestResult] = useState<{ success: boolean; status: number; time: number; error?: string } | null>(null);
+  const [testResult, setTestResult] = useState<{ success: boolean; status: number; time: number; dryRun?: string; error?: string } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -157,14 +156,16 @@ function DestinationDetail({ destId, destinations, onBack, onRefresh }: {
         if (result.error) {
           setTestResult({ success: false, status: 0, time: 0, error: result.error });
         } else if (result.data) {
-          // Handle possible nested data envelope
-          const raw = result.data as Record<string, unknown>;
-          const data = (raw.data && typeof raw.data === 'object' ? raw.data : raw) as Record<string, unknown>;
+          const data = result.data;
           setTestResult({
             success: data.success === true,
-            status: (data.statusCode ?? data.status_code ?? 0) as number,
-            time: (data.duration ?? data.responseTime ?? data.response_time ?? 0) as number,
-            error: data.error as string | undefined,
+            status: data.status ?? 0,
+            time: data.latencyMs ?? 0,
+            // A bridge test is a dry run: report the resolved event type instead of an HTTP status.
+            dryRun: data.dryRun === true
+              ? `${data.eventType ?? 'no event type'}${data.eventType && !data.eventTypeExists ? ' (not enabled)' : ''} → ${data.matchingEndpoints ?? 0} endpoint(s)`
+              : undefined,
+            error: data.error,
           });
         }
       } catch (err) {
@@ -243,33 +244,14 @@ function DestinationDetail({ destId, destinations, onBack, onRefresh }: {
         {(() => {
           const destType = (dest as any).type || (dest as any).destinationType || 'http';
           if (destType !== 'http') {
-            const cfg = parseJsonField((dest as any).config, {} as Record<string, unknown>) as any;
             return (
               <>
-                <Box>
-                  <Box width={16}><Text dimColor>Bucket:</Text></Box>
-                  <Text color="blue">{cfg.bucket || '-'}</Text>
-                </Box>
-                {cfg.region && (
-                  <Box>
-                    <Box width={16}><Text dimColor>Region:</Text></Box>
-                    <Text>{cfg.region}</Text>
+                {describeDestinationConfig(destType, (dest as any).config).map(([label, value]) => (
+                  <Box key={label}>
+                    <Box width={16}><Text dimColor>{label}:</Text></Box>
+                    <Text color={label === 'Bucket' || label === 'Event Type' || label === 'Queue URL' ? 'blue' : undefined}>{value}</Text>
                   </Box>
-                )}
-                {cfg.prefix && (
-                  <Box>
-                    <Box width={16}><Text dimColor>Prefix:</Text></Box>
-                    <Text>{cfg.prefix}</Text>
-                  </Box>
-                )}
-                <Box>
-                  <Box width={16}><Text dimColor>File Format:</Text></Box>
-                  <Text>{cfg.fileFormat || 'jsonl'}</Text>
-                </Box>
-                <Box>
-                  <Box width={16}><Text dimColor>Partition:</Text></Box>
-                  <Text>{cfg.partitionBy || 'date'}</Text>
-                </Box>
+                ))}
               </>
             );
           }
@@ -318,7 +300,11 @@ function DestinationDetail({ destId, destinations, onBack, onRefresh }: {
         {testResult && (
           <Box marginTop={1} flexDirection="column">
             <Text bold>Test Result:</Text>
-            {testResult.error ? (
+            {testResult.dryRun ? (
+              <Text color={testResult.success ? 'green' : 'red'}>
+                {testResult.success ? '✓' : '✗'} Dry run: {testResult.dryRun}{testResult.error ? ` (${testResult.error})` : ''}
+              </Text>
+            ) : testResult.error ? (
               <Text color="red">✗ Error: {testResult.error}</Text>
             ) : (
               <Text color={testResult.success ? 'green' : 'red'}>
@@ -394,7 +380,15 @@ function CreateDestination({ onBack, onCreated }: {
   const [error, setError] = useState<string | null>(null);
   const [createdDest, setCreatedDest] = useState<api.Destination | null>(null);
 
+  // An HTTP destination's signing secret is in the create reply only, so the done screen waits for
+  // a key instead of returning to the list on a timer.
+  const hasSecretToShow = (d: api.Destination | null) => !!d?.signingSecret;
+
   useInput((input, key) => {
+    if (step === 'done' && hasSecretToShow(createdDest) && (key.return || key.escape)) {
+      onBack();
+      return;
+    }
     if (key.escape && step !== 'creating') {
       onBack();
     }
@@ -475,12 +469,17 @@ function CreateDestination({ onBack, onCreated }: {
         setError(result.error);
         setStep(isWarehouse ? WAREHOUSE_FIELDS[destType][0] : 'staticIp');
       } else {
-        setCreatedDest(result.data?.destination || null);
+        const created = result.data?.destination || null;
+        setCreatedDest(created);
         setStep('done');
-        setTimeout(() => {
+        if (hasSecretToShow(created)) {
           onCreated();
-          onBack();
-        }, 1500);
+        } else {
+          setTimeout(() => {
+            onCreated();
+            onBack();
+          }, 1500);
+        }
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create destination');
@@ -629,6 +628,16 @@ function CreateDestination({ onBack, onCreated }: {
             <Box>
               <Text dimColor>Type: </Text>
               <Text>{destType.toUpperCase()}</Text>
+            </Box>
+            {createdDest.signingSecret && (
+              <Box flexDirection="column" marginTop={1}>
+                <Text color="yellow">Signing secret — shown once, save it now:</Text>
+                <Text bold>{createdDest.signingSecret}</Text>
+                <Text dimColor>Verify deliveries from this destination with it. Later: hookbase destinations reveal-secret {createdDest.id}</Text>
+              </Box>
+            )}
+            <Box marginTop={1}>
+              <Text dimColor>{hasSecretToShow(createdDest) ? 'Press Enter to return to the list' : 'Returning to list...'}</Text>
             </Box>
           </Box>
         )}

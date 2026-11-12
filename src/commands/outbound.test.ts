@@ -146,6 +146,21 @@ describe('send', () => {
   });
 });
 
+describe('send --file', () => {
+  it('a malformed file is reported by line and column, without its content', async () => {
+    const { mkdtempSync, writeFileSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const file = join(mkdtempSync(join(tmpdir(), 'hb-send-')), 'event.json');
+    writeFileSync(file, '{"card": {"number": 4242424242424242 "cvc": 123}}');
+    await sendCommand({ app: 'app_1', eventType: 'order.created', file });
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(text()).toContain(`Invalid JSON in ${file} (at line 1, column 38)`);
+    expect(text()).not.toContain('4242');
+    expect(text()).not.toContain('cvc');
+  });
+});
+
 describe('endpoints', () => {
   it('test reads delivery.responseStatus / responseTimeMs / errorMessage', async () => {
     fetchMock.mockResolvedValueOnce(respond(200, {
