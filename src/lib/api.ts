@@ -640,13 +640,64 @@ export interface Source {
   created_at?: string;
 }
 
+/** Offset-paginated list routes (sources, destinations, routes, transforms, filters) cap
+ * `pageSize` at 100 and default it to 20. */
+export const MAX_OFFSET_PAGE_SIZE = 100;
+/** 50 pages x 100 rows: far beyond any plan limit, but finite if a server never stops. */
+export const MAX_OFFSET_PAGES = 50;
+
+interface OffsetPage {
+  pagination?: { total?: number; page?: number; pageSize?: number };
+}
+
+/**
+ * Read every page of an offset-paginated list (`?page=N&pageSize=100`) and return the rows under
+ * `key`, so name/slug lookups see the whole list and not just the first page. Stops when the
+ * collected count reaches `pagination.total`, when a page comes back empty or short, or after
+ * MAX_OFFSET_PAGES pages.
+ */
+async function collectOffsetPages<K extends string, T>(
+  path: string,
+  key: K
+): Promise<ApiResponse<{ [P in K]: T[] } & { pagination: { total: number; page: number; pageSize: number } }>> {
+  const items: T[] = [];
+  let total: number | undefined;
+  let status = 200;
+
+  for (let page = 1; page <= MAX_OFFSET_PAGES; page++) {
+    const sep = path.includes('?') ? '&' : '?';
+    const result = await request<OffsetPage & Record<K, T[]>>(
+      'GET',
+      `${path}${sep}page=${page}&pageSize=${MAX_OFFSET_PAGE_SIZE}`
+    );
+    if (result.error) {
+      return { error: result.error, code: result.code, status: result.status };
+    }
+    status = result.status;
+    const rows = (result.data?.[key] ?? []) as T[];
+    items.push(...rows);
+    const reported = result.data?.pagination?.total;
+    if (typeof reported === 'number') total = reported;
+
+    if (rows.length === 0 || rows.length < MAX_OFFSET_PAGE_SIZE) break;
+    if (total !== undefined && items.length >= total) break;
+  }
+
+  return {
+    data: {
+      [key]: items,
+      pagination: { total: total ?? items.length, page: 1, pageSize: items.length },
+    } as { [P in K]: T[] } & { pagination: { total: number; page: number; pageSize: number } },
+    status,
+  };
+}
+
 /** HTTP verbs an ingest endpoint can be restricted to. OPTIONS is excluded: CORS preflight is
  * answered before ingest runs, so it is never gateable. */
 export type IngestMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD';
 
 export async function getSources(): Promise<ApiResponse<{ sources: Source[] }>> {
-
-  return request<{ sources: Source[] }>('GET', `/api/sources?pageSize=100`);
+  return collectOffsetPages<'sources', Source>('/api/sources', 'sources');
 }
 
 export async function getSource(sourceId: string): Promise<ApiResponse<{ source: Source }>> {
@@ -986,8 +1037,7 @@ export interface Destination {
 }
 
 export async function getDestinations(): Promise<ApiResponse<{ destinations: Destination[] }>> {
-
-  return request<{ destinations: Destination[] }>('GET', `/api/destinations?pageSize=100`);
+  return collectOffsetPages<'destinations', Destination>('/api/destinations', 'destinations');
 }
 
 export async function getDestination(destId: string): Promise<ApiResponse<{ destination: Destination }>> {
@@ -1143,8 +1193,7 @@ export interface FilterCondition {
 }
 
 export async function getRoutes(): Promise<ApiResponse<{ routes: Route[] }>> {
-
-  return request<{ routes: Route[] }>('GET', `/api/routes?pageSize=100`);
+  return collectOffsetPages<'routes', Route>('/api/routes', 'routes');
 }
 
 export async function getRoute(routeId: string): Promise<ApiResponse<{ route: Route }>> {
@@ -1559,8 +1608,7 @@ export interface Transform {
 }
 
 export async function getTransforms(): Promise<ApiResponse<{ transforms: Transform[] }>> {
-
-  return request<{ transforms: Transform[] }>('GET', `/api/transforms`);
+  return collectOffsetPages<'transforms', Transform>('/api/transforms', 'transforms');
 }
 
 export async function getTransform(transformId: string): Promise<ApiResponse<{ transform: Transform }>> {
@@ -1634,8 +1682,7 @@ export interface Filter {
 }
 
 export async function getFilters(): Promise<ApiResponse<{ filters: Filter[] }>> {
-
-  return request<{ filters: Filter[] }>('GET', `/api/filters`);
+  return collectOffsetPages<'filters', Filter>('/api/filters', 'filters');
 }
 
 export async function getFilter(filterId: string): Promise<ApiResponse<{ filter: Filter }>> {

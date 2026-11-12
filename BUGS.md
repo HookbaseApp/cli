@@ -54,7 +54,7 @@ and `webhook-endpoints.ts`.
 | # | Sev | File | Problem | Fix |
 |---|-----|------|---------|-----|
 | C1 | MED | `lib/api.ts:36,88` | `await response.json()` runs unconditionally before the `!ok` check. A non-JSON body (Cloudflare 502/504 HTML, empty 204) throws → reported as a JSON-parse error with `status:0`, hiding the real HTTP status. | Read text first, parse defensively, fall back to `HTTP <status>` messaging. |
-| C2 | LOW (doc only) | `lib/api.ts:199,372,515` | Sources/destinations/routes request `?pageSize=100` and don't paginate beyond 100. `getTunnels`/`getCronJobs` send `?pageSize=100` but those endpoints ignore the param and return all rows (≤1000). | Left as-is: 100 is the server's max page size; the tunnel/cron "wrong param" is harmless. Documented as a known >100 limitation. |
+| C2 | ~~LOW~~ MED | `lib/api.ts:199,372,515` | Sources/destinations/routes request `?pageSize=100` and don't paginate beyond 100. `getTunnels`/`getCronJobs` send `?pageSize=100` but those endpoints ignore the param and return all rows (≤1000). | Originally left as-is ("known >100 limitation"). **Superseded by H1 (2026-11-12):** the first-page-only lists fed id/slug/name resolution, so it was a live lookup bug. The tunnel/cron note still stands. |
 
 ---
 
@@ -110,6 +110,18 @@ Still missing (not built, out of scope): subscriptions CRUD, event types, export
 (`DELETE /dlq/bulk`), send `labels`/`priority`/`metadata`, endpoint `test` `eventType`/`payload`,
 and endpoint retry/circuit/status-code fields. When those commands are added,
 `ORG_SCOPED_PATH_PREFIXES` will also need their prefixes.
+
+---
+
+## H. SDK round — 2026-11-12
+
+Checked against `api/` origin/main as of 2026-11-12 (`sources.ts`, `destinations.ts`, `routes.ts`,
+`transforms.ts`, `filters.ts`, `deliveries.ts`, `events.ts`, `outbound-messages.ts`,
+`webhook-endpoints.ts`, `send-event.ts`), with `mcp-server` 2.16.0 as a reference.
+
+| # | Sev | File | Problem | Fix |
+|---|-----|------|---------|-----|
+| H1 | HIGH | `lib/api.ts` `getSources`/`getDestinations`/`getRoutes`/`getTransforms`/`getFilters` | Each read only page 1. Sources/destinations/routes asked for `pageSize=100`; transforms and filters sent no `pageSize`, so they got the server default of **20**. These lists feed id/slug/name resolution (`routes create --source/--destination/--transform/--filter/--failover`, `trigger`, `channels link`, the TUI), so anything past the first page was "not found", and `sources/destinations/routes/transforms/filters list` silently truncated. | `collectOffsetPages()` requests `?page=N&pageSize=100` until `pagination.total` is reached or a page comes back empty or short, bounded at 50 pages (5,000 rows). An error on any page is returned as-is. Test: `lib/api.paging.test.ts` (9 of its 10 tests fail on the old `api.ts`). |
 
 ---
 
