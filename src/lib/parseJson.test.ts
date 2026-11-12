@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { parseJsonField } from './parseJson.js';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { parseJsonField, readJsonArg, isJsonObject } from './parseJson.js';
 
 describe('parseJsonField', () => {
   it('parses a valid JSON string', () => {
@@ -40,5 +43,35 @@ describe('parseJsonField', () => {
   it('returns non-string, non-nullish primitives unchanged', () => {
     expect(parseJsonField(42, 0)).toBe(42);
     expect(parseJsonField(true, false)).toBe(true);
+  });
+});
+
+describe('readJsonArg', () => {
+  it('parses inline JSON', () => {
+    expect(readJsonArg(' {"a":1} ', '--patch')).toEqual({ ok: true, value: { a: 1 } });
+  });
+
+  it('reads @file', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'hb-json-'));
+    const file = join(dir, 'p.json');
+    writeFileSync(file, '{"order":{"total":5}}');
+    expect(readJsonArg(`@${file}`, '--payload')).toEqual({ ok: true, value: { order: { total: 5 } } });
+  });
+
+  it('names the flag on bad JSON and on a missing file', () => {
+    const bad = readJsonArg('{nope', '--patch');
+    expect(bad.ok).toBe(false);
+    expect(!bad.ok && bad.error).toMatch(/^--patch: invalid JSON/);
+    const missing = readJsonArg('@/definitely/not/here.json', '--payload');
+    expect(!missing.ok && missing.error).toMatch(/^--payload: cannot read \/definitely\/not\/here\.json/);
+  });
+});
+
+describe('isJsonObject', () => {
+  it('accepts plain objects only', () => {
+    expect(isJsonObject({})).toBe(true);
+    expect(isJsonObject([])).toBe(false);
+    expect(isJsonObject(null)).toBe(false);
+    expect(isJsonObject('x')).toBe(false);
   });
 });

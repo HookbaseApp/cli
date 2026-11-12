@@ -1514,23 +1514,39 @@ export async function getEvent(eventId: string): Promise<ApiResponse<EventDetail
 // Deliveries
 // ============================================================================
 
+/** Inbound delivery statuses (deliveries.status CHECK, api migrations through 0134). */
+export const DELIVERY_STATUSES = [
+  'pending', 'delivered', 'failed', 'failed_over', 'schema_failed', 'throttled', 'awaiting_retry', 'held',
+] as const;
+export type DeliveryStatus = (typeof DELIVERY_STATUSES)[number];
+
+/** The camelCase row `GET /deliveries` and `GET /deliveries/:id` return. */
 export interface Delivery {
   id: string;
-  event_id: string;
-  route_id: string;
-  destination_id: string;
-  destination_name?: string;
-  route_name?: string;
-  status: 'pending' | 'delivered' | 'failed' | 'failed_over' | 'schema_failed' | 'retrying';
-  attempt_count: number;
-  max_attempts: number;
-  response_status?: number;
-  response_time_ms?: number;
-  response_body?: string;
-  error_message?: string;
-  next_retry_at?: string;
-  completed_at?: string;
-  created_at: string;
+  organizationId?: string;
+  eventId: string;
+  routeId: string;
+  destinationId: string;
+  destinationName?: string | null;
+  /** Detail only. */
+  destinationUrl?: string | null;
+  /** List only. */
+  eventType?: string | null;
+  // Open-ended so a status added server-side still type-checks; known values: DELIVERY_STATUSES.
+  status: DeliveryStatus | (string & {});
+  attemptCount: number;
+  maxAttempts: number;
+  /** When the next retry runs. Null while held. */
+  nextRetryAt?: string | null;
+  /** Set only while `held`: when the hold gives up and the delivery fails. */
+  holdExpiresAt?: string | null;
+  responseStatus?: number | null;
+  responseBody?: string | null;
+  latencyMs?: number | null;
+  errorMessage?: string | null;
+  deliveredAt?: string | null;
+  createdAt: string;
+  updatedAt?: string | null;
 }
 
 export async function getDeliveries(options?: {
@@ -1540,7 +1556,7 @@ export async function getDeliveries(options?: {
   routeId?: string;
   destinationId?: string;
   status?: string;
-}): Promise<ApiResponse<{ deliveries: Delivery[]; total: number; hasMore: boolean }>> {
+}): Promise<ApiResponse<{ deliveries: Delivery[]; limit: number; offset: number }>> {
 
   const params = new URLSearchParams();
   if (options?.limit) params.set('limit', String(options.limit));
@@ -1551,7 +1567,7 @@ export async function getDeliveries(options?: {
   if (options?.status) params.set('status', options.status);
 
   const queryString = params.toString();
-  return request<{ deliveries: Delivery[]; total: number; hasMore: boolean }>(
+  return request<{ deliveries: Delivery[]; limit: number; offset: number }>(
     'GET',
     `/api/deliveries${queryString ? `?${queryString}` : ''}`
   );
@@ -1562,14 +1578,59 @@ export async function getDelivery(deliveryId: string): Promise<ApiResponse<{ del
   return request<{ delivery: Delivery }>('GET', `/api/deliveries/${deliveryId}`);
 }
 
-export async function replayDelivery(deliveryId: string): Promise<ApiResponse<{ delivery: Delivery }>> {
-
-  return request<{ delivery: Delivery }>('POST', `/api/deliveries/${deliveryId}/replay`);
+/** One-shot edits for `POST /deliveries/:id/replay`. All optional; none of them change the route. */
+export interface ReplayDeliveryOptions {
+  /** Replaces the stored payload for this replay. Exclusive with payloadPatch. */
+  modifiedPayload?: unknown;
+  /** RFC 7386 merge patch applied server-side to the stored payload. Exclusive with modifiedPayload. */
+  payloadPatch?: Record<string, unknown>;
+  /** Destination id or slug (same org) to send this replay to instead. */
+  destinationOverride?: string;
+  /** Outbound headers to add or replace for this replay (max 50). */
+  headersOverride?: Record<string, string>;
 }
 
-export async function bulkReplayDeliveries(deliveryIds: string[]): Promise<ApiResponse<{ replayed: number; failed: number }>> {
+/** The flat envelope `POST /deliveries/:id/replay` returns. */
+export interface ReplayDeliveryResult {
+  deliveryId: string;
+  message: string;
+  modified: boolean;
+  destinationOverridden: boolean;
+  transformOverridden: boolean;
+  transformPersisted: boolean;
+  headersOverridden: boolean;
+  targetDestinationId: string;
+}
 
-  return request<{ replayed: number; failed: number }>('POST', `/api/deliveries/bulk-replay`, {
+export async function replayDelivery(
+  deliveryId: string,
+  options: ReplayDeliveryOptions = {}
+): Promise<ApiResponse<ReplayDeliveryResult>> {
+  const body: Record<string, unknown> = {};
+  if (options.modifiedPayload !== undefined) body.modifiedPayload = options.modifiedPayload;
+  if (options.payloadPatch !== undefined) body.payloadPatch = options.payloadPatch;
+  if (options.destinationOverride) body.destinationOverride = options.destinationOverride;
+  if (options.headersOverride && Object.keys(options.headersOverride).length > 0) {
+    body.headersOverride = options.headersOverride;
+  }
+  return request<ReplayDeliveryResult>(
+    'POST',
+    `/api/deliveries/${deliveryId}/replay`,
+    Object.keys(body).length > 0 ? body : undefined
+  );
+}
+
+/** `POST /deliveries/bulk-replay`: at most 100 ids; ids that are not found or not replayable are skipped. */
+export interface BulkReplayResult {
+  message: string;
+  queued: number;
+  skipped: number;
+  results: Array<{ originalId: string; newId?: string; status: 'queued' | 'skipped'; reason?: string }>;
+}
+
+export async function bulkReplayDeliveries(deliveryIds: string[]): Promise<ApiResponse<BulkReplayResult>> {
+
+  return request<BulkReplayResult>('POST', `/api/deliveries/bulk-replay`, {
     deliveryIds,
   });
 }

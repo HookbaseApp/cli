@@ -184,11 +184,17 @@ function formatInboundStatus(status?: string): string {
     case 'delivered':
       return logger.green('delivered');
     case 'failed':
-      return logger.red('failed');
+    case 'schema_failed':
+      return logger.red(status);
     case 'pending':
-      return logger.yellow('pending');
     case 'partial':
-      return logger.yellow('partial');
+    case 'failed_over':
+    case 'throttled':
+      return logger.yellow(status);
+    case 'awaiting_retry':
+      return logger.yellow('retrying');
+    case 'held':
+      return logger.cyan('held');
     case 'no_routes':
       return logger.dimText('no routes');
     default:
@@ -256,7 +262,11 @@ function formatOutboundStatus(status?: string): string {
       return logger.yellow('retrying');
     case 'pending':
     case 'processing':
+    case 'fifo_waiting':
+    case 'awaiting_pull':
       return logger.yellow(status);
+    case 'held':
+      return logger.cyan('held');
     default:
       return logger.dimText(status || 'unknown');
   }

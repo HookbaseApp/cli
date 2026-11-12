@@ -1,4 +1,5 @@
 import type { Command } from 'commander';
+import { DELIVERY_STATUSES } from '../../lib/api.js';
 import {
   sourcesListCommand,
   sourcesCreateCommand,
@@ -405,7 +406,7 @@ export function registerEventsCommands(parent: Command): Command {
     .option('-l, --limit <number>', 'Number of events to show', '50')
     .option('-o, --offset <number>', 'Number of events to skip (for pagination)', '0')
     .option('-s, --source <source>', 'Filter by source ID or slug')
-    .option('--status <status>', 'Filter by status (delivered, failed, pending)')
+    .option('--status <status>', 'Filter by status (delivered, failed, pending, partial, duplicate, no_routes)')
     .option('--json', 'Output as JSON')
     .option('--xml', 'Output as XML')
     .option('--yaml', 'Output as YAML')
@@ -443,7 +444,7 @@ export function registerDeliveriesCommands(parent: Command): Command {
     .option('-e, --event <eventId>', 'Filter by event')
     .option('-r, --route <routeId>', 'Filter by route')
     .option('-d, --destination <destId>', 'Filter by destination')
-    .option('--status <status>', 'Filter by status (success, failed, pending, retrying)')
+    .option('--status <status>', `Filter by status (${DELIVERY_STATUSES.join(', ')}; pending also matches awaiting_retry and held)`)
     .option('--json', 'Output as JSON')
     .option('--xml', 'Output as XML')
     .option('--yaml', 'Output as YAML')
@@ -460,7 +461,11 @@ export function registerDeliveriesCommands(parent: Command): Command {
 
   deliveries
     .command('replay <deliveryId>')
-    .description('Replay a failed delivery')
+    .description('Replay a delivery, optionally with an edited payload, another destination or extra headers')
+    .option('--patch <json|@file>', 'RFC 7386 merge patch applied to the stored payload (works with masked or encrypted sources; encrypted fields cannot be changed)')
+    .option('--payload <json|@file>', 'Replace the payload for this replay (exclusive with --patch)')
+    .option('--destination <idOrSlug>', 'Send this replay to another destination in the organization')
+    .option('--header <name=value>', 'Add or replace an outbound header for this replay (repeatable, max 50)', (v: string, prev: string[] = []) => prev.concat(v), [])
     .option('-y, --yes', 'Skip confirmation')
     .option('--json', 'Output as JSON')
     .option('--xml', 'Output as XML')
